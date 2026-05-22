@@ -108,3 +108,87 @@ jobs:
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: warn
           retention-days: 14
+
+  smoke-linux:
+    name: Smoke test (Linux AppImage)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MyHackingPal-ubuntu-latest
+          path: artifacts/
+
+      - name: Install AppImage runtime deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfuse2 xvfb jq
+
+      - name: Launch AppImage under xvfb
+        run: |
+          chmod +x artifacts/*.AppImage
+          # --no-sandbox: CI runners can't grant the SUID sandbox cap
+          # --disable-gpu: no GPU on headless runner
+          # &: background so we can poll /health while it runs
+          xvfb-run -a -- artifacts/*.AppImage --no-sandbox --disable-gpu > app.log 2>&1 &
+          echo $! > app.pid
+          echo "launched, pid=$(cat app.pid)"
+
+      - name: Wait for /health
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8765/health > /tmp/health.json 2>/dev/null; then
+              echo "::notice::backend healthy after ${i}s"
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend never became ready after 60s"
+          exit 1
+
+      - name: Probe key endpoints
+        run: |
+          probe() {
+            local label="$1" url="$2"
+            echo "::group::$label  $url"
+            if curl -fsS --max-time 10 "$url" | jq . ; then
+              echo "::endgroup::"
+            else
+              echo "::endgroup::"
+              echo "::warning::$label failed"
+              return 1
+            fi
+          }
+
+          # platform detection — confirms mac-only routers report as unavailable
+          probe "/system/info"                 "http://127.0.0.1:8765/system/info"
+          # non-privileged tools
+          probe "/ip/8.8.8.8"                  "http://127.0.0.1:8765/ip/8.8.8.8"
+          probe "/whois/example.com"           "http://127.0.0.1:8765/whois/example.com" || true
+          probe "/dns/recon/example.com"       "http://127.0.0.1:8765/dns/recon/example.com" || true
+          # validates the Linux codesign short-circuit fix
+          probe "/processes/list"              "http://127.0.0.1:8765/processes/list" || true
+          # mac-only — should return 503 with a hint, NOT crash
+          echo "::group::/macos/posture (expect 503)"
+          curl -sS -o /tmp/posture.json -w "HTTP %{http_code}\n" http://127.0.0.1:8765/macos/posture || true
+          cat /tmp/posture.json | jq . 2>/dev/null || cat /tmp/posture.json
+          echo "::endgroup::"
+
+      - name: Tail app log
+        if: always()
+        run: |
+          echo "::group::Full app log"
+          cat app.log || true
+          echo "::endgroup::"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f app.pid ]; then
+            kill $(cat app.pid) 2>/dev/null || true
+          fi
+          # also kill any orphan xvfb / electron / sidecar
+          pkill -f MyHackingPal 2>/dev/null || true
+          pkill -f network-tools-backend 2>/dev/null || true
