@@ -30,6 +30,35 @@ build-pipeline simplicity) — only the user-facing branding is **MyHackingPal**
 
 ---
 
+## Latest update — 2026-05-22
+
+**Docker backend now ships.** A headless API-server image for running
+MyHackingPal's backend on Linux without the Electron GUI. Useful as a
+"server mode" you can hit from a browser or another client, or as a
+reproducible sandbox for the scanning tools.
+
+- **`backend/Dockerfile`** — `python:3.11-slim` + bundled tools (nmap 7.95,
+  tcpdump 4.99.5, dig, whois, openssl, wireguard-tools). Installs all cloud
+  recon SDKs (boto3, azure-mgmt-*, google-cloud-*) and AD tooling (ldap3,
+  impacket, bloodhound). Skips macOS-only `pyobjc-*` bindings.
+- **`docker-compose.yml`** — exposes `8765:8765`, grants `NET_RAW` +
+  `NET_ADMIN` for tcpdump and nmap SYN/UDP/OS raw-socket scans. Persistent
+  volume mounted at `/app/data`.
+- **3 cross-platform fixes** that surfaced from the Docker smoke tests:
+  - `azure_recon`: `SubscriptionClient` import moved to its split-out
+    `azure-mgmt-resource-subscriptions` package in v23+.
+  - `forensics.codesign_check`: short-circuits when the `codesign` binary
+    isn't present, so `/processes/list` works on Linux instead of 500ing.
+  - `gcp_recon /status`: pre-flight ADC check avoids a 15s GCE metadata
+    probe inside containers that aren't on GCE — now fast-fails in 20ms.
+
+Verified: **45/52** parameterless GET endpoints return 200 on Linux; the
+remaining 4 are macOS-only routers (`brew`, `wifi-scan`, `bt/*`) returning
+helpful 503s. Live `nmap -sS` against `scanme.nmap.org` from inside the
+container completes in 0.11s, confirming NET_RAW is applied.
+
+---
+
 ## Installation
 
 ### Option 1 — Download (recommended)
@@ -40,14 +69,27 @@ Download the latest release for your platform from [Releases](https://github.com
 - Windows: `MyHackingPal-win-x64.exe` *(coming soon)*
 - Linux: `MyHackingPal-linux-x86_64.AppImage` *(coming soon)*
 
-### Option 2 — Docker
+### Option 2 — Docker (backend API only)
+
+The Docker image runs the FastAPI backend headlessly — useful for server
+deployments or remote use. There's no Electron GUI in the container; you
+talk to it over HTTP from a browser, curl, or another client.
 
 ```sh
-docker pull myhackingpal/myhackingpal
-docker run -p 8765:8765 myhackingpal/myhackingpal
+git clone https://github.com/myhackingpal/myhackingpal.git
+cd myhackingpal
+docker compose up -d
+curl http://127.0.0.1:8765/health
+# {"status":"ok","version":"0.1.0","pid":"1"}
 ```
 
-Then open `http://localhost:5173` in your browser.
+The compose file grants `NET_RAW` + `NET_ADMIN` so tcpdump and nmap
+SYN/UDP/OS scans work. For LAN scanning from the host's network on a Linux
+host, switch to `network_mode: host` (see the comment inline in
+`docker-compose.yml`). macOS-only tools (`brew`, `wifi`, `bt`,
+`macos-posture`) return a clean 503 with a hint message.
+
+Interactive API docs are at `http://127.0.0.1:8765/docs`.
 
 ### Option 3 — Build from source
 
@@ -327,7 +369,7 @@ non-Mac runs via `GET /system/info`.
 - [x] macOS build (Apple Silicon `.app`)
 - [in progress] Windows build (`.exe` installer)
 - [in progress] Linux build (`.AppImage` / `.deb`)
-- [in progress] Docker image
+- [x] Docker image (backend API server, 2026-05-22)
 - [ ] Code signing / notarization (macOS + Windows)
 - [ ] Auto-update channel via electron-updater
 
