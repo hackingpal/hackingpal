@@ -1,0 +1,39 @@
+# --- VCS / editor ---
+.git/
+.github/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# --- Frontend (not needed for backend image) ---
+frontend/
+
+# --- Python build/cache ---
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+backend/build/
+backend/dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- PyInstaller spec output ---
+*.spec.bak
+
+# --- Repo-level docs / scripts not needed in image ---
+README.md
+scripts/
+shells/
+
+# --- Secrets / local config (defense in depth) ---
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+credentials.json

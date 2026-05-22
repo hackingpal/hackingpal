@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: myhackingpal/backend:latest
+    container_name: myhackingpal-backend
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    # NET_RAW: tcpdump + nmap SYN/UDP/OS raw sockets.
+    # NET_ADMIN: WireGuard (wg-quick) interface setup.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    environment:
+      - NT_BACKEND_HOST=0.0.0.0
+      - NT_BACKEND_PORT=8765
+    volumes:
+      - myhackingpal-data:/app/data
+    # For LAN scanning from the host's network (Linux only — Docker Desktop
+    # on macOS/Windows runs Linux in a VM so host mode behaves differently),
+    # comment out `ports:` above and uncomment:
+    # network_mode: host
+
+volumes:
+  myhackingpal-data:
