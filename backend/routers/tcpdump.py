@@ -30,7 +30,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+
+from lib.auth import require_local_auth
 
 router = APIRouter(tags=["tcpdump"])
 
@@ -69,7 +71,7 @@ def interfaces() -> dict[str, list[str]]:
     return {"interfaces": keep}
 
 
-@router.post("/tcpdump/install")
+@router.post("/tcpdump/install", dependencies=[Depends(require_local_auth)])
 def install_sudoers() -> dict[str, Any]:
     """Drop a `<user> ALL=(root) NOPASSWD: /usr/sbin/tcpdump` entry.
 

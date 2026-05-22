@@ -41,3 +41,12 @@ backend/dist/
 *.key
 secrets.json
 credentials.json
+# Per-user backend config (target policy, API keys if ever added)
+backend/config.json
+
+# --- Wordlists / large data ---
+# rockyou and friends are bundled at build time via PyInstaller; they should
+# never live in git.
+backend/wordlists/rockyou.txt
+backend/wordlists/rockyou.txt.gz
+backend/wordlists/*.txt.gz

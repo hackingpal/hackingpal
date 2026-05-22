@@ -2,6 +2,14 @@
 
 Not a real shell — runs one command per request, returns stdout/stderr.
 Real PTY support (xterm.js + ptyprocess) is a follow-up.
+
+# SECURITY: This endpoint executes arbitrary shell commands.
+# It is protected by:
+#   1. localhost-only binding (127.0.0.1) — enforced in main.py
+#   2. X-MHP-Token header auth (rotated each launch) — see lib/auth.py
+# Never expose port 8765 to a network interface.
+# This endpoint is intentionally NOT a PTY — no interactive
+# commands, no sudo, no persistent shell state.
 """
 from __future__ import annotations
 
@@ -11,8 +19,10 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from lib.auth import require_local_auth
 
 router = APIRouter(prefix="/terminal", tags=["terminal"])
 
@@ -34,7 +44,8 @@ class ExecResponse(BaseModel):
     truncated: bool
 
 
-@router.post("/exec", response_model=ExecResponse)
+@router.post("/exec", response_model=ExecResponse,
+              dependencies=[Depends(require_local_auth)])
 def exec_cmd(req: ExecRequest) -> ExecResponse:
     cmd = req.command.strip()
     if not cmd:

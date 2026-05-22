@@ -29,8 +29,15 @@ function backendBinaryPath() {
 function spawnBackend() {
   const binPath = backendBinaryPath();
   console.log("[network-tools] spawning backend:", binPath);
+  // Pin to loopback. The backend refuses to start on a wildcard host (see
+  // backend/main.py), but we set NT_BACKEND_HOST explicitly here so the
+  // packaged app never depends on the default.
   backendProc = spawn(binPath, [], {
-    env: { ...process.env, NT_BACKEND_PORT: String(BACKEND_PORT) },
+    env: {
+      ...process.env,
+      NT_BACKEND_HOST: "127.0.0.1",
+      NT_BACKEND_PORT: String(BACKEND_PORT),
+    },
     stdio: "ignore",
   });
   backendProc.on("exit", (code) => {

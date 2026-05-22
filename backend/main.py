@@ -1,14 +1,25 @@
 """FastAPI app entrypoint for the Network Tools backend.
 
-In dev:   uvicorn main:app --reload --port 8765
-In prod:  Electron spawns this as a sidecar process on app start.
+In dev:   uvicorn main:app --reload --port 8765 --host 127.0.0.1
+In prod:  Electron spawns this as a sidecar process on app start, pinned
+          to 127.0.0.1 via NT_BACKEND_HOST (see frontend/electron/main.cjs).
+
+Security: this backend MUST NOT be exposed to the network. It executes
+shell commands, installs sudoers entries, and toggles the WireGuard
+tunnel — all gated by loopback-only binding plus a per-launch token
+(see backend/lib/auth.py). The startup guard below refuses to run if
+NT_BACKEND_HOST or HOST is set to a wildcard address.
 """
 from __future__ import annotations
 
+import logging
 import os
+import sys
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from lib.auth import AUTH_TOKEN, require_localhost
 
 from routers import (
     ad_spray, audit, aws_recon, azure_recon, bloodhound_ingest, breach, brew,
@@ -22,6 +33,23 @@ from routers import (
     subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit, vpn,
     whois, wifi, wifi_scan, wpa_capture, xss,
 )
+
+logger = logging.getLogger("myhackingpal")
+
+# ── Startup guard: refuse to expose the backend to the network ───────────────
+# We check both NT_BACKEND_HOST (used by the sidecar entrypoint below) and
+# HOST (commonly read by container orchestration). If either is a wildcard,
+# bail out hard before FastAPI ever binds a socket.
+_FORBIDDEN_HOSTS = {"0.0.0.0", "::", "*"}
+for _var in ("NT_BACKEND_HOST", "HOST"):
+    _val = os.environ.get(_var, "").strip()
+    if _val in _FORBIDDEN_HOSTS:
+        sys.stderr.write(
+            f"[myhackingpal] {_var}={_val!r}: "
+            "MyHackingPal backend must not be exposed to the network. "
+            "Refusing to start.\n"
+        )
+        raise SystemExit(2)
 
 app = FastAPI(title="MyHackingPal", version="0.1.0")
 
@@ -111,12 +139,27 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version, "pid": str(os.getpid())}
 
 
+@app.get("/auth/token", dependencies=[Depends(require_localhost)])
+def auth_token() -> dict[str, str]:
+    """Return the per-launch auth token. Loopback-only (no header required).
+
+    The Electron renderer fetches this on first api() call and attaches it
+    via X-MHP-Token on every subsequent privileged request. The token is
+    regenerated each process start, so anything cached from a previous run
+    is automatically invalidated.
+    """
+    return {"token": AUTH_TOKEN}
+
+
 # ── Sidecar entrypoint ────────────────────────────────────────────────────────
 # Lets the PyInstaller-bundled binary launch uvicorn directly without needing
 # `python -m uvicorn`. The dev workflow still uses uvicorn's CLI for --reload.
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("NT_BACKEND_PORT", "8765"))
+    # Loopback-only by default. The startup guard above already rejects
+    # wildcard hosts before we get here, so anything that survives to this
+    # point is at worst a typo'd hostname that uvicorn itself will refuse.
     host = os.environ.get("NT_BACKEND_HOST", "127.0.0.1")
     uvicorn.run(app, host=host, port=port, log_level="warning",
                 # asyncio + h11 + wsproto are explicit so PyInstaller can find them

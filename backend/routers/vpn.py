@@ -12,10 +12,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 
 router = APIRouter(tags=["vpn"])
 
@@ -101,11 +102,11 @@ def _toggle(direction: str) -> dict[str, Any]:
     return {"ok": True, "output": out.strip()}
 
 
-@router.post("/vpn/start")
+@router.post("/vpn/start", dependencies=[Depends(require_local_auth)])
 def start() -> dict[str, Any]:
     return _toggle("up")
 
 
-@router.post("/vpn/stop")
+@router.post("/vpn/stop", dependencies=[Depends(require_local_auth)])
 def stop() -> dict[str, Any]:
     return _toggle("down")

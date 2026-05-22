@@ -33,9 +33,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify, nmap_runner, target_policy
+from lib.auth import require_local_auth
 
 router = APIRouter(tags=["nmap"])
 
@@ -89,7 +90,7 @@ def status() -> dict[str, Any]:
     }
 
 
-@router.post("/nmap/install")
+@router.post("/nmap/install", dependencies=[Depends(require_local_auth)])
 def install_sudoers() -> dict[str, Any]:
     """Drop a `<user> ALL=(root) NOPASSWD: <nmap>` entry via osascript prompt."""
     binary = _resolved_binary()

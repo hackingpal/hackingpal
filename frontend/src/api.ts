@@ -64,8 +64,40 @@ const LOG_SKIP = [
   /^\/engagements/,
 ];
 
+// Per-launch auth token. The backend issues this on GET /auth/token (loopback
+// only, no header required). We fetch it lazily on first api() call and reuse
+// the same promise so concurrent calls don't trigger duplicate fetches.
+// Privileged endpoints (terminal/exec, *_install, vpn/{start,stop}) require it
+// via the X-MHP-Token header; harmless endpoints just ignore it.
+let authTokenPromise: Promise<string | null> | null = null;
+
+function fetchAuthToken(): Promise<string | null> {
+  if (authTokenPromise) return authTokenPromise;
+  authTokenPromise = fetch(`${BACKEND_URL}/auth/token`)
+    .then((r) => (r.ok ? r.json() : null))
+    .then((b) => (b && typeof b.token === "string" ? b.token : null))
+    .catch(() => null);
+  return authTokenPromise;
+}
+
+/** Clears the cached token. Call if the backend is restarted mid-session. */
+export function resetAuthToken(): void {
+  authTokenPromise = null;
+}
+
+async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
+  const token = await fetchAuthToken();
+  if (!token) return init ?? {};
+  const headers = new Headers(init?.headers);
+  if (!headers.has("X-MHP-Token")) headers.set("X-MHP-Token", token);
+  return { ...(init ?? {}), headers };
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BACKEND_URL}${path}`, init);
+  // Skip the auth fetch when we're already fetching /auth/token, otherwise
+  // we'd recurse forever.
+  const finalInit = path === "/auth/token" ? init : await withAuthHeader(init);
+  const res = await fetch(`${BACKEND_URL}${path}`, finalInit);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
