@@ -55,6 +55,12 @@ Works on macOS, Windows, and Linux. See [Development](#development) below for
 the two-terminal dev loop, and [Building a release](#building-a-release) for
 producing a packaged binary.
 
+### Per-platform install guides
+
+- [macOS](docs/README-macos.md) — Gatekeeper, Keychain, sudoers drop-ins
+- [Windows](docs/README-windows.md) — SmartScreen, Credential Manager, Npcap *(in progress)*
+- [Linux](docs/README-linux.md) — capabilities, Secret Service, AppImage notes *(in progress)*
+
 ---
 
 ## First run
