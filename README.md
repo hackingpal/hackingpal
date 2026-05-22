@@ -1,6 +1,8 @@
 # MyHackingPal
 
-A macOS desktop security toolkit. Hybrid **Electron + React + TypeScript**
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Docker-blue)
+
+A cross-platform desktop security toolkit. Hybrid **Electron + React + TypeScript**
 frontend with a bundled **FastAPI + Python** sidecar that owns all the
 network/forensics/exploitation logic. ~40 tools organized into nine sidebar
 categories, plus a Claude-powered chat assistant that watches your session
@@ -28,13 +30,36 @@ build-pipeline simplicity) — only the user-facing branding is **MyHackingPal**
 
 ---
 
-## Quick start
+## Installation
+
+### Option 1 — Download (recommended)
+
+Download the latest release for your platform from [Releases](https://github.com/myhackingpal/myhackingpal/releases):
+
+- macOS: `MyHackingPal-mac-arm64.zip`
+- Windows: `MyHackingPal-win-x64.exe` *(coming soon)*
+- Linux: `MyHackingPal-linux-x86_64.AppImage` *(coming soon)*
+
+### Option 2 — Docker
 
 ```sh
-open ~/Desktop/MyHackingPal.app
+docker pull myhackingpal/myhackingpal
+docker run -p 8765:8765 myhackingpal/myhackingpal
 ```
 
-First run will prompt for a fresh Keychain entry the first time it touches a
+Then open `http://localhost:5173` in your browser.
+
+### Option 3 — Build from source
+
+Works on macOS, Windows, and Linux. See [Development](#development) below for
+the two-terminal dev loop, and [Building a release](#building-a-release) for
+producing a packaged binary.
+
+---
+
+## First run
+
+First launch will prompt for a fresh Keychain entry the first time it touches a
 privileged tool (tcpdump, nmap SYN/UDP/OS). For the chat assistant, open the
 floating "AI" bubble → ⚙ → paste an `sk-ant-…` Anthropic API key.
 
@@ -288,6 +313,17 @@ Cross-platform configs exist for Windows + Linux in `package.json` but
 binaries have not been produced. Mac-only routers are tagged via the
 `platforms` array on each NavItem in `src/lib/nav.ts` and auto-hide on
 non-Mac runs via `GET /system/info`.
+
+---
+
+## Roadmap
+
+- [x] macOS build (Apple Silicon `.app`)
+- [in progress] Windows build (`.exe` installer)
+- [in progress] Linux build (`.AppImage` / `.deb`)
+- [in progress] Docker image
+- [ ] Code signing / notarization (macOS + Windows)
+- [ ] Auto-update channel via electron-updater
 
 ---
 
