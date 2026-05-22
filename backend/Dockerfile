@@ -25,23 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY requirements-bundle.txt /tmp/requirements-bundle.txt
-RUN pip install -r /tmp/requirements-bundle.txt \
-    && pip install \
-        anthropic>=0.92 \
-        boto3>=1.34 \
-        azure-identity>=1.15 \
-        azure-mgmt-resource>=23 \
-        azure-mgmt-resource-subscriptions>=1 \
-        azure-mgmt-storage>=21 \
-        azure-mgmt-compute>=30 \
-        azure-mgmt-network>=25 \
-        azure-mgmt-keyvault>=10 \
-        google-cloud-resource-manager>=1.12 \
-        google-cloud-storage>=2.14 \
-        google-cloud-compute>=1.16 \
-        ldap3>=2.9 \
-        impacket>=0.12 \
-        bloodhound>=1.7
+RUN pip install -r /tmp/requirements-bundle.txt
 
 COPY . /app
 
