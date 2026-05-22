@@ -26,15 +26,23 @@ jobs:
           - os: windows-latest
             target: win
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend.exe
-            artifact_glob: "frontend/dist-electron/*.{exe,msi,nupkg,blockmap}"
+            artifact_glob: |
+              frontend/dist-electron/*.exe
+              frontend/dist-electron/*.msi
+              frontend/dist-electron/*.nupkg
+              frontend/dist-electron/*.blockmap
           - os: ubuntu-latest
             target: linux
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
-            artifact_glob: "frontend/dist-electron/*.{AppImage,deb,snap}"
+            artifact_glob: |
+              frontend/dist-electron/*.AppImage
+              frontend/dist-electron/*.deb
+              frontend/dist-electron/*.snap
           - os: macos-latest
             target: mac
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
-            artifact_glob: "frontend/dist-electron/mac*/**"
+            artifact_glob: |
+              frontend/dist-electron/mac*/**
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
