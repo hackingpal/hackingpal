@@ -31,6 +31,7 @@ RUN pip install -r /tmp/requirements-bundle.txt \
         boto3>=1.34 \
         azure-identity>=1.15 \
         azure-mgmt-resource>=23 \
+        azure-mgmt-resource-subscriptions>=1 \
         azure-mgmt-storage>=21 \
         azure-mgmt-compute>=30 \
         azure-mgmt-network>=25 \

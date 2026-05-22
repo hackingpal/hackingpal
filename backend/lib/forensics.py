@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import plistlib
 import re
+import shutil
 import subprocess
 from pathlib import Path
+
+_CODESIGN = shutil.which("codesign")
 
 # Substrings in a codesign authority line that mark the binary as Apple-shipped.
 _APPLE_AUTHORITIES = (
@@ -42,16 +45,21 @@ def codesign_check(path: str | Path) -> dict[str, str]:
     if cached is not None:
         return cached
 
+    # codesign is macOS-only — return empty status on Linux/Windows so callers
+    # treat it like an un-flagged process rather than crashing.
+    if _CODESIGN is None:
+        return {"status": "", "team": "", "authority": ""}
+
     # First: cheap verify pass
     verify = subprocess.run(
-        ["codesign", "--verify", "--no-strict", str(p)],
+        [_CODESIGN, "--verify", "--no-strict", str(p)],
         capture_output=True, text=True, timeout=8,
     )
     valid = verify.returncode == 0
 
     # Then: detailed display
     show = subprocess.run(
-        ["codesign", "-dvv", str(p)],
+        [_CODESIGN, "-dvv", str(p)],
         capture_output=True, text=True, timeout=8,
     )
     raw = (show.stdout + show.stderr).strip()

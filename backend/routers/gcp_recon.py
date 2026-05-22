@@ -7,11 +7,25 @@ service won't take down the rest.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/gcp", tags=["gcp-recon"])
+
+
+def _has_adc() -> bool:
+    """Cheap check for any plausible Application Default Credentials source.
+
+    Without this, google.auth.default() falls through to a GCE metadata probe
+    that hangs for ~15s inside containers that aren't on GCE.
+    """
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        return True
+    return (Path.home() / ".config" / "gcloud"
+            / "application_default_credentials.json").exists()
 
 
 def _import_gcp():
@@ -30,6 +44,10 @@ def _import_gcp():
 @router.get("/status")
 def status() -> dict[str, Any]:
     gauth_default, DefaultCredentialsError = _import_gcp()
+    if not _has_adc():
+        return {"ok": False, "error":
+                "no GCP credentials (set GOOGLE_APPLICATION_CREDENTIALS or "
+                "run `gcloud auth application-default login`)"}
     try:
         cred, project_id = gauth_default()
         return {"ok": True, "default_project": project_id,

@@ -38,9 +38,9 @@ def _import_az():
 def status() -> dict[str, Any]:
     DefaultAzureCredential, AuthErr, HttpErr = _import_az()
     try:
-        from azure.mgmt.resource import SubscriptionClient
+        from azure.mgmt.resource.subscriptions import SubscriptionClient
     except ImportError as e:
-        raise HTTPException(503, f"azure-mgmt-resource missing ({e})")
+        raise HTTPException(503, f"azure-mgmt-resource-subscriptions missing ({e})")
     cred = DefaultAzureCredential()
     try:
         client = SubscriptionClient(cred)
@@ -186,7 +186,7 @@ def recon(subscription_id: str | None = None,
 
     # Pick subscription
     try:
-        from azure.mgmt.resource import SubscriptionClient
+        from azure.mgmt.resource.subscriptions import SubscriptionClient
         sub_client = SubscriptionClient(cred)
         subs = [{"id": s.subscription_id, "name": s.display_name}
                 for s in sub_client.subscriptions.list()]
