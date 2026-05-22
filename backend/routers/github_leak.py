@@ -1,0 +1,148 @@
+"""GitHub Leak Scanner — search public GitHub code for credentials referencing a target.
+
+Uses the GitHub Code Search API (`/search/code`). A token is strongly
+recommended — unauthenticated, the rate limit is 10 req/min and the search
+results are quite restricted. Authenticated, you get 30 req/min and broader
+results. Tokens go in Keychain as `github_token`.
+
+We auto-generate a set of leak-finding queries combining the target with
+common secret-bearing patterns ("password", "api_key", "BEGIN RSA PRIVATE KEY",
+etc.). The frontend can also supply ad-hoc queries.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from .settings import keychain_get_named
+
+router = APIRouter(prefix="/github-leak", tags=["github-leak"])
+
+UA = "MyHackingPal/0.1 gh-leak"
+GH_BASE = "https://api.github.com"
+
+# Each entry: (label, query-template). `{t}` is the target.
+LEAK_PATTERNS: list[tuple[str, str]] = [
+    ("password",         '"{t}" password'),
+    ("api-key",          '"{t}" api_key'),
+    ("secret",           '"{t}" secret'),
+    ("token",            '"{t}" token'),
+    ("aws-key",          '"{t}" "AKIA"'),
+    ("private-key",      '"{t}" "BEGIN RSA PRIVATE KEY"'),
+    ("ssh-key",          '"{t}" "BEGIN OPENSSH PRIVATE KEY"'),
+    ("db-conn",          '"{t}" "DB_PASSWORD"'),
+    ("env",              '"{t}" extension:env'),
+    ("config-yaml",      '"{t}" extension:yml password'),
+    ("config-json",      '"{t}" extension:json apiKey'),
+    ("htpasswd",         '"{t}" extension:htpasswd'),
+    ("smtp",             '"{t}" "SMTP_PASSWORD"'),
+    ("jwt-secret",       '"{t}" "JWT_SECRET"'),
+]
+
+
+class ScanBody(BaseModel):
+    target: str = Field(..., min_length=1)
+    patterns: list[str] | None = None  # subset of pattern labels, or None for all
+    custom_queries: list[str] = Field(default_factory=list)
+    per_query: int = Field(default=10, ge=1, le=30)
+
+
+@router.get("/patterns")
+def patterns() -> dict[str, Any]:
+    return {"patterns": [{"label": p[0], "template": p[1]} for p in LEAK_PATTERNS]}
+
+
+@router.get("/status")
+def status() -> dict[str, Any]:
+    token = keychain_get_named("github_token")
+    return {
+        "authenticated": bool(token),
+        "rate_limit_hint": "30 req/min authenticated, 10 req/min unauthenticated",
+    }
+
+
+def _build_headers() -> dict[str, str]:
+    headers = {
+        "User-Agent": UA,
+        "Accept": "application/vnd.github.text-match+json",
+    }
+    token = keychain_get_named("github_token")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+@router.post("/search")
+async def search(body: ScanBody) -> dict[str, Any]:
+    t = body.target.strip()
+    if not t:
+        raise HTTPException(400, "target is required")
+
+    chosen = body.patterns
+    queries: list[tuple[str, str]] = []
+    for label, tmpl in LEAK_PATTERNS:
+        if chosen is None or label in chosen:
+            queries.append((label, tmpl.replace("{t}", t)))
+    for i, q in enumerate(body.custom_queries):
+        queries.append((f"custom-{i}", q))
+
+    results: list[dict[str, Any]] = []
+    headers = _build_headers()
+
+    async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+        for label, q in queries:
+            try:
+                r = await client.get(
+                    f"{GH_BASE}/search/code",
+                    params={"q": q, "per_page": body.per_query},
+                )
+            except httpx.HTTPError as e:
+                results.append({"label": label, "query": q,
+                                "items": [], "error": str(e)})
+                continue
+
+            if r.status_code == 403:
+                # Rate limited or auth required
+                detail = (r.json() or {}).get("message", "")
+                results.append({"label": label, "query": q, "items": [],
+                                "error": f"GitHub 403: {detail}"})
+                break  # don't keep hammering
+            if r.status_code == 422:
+                results.append({"label": label, "query": q, "items": [],
+                                "error": "query rejected (422)"})
+                continue
+            if not r.ok:
+                results.append({"label": label, "query": q, "items": [],
+                                "error": f"HTTP {r.status_code}"})
+                continue
+
+            data = r.json()
+            items = []
+            for it in data.get("items", []):
+                snippets: list[str] = []
+                for m in it.get("text_matches", []):
+                    frag = (m.get("fragment") or "").strip()
+                    if frag:
+                        snippets.append(frag[:400])
+                items.append({
+                    "name": it.get("name", ""),
+                    "path": it.get("path", ""),
+                    "html_url": it.get("html_url", ""),
+                    "repository": {
+                        "full_name": it.get("repository", {}).get("full_name", ""),
+                        "html_url":  it.get("repository", {}).get("html_url", ""),
+                        "stars":     it.get("repository", {}).get("stargazers_count", 0),
+                    },
+                    "snippets": snippets,
+                })
+            results.append({
+                "label": label,
+                "query": q,
+                "items": items,
+                "total_count": data.get("total_count", 0),
+            })
+
+    return {"results": results, "authenticated": "Authorization" in headers}

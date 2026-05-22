@@ -1,0 +1,163 @@
+"""Port Scanner — WebSocket streaming endpoint.
+
+Protocol:
+
+    client -> server (once, on connect):
+        {"target": "192.168.1.1", "ports": "1-1024",
+         "timeout": 1.0, "threads": 100}
+
+    server -> client:
+        {"type": "started", "ip": "1.2.3.4", "target": "...", "total": 1024}
+        {"type": "open",     "port": 22, "service": "SSH", "banner": "..."}
+        {"type": "progress", "done": 256, "total": 1024}
+        {"type": "done",     "elapsed": 5.2, "open_count": 5}
+        {"type": "error",    "detail": "..."}
+
+    client -> server (any time):
+        {"action": "stop"}
+"""
+from __future__ import annotations
+
+import asyncio
+import socket
+import time
+from typing import Any
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from lib import hids_notify, scanner
+
+router = APIRouter(tags=["port-scanner"])
+
+
+@router.websocket("/ws/port-scan")
+async def port_scan_ws(ws: WebSocket) -> None:
+    await ws.accept()
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+    scan_task: asyncio.Task | None = None
+
+    async def listen_for_stop() -> None:
+        """Background listener: drain inbound messages while scan runs."""
+        try:
+            while True:
+                msg = await ws.receive_json()
+                if isinstance(msg, dict) and msg.get("action") == "stop":
+                    stop.set()
+                    return
+        except WebSocketDisconnect:
+            stop.set()
+        except Exception:
+            stop.set()
+
+    try:
+        # Handshake message
+        init: dict[str, Any] = await ws.receive_json()
+        target  = str(init.get("target", "")).strip()
+        ports_s = str(init.get("ports", "1-1024"))
+        try:
+            timeout = float(init.get("timeout", 1.0))
+        except (TypeError, ValueError):
+            timeout = 1.0
+        try:
+            n_threads = int(init.get("threads", 100))
+        except (TypeError, ValueError):
+            n_threads = 100
+
+        if not target:
+            await ws.send_json({"type": "error", "detail": "target is required"})
+            await ws.close()
+            return
+        try:
+            ports = scanner.parse_ports(ports_s)
+        except ValueError as exc:
+            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.close()
+            return
+        try:
+            ip = scanner.resolve_host(target)
+        except socket.gaierror as exc:
+            await ws.send_json({"type": "error",
+                                "detail": f"cannot resolve '{target}': {exc}"})
+            await ws.close()
+            return
+
+        listener = asyncio.create_task(listen_for_stop())
+
+        await ws.send_json({
+            "type": "started",
+            "target": target, "ip": ip,
+            "total": len(ports),
+            "threads": n_threads, "timeout": timeout,
+        })
+        await asyncio.sleep(0)   # let the start event flush
+
+        open_count = 0
+        last_progress_at = 0.0
+
+        def on_open(port: int, service: str, banner: str) -> None:
+            nonlocal open_count
+            open_count += 1
+            asyncio.run_coroutine_threadsafe(
+                ws.send_json({"type": "open", "port": port,
+                              "service": service, "banner": banner}),
+                loop,
+            )
+
+        def on_progress(done: int, total: int) -> None:
+            nonlocal last_progress_at
+            now = time.monotonic()
+            # Throttle progress events to ~30/s to keep the WS pipe sane
+            if done < total and now - last_progress_at < 0.033:
+                return
+            last_progress_at = now
+            asyncio.run_coroutine_threadsafe(
+                ws.send_json({"type": "progress", "done": done, "total": total}),
+                loop,
+            )
+
+        def should_stop() -> bool:
+            return stop.is_set()
+
+        t0 = time.monotonic()
+        scan_task = loop.run_in_executor(
+            None,
+            lambda: scanner.scan_stream(
+                ip, ports, timeout, n_threads,
+                on_open=on_open, on_progress=on_progress,
+                should_stop=should_stop,
+            ),
+        )
+        try:
+            await scan_task
+        finally:
+            listener.cancel()
+
+        elapsed = round(time.monotonic() - t0, 2)
+        await ws.send_json({
+            "type": "done",
+            "elapsed": elapsed,
+            "open_count": open_count,
+            "stopped": stop.is_set(),
+        })
+        if not stop.is_set():
+            await hids_notify.notify(
+                "info", "port-scan",
+                f"Port scan complete — {open_count} open on {target}",
+                {"target": target, "ip": ip,
+                 "open_count": open_count,
+                 "total_ports": len(ports),
+                 "elapsed_seconds": elapsed},
+            )
+    except WebSocketDisconnect:
+        stop.set()
+    except Exception as exc:
+        try:
+            await ws.send_json({"type": "error", "detail": str(exc)})
+        except Exception:
+            pass
+    finally:
+        try:
+            await ws.close()
+        except Exception:
+            pass

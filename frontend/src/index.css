@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Theme palettes. Each color is a space-separated RGB triplet so the Tailwind
+ * `rgb(var(--xxx) / <alpha-value>)` bindings in tailwind.config.js can use
+ * opacity modifiers (e.g. `bg-bg-base/40`).
+ *
+ * Dark is the default; adding `.light` to <html> swaps in the light palette.
+ * The theme hook (src/lib/theme.ts) manages that class based on user choice
+ * + system preference.
+ */
+:root {
+  /* Dark (GitHub-dark inspired) */
+  --bg-base:         10 13 18;     /* #0a0d12 */
+  --bg-sidebar:      16 20 25;     /* #101419 */
+  --bg-card:         22 27 34;     /* #161b22 */
+  --bg-panel:        15 19 24;     /* #0f1318 — slightly darker than card */
+  --bg-row-alt:      26 31 38;     /* #1a1f26 */
+  --bg-nav-hover:    24 29 36;     /* #181d24 */
+  --bg-nav-active:   29 35 41;     /* #1d2329 */
+  --divider:         37 43 51;     /* #252b33 */
+  --ink-primary:     230 237 243;  /* #e6edf3 */
+  --ink-muted:       139 148 158;  /* #8b949e */
+  --ink-dim:         125 133 144;  /* #7d8590 */
+  --accent:          88 166 255;   /* #58a6ff */
+  --accent-dim:      31 111 235;   /* #1f6feb */
+  --phos:            74 222 128;   /* #4ade80 */
+  --amber:           251 191 36;   /* #fbbf24 */
+  --danger:          248 81 73;    /* #f85149 */
+
+  /* Scrollbar — kept theme-aware below */
+  --scrollbar-track: 10 13 18;
+  --scrollbar-thumb: 37 43 51;
+  --scrollbar-thumb-hover: 48 54 61;
+}
+
+:root.light {
+  /* Light (GitHub-light inspired) */
+  --bg-base:         255 255 255;   /* white work area */
+  --bg-sidebar:      246 248 250;   /* #f6f8fa */
+  --bg-card:         255 255 255;   /* relies on border for contrast */
+  --bg-panel:        241 243 246;   /* slightly tinted panel */
+  --bg-row-alt:      246 248 250;   /* zebra: matches sidebar */
+  --bg-nav-hover:    234 238 242;   /* #eaeef2 */
+  --bg-nav-active:   221 244 255;   /* #ddf4ff (accent-tinted) */
+  --divider:         208 215 222;   /* #d0d7de */
+  --ink-primary:     31 35 40;      /* #1f2328 */
+  --ink-muted:       87 96 106;     /* #57606a */
+  --ink-dim:         140 149 159;   /* #8c959f */
+  --accent:          9 105 218;     /* #0969da */
+  --accent-dim:      33 139 255;    /* #218bff */
+  --phos:            26 127 55;     /* #1a7f37 — darker green for contrast on white */
+  --amber:           154 103 0;     /* #9a6700 */
+  --danger:          207 34 46;     /* #cf222e */
+
+  --scrollbar-track: 246 248 250;
+  --scrollbar-thumb: 208 215 222;
+  --scrollbar-thumb-hover: 175 184 193;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  font-family: theme('fontFamily.mono');
+  background: rgb(var(--bg-base));
+  color: rgb(var(--ink-primary));
+}
+
+/* Subtle scrollbars — pick up theme vars */
+::-webkit-scrollbar       { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgb(var(--scrollbar-track)); }
+::-webkit-scrollbar-thumb { background: rgb(var(--scrollbar-thumb)); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--scrollbar-thumb-hover)); }
+
+/* Electron window dragging — apply to any region the user should be able
+   to grab to move the window. Interactive controls inside need .app-no-drag */
+.app-drag    { -webkit-app-region: drag; }
+.app-no-drag { -webkit-app-region: no-drag; }
+
+/* Blinking caret accent for the terminal feel */
+@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.caret-blink::after {
+  content: "▍";
+  margin-left: 4px;
+  animation: blink 1.1s steps(1, end) infinite;
+  color: rgb(var(--phos));
+}

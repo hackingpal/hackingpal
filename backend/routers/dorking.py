@@ -1,0 +1,175 @@
+"""Google Dorking — dork generation + optional Custom Search execution.
+
+Two modes:
+
+  - **Manual** (no key): we generate dork strings for the target across
+    selected categories and return `google.com/search?q=...` URLs the user
+    opens in their own browser. Avoids Google's anti-bot blocks.
+  - **CSE-backed** (key required): if `google_cse_api_key` and `google_cse_id`
+    are configured in Keychain, we execute each dork via the Custom Search
+    JSON API and return result snippets. CSE has a 100/day free tier.
+
+We deliberately *don't* scrape google.com directly — it triggers CAPTCHAs and
+hurts the user's real Google session.
+"""
+from __future__ import annotations
+
+from typing import Any
+from urllib.parse import quote_plus
+
+import httpx
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from .settings import keychain_get_named
+
+router = APIRouter(prefix="/dorking", tags=["dorking"])
+
+UA = "MyHackingPal/0.1 dorking"
+
+# Each category: a list of dork templates. `{t}` is the target domain.
+CATEGORIES: dict[str, list[str]] = {
+    "files": [
+        'site:{t} filetype:pdf',
+        'site:{t} filetype:doc OR filetype:docx',
+        'site:{t} filetype:xls OR filetype:xlsx',
+        'site:{t} filetype:ppt OR filetype:pptx',
+        'site:{t} filetype:sql',
+        'site:{t} filetype:bak OR filetype:old OR filetype:backup',
+        'site:{t} filetype:log',
+        'site:{t} filetype:env',
+        'site:{t} filetype:conf OR filetype:config',
+        'site:{t} filetype:json',
+    ],
+    "admin": [
+        'site:{t} inurl:admin',
+        'site:{t} inurl:login',
+        'site:{t} inurl:dashboard',
+        'site:{t} intitle:"admin login"',
+        'site:{t} inurl:wp-admin',
+        'site:{t} inurl:phpmyadmin OR inurl:adminer',
+    ],
+    "leaks": [
+        'site:{t} "password"',
+        'site:{t} "api_key" OR "apikey"',
+        'site:{t} "secret"',
+        'site:{t} "BEGIN RSA PRIVATE KEY"',
+        'site:{t} "Index of /"',
+        'site:pastebin.com "{t}"',
+        'site:trello.com "{t}"',
+        'site:github.com "{t}" password',
+    ],
+    "errors": [
+        'site:{t} "fatal error"',
+        'site:{t} "stack trace" OR "stacktrace"',
+        'site:{t} "warning: mysql"',
+        'site:{t} "Error establishing a database connection"',
+        'site:{t} "Whitelabel Error Page"',
+    ],
+    "configs": [
+        'site:{t} ext:env',
+        'site:{t} ext:yml OR ext:yaml',
+        'site:{t} inurl:.git',
+        'site:{t} inurl:wp-config.php',
+        'site:{t} ".htaccess"',
+        'site:{t} "DB_PASSWORD"',
+    ],
+    "discovery": [
+        'site:{t}',
+        'site:*.{t} -www',
+        'site:{t} inurl:test OR inurl:dev OR inurl:staging',
+        'site:{t} intitle:"index of"',
+        'site:{t} inurl:beta',
+    ],
+    "archives": [
+        'site:web.archive.org/web/* "{t}"',
+        'site:archive.org "{t}"',
+        'site:cachedview.com "{t}"',
+    ],
+}
+
+
+class GenerateBody(BaseModel):
+    target: str = Field(..., min_length=1)
+    categories: list[str] = Field(default_factory=lambda: list(CATEGORIES.keys()))
+    execute: bool = False
+
+
+@router.get("/categories")
+def categories() -> dict[str, Any]:
+    return {"categories": [{"id": k, "count": len(v)} for k, v in CATEGORIES.items()]}
+
+
+@router.get("/status")
+def status() -> dict[str, Any]:
+    cse_key = keychain_get_named("google_cse_api_key")
+    cse_id  = keychain_get_named("google_cse_id")
+    return {
+        "cse_configured": bool(cse_key and cse_id),
+    }
+
+
+def _dorks_for(target: str, picked: list[str]) -> list[dict[str, str]]:
+    target = target.strip().lower()
+    out: list[dict[str, str]] = []
+    for cat in picked:
+        if cat not in CATEGORIES:
+            continue
+        for tmpl in CATEGORIES[cat]:
+            q = tmpl.replace("{t}", target)
+            out.append({
+                "category": cat,
+                "query": q,
+                "url": f"https://www.google.com/search?q={quote_plus(q)}",
+            })
+    return out
+
+
+@router.post("/generate")
+async def generate(body: GenerateBody) -> dict[str, Any]:
+    dorks = _dorks_for(body.target, body.categories)
+    if not body.execute:
+        return {"dorks": dorks, "executed": False}
+
+    cse_key = keychain_get_named("google_cse_api_key")
+    cse_id  = keychain_get_named("google_cse_id")
+    if not (cse_key and cse_id):
+        raise HTTPException(
+            401,
+            "Google CSE not configured — set both `google_cse_api_key` and `google_cse_id` "
+            "via POST /settings/keys, or run with execute=false to just generate dork URLs.",
+        )
+
+    results: list[dict[str, Any]] = []
+    async with httpx.AsyncClient(
+        timeout=15.0, headers={"User-Agent": UA},
+    ) as client:
+        for d in dorks:
+            try:
+                r = await client.get(
+                    "https://www.googleapis.com/customsearch/v1",
+                    params={
+                        "key":  cse_key,
+                        "cx":   cse_id,
+                        "q":    d["query"],
+                        "num":  10,
+                    },
+                )
+                if r.status_code == 429 or r.status_code == 403:
+                    # Quota exceeded — bail rather than burn through it
+                    results.append({**d, "items": [], "error": f"CSE quota: {r.status_code}"})
+                    break
+                if not r.ok:
+                    results.append({**d, "items": [], "error": f"HTTP {r.status_code}"})
+                    continue
+                data = r.json()
+                items = [
+                    {"title": it.get("title", ""), "link": it.get("link", ""),
+                     "snippet": it.get("snippet", "")}
+                    for it in data.get("items", [])
+                ]
+                results.append({**d, "items": items})
+            except Exception as e:
+                results.append({**d, "items": [], "error": str(e)})
+
+    return {"dorks": results, "executed": True}

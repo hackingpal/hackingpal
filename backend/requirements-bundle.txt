@@ -1,0 +1,23 @@
+# Runtime deps for the PyInstaller-bundled MyHackingPal sidecar.
+# Kept in sync with what's actually imported by routers/ + lib/ + main.py.
+#
+# pyproject.toml still drives `pip install -e .` for the dev backend; this
+# file is the source of truth for *bundled* deps (Linux Docker / Win CI).
+fastapi>=0.110
+uvicorn[standard]>=0.27
+# wsproto/h11 are referenced explicitly by the PyInstaller spec (uvicorn's
+# websocket and HTTP protocol impls). uvicorn[standard] pulls websockets +
+# httptools but not these — install them so PyInstaller can find them.
+wsproto>=1
+h11>=0.14
+python-multipart>=0.0.9
+Pillow>=10
+cryptography>=42
+passlib>=1.7
+bcrypt>=4
+argon2-cffi>=23
+psutil>=5.9
+pydantic>=2
+
+# PyInstaller itself is a build-time dep (not bundled):
+pyinstaller>=6

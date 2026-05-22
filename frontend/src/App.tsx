@@ -1,0 +1,339 @@
+import { useEffect, useState } from "react";
+import Sidebar, { type NavId } from "./components/Sidebar";
+import { fetchSystemInfo, type SystemInfo } from "./api";
+import IpChecker from "./pages/IpChecker";
+import DnsRecon from "./pages/DnsRecon";
+import Whois from "./pages/Whois";
+import TlsAudit from "./pages/TlsAudit";
+import Fingerprint from "./pages/Fingerprint";
+import HttpProbe from "./pages/HttpProbe";
+import CtLog from "./pages/CtLog";
+import EmailSecurity from "./pages/EmailSecurity";
+import Takeover from "./pages/Takeover";
+import ReverseIp from "./pages/ReverseIp";
+import Cms from "./pages/Cms";
+import MacosPosture from "./pages/MacosPosture";
+import LocalDiscovery from "./pages/LocalDiscovery";
+import Jwt from "./pages/Jwt";
+import Graphql from "./pages/Graphql";
+import HashCracker from "./pages/HashCracker";
+import PortScanner from "./pages/PortScanner";
+import Nmap from "./pages/Nmap";
+import LanScan from "./pages/LanScan";
+import NetworkAudit from "./pages/NetworkAudit";
+import Ids from "./pages/Ids";
+import Ping from "./pages/Ping";
+import Tcpdump from "./pages/Tcpdump";
+import Wifi from "./pages/Wifi";
+import Vpn from "./pages/Vpn";
+import Terminal from "./pages/Terminal";
+import Brew from "./pages/Brew";
+import Persistence from "./pages/Persistence";
+import Processes from "./pages/Processes";
+import Stego from "./pages/Stego";
+import ReverseShell from "./pages/ReverseShell";
+import SubdomainEnum from "./pages/SubdomainEnum";
+import Xss from "./pages/Xss";
+import Sqli from "./pages/Sqli";
+import Cmdi from "./pages/Cmdi";
+import Lfi from "./pages/Lfi";
+import Ssrf from "./pages/Ssrf";
+import Idor from "./pages/Idor";
+import Placeholder from "./pages/Placeholder";
+import PlannedToolPage from "./pages/PlannedToolPage";
+import Engagements from "./pages/Engagements";
+import Findings from "./pages/Findings";
+import Presets from "./pages/Presets";
+import CvssCalculator from "./pages/CvssCalculator";
+import Obfuscator from "./pages/Obfuscator";
+import Imds from "./pages/Imds";
+import S3Scanner from "./pages/S3Scanner";
+import BreachLookup from "./pages/BreachLookup";
+import Dorking from "./pages/Dorking";
+import GithubLeak from "./pages/GithubLeak";
+import ShodanCensys from "./pages/ShodanCensys";
+import PeopleEnum from "./pages/PeopleEnum";
+import AwsRecon from "./pages/AwsRecon";
+import AzureRecon from "./pages/AzureRecon";
+import GcpRecon from "./pages/GcpRecon";
+import LdapEnum from "./pages/LdapEnum";
+import SmbEnum from "./pages/SmbEnum";
+import AdSpray from "./pages/AdSpray";
+import KerberosRoast from "./pages/KerberosRoast";
+import WifiScan from "./pages/WifiScan";
+import EvilTwin from "./pages/EvilTwin";
+import BtRecon from "./pages/BtRecon";
+import WpaCapture from "./pages/WpaCapture";
+import PivotingHelper from "./pages/PivotingHelper";
+import CredHarvest from "./pages/CredHarvest";
+import C2Beacon from "./pages/C2Beacon";
+import ProfileFinder from "./pages/ProfileFinder";
+import BloodHound from "./pages/BloodHound";
+import LateralMove from "./pages/LateralMove";
+import ChatBubble from "./components/ChatBubble";
+import CommandPalette from "./components/CommandPalette";
+import ToolCatalog from "./components/ToolCatalog";
+import EngagementPill from "./components/EngagementPill";
+import { useTheme } from "./lib/theme";
+import { isPlannedId } from "./lib/plannedTools";
+import { api } from "./api";
+
+type Health = { status: string; version: string; pid: string };
+
+const SIDEBAR_COLLAPSED_KEY = "sidebar:hidden";
+
+export default function App() {
+  // `active` is widened to `string` so planned-tool ids (`planned:<slug>`)
+  // also work. Built-in tools still use the `NavId` union — assignment from
+  // it to `string` is always safe.
+  const [active, setActive] = useState<NavId | string>("ip");
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const [health, setHealth] = useState<Health | null>(null);
+  // `everConnected` distinguishes "still booting" (show CONNECTING) from a
+  // mid-session drop (show UNREACHABLE).
+  const [everConnected, setEverConnected] = useState(false);
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null);
+  const [sidebarHidden, setSidebarHidden] = useState<boolean>(() => {
+    try { return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1"; } catch { return false; }
+  });
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarHidden ? "1" : "0"); } catch {}
+  }, [sidebarHidden]);
+
+  // Keyboard shortcuts:
+  //   ⌘B / Ctrl+B — toggle sidebar (matches VS Code, Linear, etc.)
+  //   ⌘K / Ctrl+K — open command palette
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "b") {
+        e.preventDefault();
+        setSidebarHidden((v) => !v);
+      } else if (k === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (k === "i") {
+        // ⌘I opens the tool catalog (i for "ideas")
+        e.preventDefault();
+        setCatalogOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    let stop = false;
+    let delay = 250; // poll fast at first so we catch the backend booting
+    const tick = async () => {
+      try {
+        const h = await api<Health>("/health");
+        if (stop) return;
+        setHealth(h);
+        setEverConnected(true);
+        delay = 5000; // back off once we've seen it
+      } catch {
+        if (stop) return;
+        setHealth(null);
+        // Ramp 250 → 500 → 1000 while we wait for the sidecar to come up.
+        delay = Math.min(delay * 2, 1000);
+      }
+      if (!stop) setTimeout(tick, delay);
+    };
+    tick();
+    return () => { stop = true; };
+  }, []);
+
+  // Fetch system info once the backend is reachable, then memoize.
+  useEffect(() => {
+    if (!health || sysInfo) return;
+    fetchSystemInfo().then(setSysInfo).catch(() => {});
+  }, [health, sysInfo]);
+
+  const platform = (sysInfo?.platform as "darwin" | "linux" | "win32" | undefined) ?? null;
+  const theme = useTheme();
+  const themeIcon = theme.choice === "dark" ? "🌙"
+    : theme.choice === "light" ? "☀"
+    : "🖥";
+  const themeLabel = theme.choice === "system"
+    ? `auto (${theme.resolved})`
+    : theme.choice;
+
+  return (
+    <div className="flex h-full bg-bg-base text-ink-primary">
+      {!sidebarHidden && (
+        <Sidebar active={active} onSelect={setActive} platform={platform} />
+      )}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Top status strip — also draggable. When the sidebar is hidden the
+            macOS traffic lights overlay the top-left ~88px, so we inset the
+            toggle past them. */}
+        <div
+          className={
+            "app-drag h-7 border-b border-divider bg-bg-sidebar flex items-center justify-between pr-4 " +
+            (sidebarHidden ? "pl-[88px]" : "pl-3")
+          }
+        >
+          <div className="flex items-center gap-2 app-no-drag">
+            <button
+              onClick={() => setSidebarHidden((v) => !v)}
+              title={(sidebarHidden ? "Show sidebar" : "Hide sidebar") + " (⌘B)"}
+              className="text-ink-muted hover:text-ink-primary
+                         text-[14px] leading-none px-1.5 py-0.5 rounded
+                         hover:bg-bg-nav-hover transition"
+              aria-label={sidebarHidden ? "Show sidebar" : "Hide sidebar"}
+            >
+              {sidebarHidden ? "›" : "‹"}
+            </button>
+            <button
+              onClick={() => setPaletteOpen(true)}
+              title="Search tools (⌘K)"
+              className="flex items-center gap-2 px-2 py-0.5 rounded
+                         text-[10px] tracking-wider text-ink-dim
+                         border border-divider hover:border-ink-muted
+                         hover:text-ink-primary transition"
+            >
+              <span aria-hidden>⌕</span>
+              <span>Search…</span>
+              <kbd className="text-ink-dim text-[9px] font-mono">⌘K</kbd>
+            </button>
+            <button
+              onClick={() => setCatalogOpen(true)}
+              title="Tool catalog — plan new tools (⌘I)"
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded
+                         text-[10px] tracking-wider text-ink-dim
+                         border border-divider hover:border-ink-muted
+                         hover:text-ink-primary transition"
+              aria-label="Open tool catalog"
+            >
+              <span className="text-[12px] leading-none font-bold">+</span>
+              <span>Tool</span>
+              <kbd className="text-ink-dim text-[9px] font-mono">⌘I</kbd>
+            </button>
+          </div>
+          <div className="flex items-center gap-3 text-[10px] tracking-widest text-ink-dim app-no-drag">
+            <EngagementPill onOpenEngagementsPage={() => setActive("engagements")} />
+            <button
+              onClick={theme.cycle}
+              title={`Theme: ${themeLabel} — click to cycle (dark → light → system)`}
+              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded
+                         hover:bg-bg-nav-hover hover:text-ink-primary transition leading-none"
+              aria-label={`Switch theme (current: ${themeLabel})`}
+            >
+              <span className="text-[12px] leading-none">{themeIcon}</span>
+              <span className="uppercase">{theme.choice}</span>
+            </button>
+            <div className="flex items-center gap-2">
+              <span
+                className={
+                  "inline-block w-1.5 h-1.5 rounded-full " +
+                  (health
+                    ? "bg-phos"
+                    : everConnected
+                      ? "bg-danger animate-pulse"
+                      : "bg-amber animate-pulse")
+                }
+              />
+              {health
+                ? `BACKEND CONNECTED · pid ${health.pid}`
+                : everConnected
+                  ? "BACKEND UNREACHABLE"
+                  : "BACKEND CONNECTING…"}
+            </div>
+          </div>
+        </div>
+
+        <main className="flex-1 overflow-hidden">
+          {active === "engagements" ? <Engagements /> :
+           active === "findings"    ? <Findings /> :
+           active === "playbooks"   ? <Presets /> :
+           active === "ip"          ? <IpChecker /> :
+           active === "dns"         ? <DnsRecon /> :
+           active === "whois"       ? <Whois /> :
+           active === "tls"         ? <TlsAudit /> :
+           active === "fingerprint" ? <Fingerprint /> :
+           active === "http"        ? <HttpProbe /> :
+           active === "ct"          ? <CtLog /> :
+           active === "email"       ? <EmailSecurity /> :
+           active === "takeover"    ? <Takeover /> :
+           active === "revip"       ? <ReverseIp /> :
+           active === "cms"         ? <Cms /> :
+           active === "jwt"         ? <Jwt /> :
+           active === "graphql"     ? <Graphql /> :
+           active === "subdom"      ? <SubdomainEnum /> :
+           active === "xss"         ? <Xss /> :
+           active === "sqli"        ? <Sqli /> :
+           active === "cmdi"        ? <Cmdi /> :
+           active === "lfi"         ? <Lfi /> :
+           active === "ssrf"        ? <Ssrf /> :
+           active === "idor"        ? <Idor /> :
+           active === "imds"        ? <Imds /> :
+           active === "s3"          ? <S3Scanner /> :
+           active === "aws"         ? <AwsRecon /> :
+           active === "azure"       ? <AzureRecon /> :
+           active === "gcp"         ? <GcpRecon /> :
+           active === "ldap"        ? <LdapEnum /> :
+           active === "smb"         ? <SmbEnum /> :
+           active === "adspray"     ? <AdSpray /> :
+           active === "kerberoast"  ? <KerberosRoast /> :
+           active === "bloodhound"  ? <BloodHound /> :
+           active === "lateral"     ? <LateralMove /> :
+           active === "wifiscan"    ? <WifiScan /> :
+           active === "eviltwin"    ? <EvilTwin /> :
+           active === "bt"          ? <BtRecon /> :
+           active === "wpacap"      ? <WpaCapture /> :
+           active === "pivot"       ? <PivotingHelper /> :
+           active === "credhrv"     ? <CredHarvest /> :
+           active === "c2"          ? <C2Beacon /> :
+           active === "breach"      ? <BreachLookup /> :
+           active === "dorking"     ? <Dorking /> :
+           active === "ghleak"      ? <GithubLeak /> :
+           active === "shodanc"     ? <ShodanCensys /> :
+           active === "people"      ? <PeopleEnum /> :
+           active === "profiles"    ? <ProfileFinder /> :
+           active === "obfuscator"  ? <Obfuscator /> :
+           active === "cvss"        ? <CvssCalculator /> :
+           active === "hash"        ? <HashCracker /> :
+           active === "macos"       ? <MacosPosture /> :
+           active === "localdisco"  ? <LocalDiscovery /> :
+           active === "ports"       ? <PortScanner /> :
+           active === "nmap"        ? <Nmap /> :
+           active === "lan"         ? <LanScan /> :
+           active === "audit"       ? <NetworkAudit /> :
+           active === "ids"         ? <Ids /> :
+           active === "persistence" ? <Persistence /> :
+           active === "processes"   ? <Processes /> :
+           active === "stego"       ? <Stego /> :
+           active === "revshell"    ? <ReverseShell /> :
+           active === "ping"        ? <Ping /> :
+           active === "tcpdump"     ? <Tcpdump /> :
+           active === "wifi"        ? <Wifi /> :
+           active === "vpn"         ? <Vpn /> :
+           active === "term"        ? <Terminal /> :
+           active === "brew"        ? <Brew /> :
+           isPlannedId(active)      ? <PlannedToolPage
+                                          id={active}
+                                          onOpenCatalog={() => setCatalogOpen(true)}
+                                          onAfterRemove={() => setActive("ip")}
+                                        /> :
+                                      <Placeholder name={active} />}
+        </main>
+      </div>
+      <ChatBubble activePage={active} />
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelect={(id) => setActive(id)}
+        platform={platform}
+      />
+      <ToolCatalog
+        open={catalogOpen}
+        onClose={() => setCatalogOpen(false)}
+        onOpenTool={(id) => setActive(id)}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,374 @@
+"""CMS / web-stack fingerprinter — Wappalyzer-lite.
+
+REST  GET /cms/fingerprint?url=https://target.example.com&confirm=true
+
+Fetches the URL once (GET, follow up to 3 redirects), inspects:
+  * response headers (server, x-powered-by, set-cookie, etc.)
+  * HTML body (generator meta, script src patterns, inline script names)
+  * cookies (well-known names by CMS)
+  * favicon hash (planned — not in v1)
+
+Returns detected technologies grouped by category, with confidence (low/med/high)
+and best-effort version extraction.
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+import ssl
+import time
+from typing import Any
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, HTTPException, Query
+
+from lib import hids_notify
+from lib.target_policy import check_target
+
+router = APIRouter(tags=["cms"])
+
+
+# (name, category, [
+#   ("header", header_name, value_regex_or_None, version_group_or_None),
+#   ("html",   pattern,                          version_group),
+#   ("cookie", cookie_name,                      None),
+# ])
+SIGNATURES: list[tuple[str, str, list[tuple]]] = [
+    ("WordPress", "CMS", [
+        ("html", r"<meta name=\"generator\" content=\"WordPress ?([\d.]*)", 1),
+        ("html", r"/wp-content/", None),
+        ("html", r"/wp-includes/", None),
+        ("cookie", "wordpress_logged_in", None),
+    ]),
+    ("Drupal", "CMS", [
+        ("html", r"<meta name=\"Generator\" content=\"Drupal ?([\d.]*)", 1),
+        ("header", "x-generator", r"Drupal ?([\d.]+)", 1),
+        ("html", r"sites/all/(modules|themes)/", None),
+    ]),
+    ("Joomla", "CMS", [
+        ("html", r"<meta name=\"generator\" content=\"Joomla! ?([\d.]*)", 1),
+        ("html", r"/media/jui/js/", None),
+    ]),
+    ("Ghost", "CMS", [
+        ("html", r"<meta name=\"generator\" content=\"Ghost ?([\d.]*)", 1),
+        ("header", "x-ghost-cache-status", None, None),
+    ]),
+    ("Shopify", "Ecommerce", [
+        ("header", "x-shopify-stage", None, None),
+        ("html", r"cdn\.shopify\.com", None),
+        ("cookie", "_shopify_y", None),
+    ]),
+    ("Magento", "Ecommerce", [
+        ("html", r"Magento_PageBuilder", None),
+        ("cookie", "frontend", None),
+    ]),
+    ("WooCommerce", "Ecommerce", [
+        ("html", r"woocommerce-", None),
+        ("html", r"/wp-content/plugins/woocommerce/", None),
+    ]),
+
+    # Frontend frameworks
+    ("React", "JS framework", [
+        ("html", r"data-reactroot=", None),
+        ("html", r"_react(Listening|Container)", None),
+        ("html", r"react(?:\.production)?\.min\.js", None),
+    ]),
+    ("Vue.js", "JS framework", [
+        ("html", r"data-v-[a-f0-9]{8}", None),
+        ("html", r"vue(?:\.runtime)?(?:\.min)?\.js", None),
+    ]),
+    ("Angular", "JS framework", [
+        ("html", r"ng-app=|ng-controller=|ng-version=\"([\d.]+)", 1),
+        ("html", r"@angular/", None),
+    ]),
+    ("Next.js", "Framework", [
+        ("html", r"/_next/static/", None),
+        ("html", r"__NEXT_DATA__", None),
+        ("header", "x-powered-by", r"Next\.js ?([\d.]+)?", 1),
+    ]),
+    ("Nuxt.js", "Framework", [
+        ("html", r"window\.__NUXT__", None),
+        ("html", r"/_nuxt/", None),
+    ]),
+    ("Svelte/SvelteKit", "Framework", [
+        ("html", r"data-sveltekit-", None),
+        ("html", r"_app/immutable/", None),
+    ]),
+    ("Gatsby", "Framework", [
+        ("html", r"id=\"___gatsby\"", None),
+        ("html", r"window\.___gatsby", None),
+    ]),
+
+    # Servers
+    ("nginx", "Web server", [
+        ("header", "server", r"nginx/?([\d.]*)?", 1),
+    ]),
+    ("Apache", "Web server", [
+        ("header", "server", r"Apache/?([\d.]*)?", 1),
+    ]),
+    ("Caddy", "Web server", [
+        ("header", "server", r"Caddy", None),
+    ]),
+    ("Cloudflare", "CDN", [
+        ("header", "server", r"^cloudflare$", None),
+        ("header", "cf-ray", None, None),
+    ]),
+    ("Fastly", "CDN", [
+        ("header", "x-fastly-request-id", None, None),
+        ("header", "x-served-by", r"cache-.*-FAS", None),
+    ]),
+    ("Akamai", "CDN", [
+        ("header", "x-akamai-transformed", None, None),
+    ]),
+    ("Vercel", "Hosting/Edge", [
+        ("header", "x-vercel-id", None, None),
+        ("header", "server", r"Vercel", None),
+    ]),
+    ("Netlify", "Hosting/Edge", [
+        ("header", "server", r"Netlify", None),
+    ]),
+    ("GitHub Pages", "Hosting", [
+        ("header", "x-github-request-id", None, None),
+    ]),
+    ("AWS CloudFront", "CDN", [
+        ("header", "via", r"CloudFront", None),
+        ("header", "x-amz-cf-id", None, None),
+    ]),
+
+    # Backend frameworks
+    ("Express.js", "Backend", [
+        ("header", "x-powered-by", r"Express", None),
+    ]),
+    ("PHP", "Backend", [
+        ("header", "x-powered-by", r"PHP/([\d.]+)", 1),
+        ("header", "server", r"PHP/([\d.]+)", 1),
+    ]),
+    ("ASP.NET", "Backend", [
+        ("header", "x-powered-by", r"ASP\.NET", None),
+        ("header", "x-aspnet-version", r"([\d.]+)", 1),
+    ]),
+    ("Ruby on Rails", "Backend", [
+        ("header", "x-powered-by", r"Phusion Passenger", None),
+        ("cookie", "_rails_session", None),
+        ("html", r"name=\"csrf-token\"", None),
+    ]),
+    ("Django", "Backend", [
+        ("cookie", "csrftoken", None),
+        ("cookie", "sessionid", None),  # weak — many things use this
+    ]),
+    ("FastAPI", "Backend", [
+        ("html", r"<title>FastAPI</title>", None),
+        ("html", r"swagger-ui-bundle", None),
+    ]),
+
+    # Analytics / tags
+    ("Google Analytics", "Analytics", [
+        ("html", r"google-analytics\.com/(?:ga|analytics)\.js", None),
+        ("html", r"gtag/js\?id=G-", None),
+    ]),
+    ("Google Tag Manager", "Tag manager", [
+        ("html", r"googletagmanager\.com/gtm\.js", None),
+    ]),
+
+    # CDNs/libraries (low confidence — just signals)
+    ("jQuery", "JS library", [
+        ("html", r"jquery(?:-)?([\d.]+)?(?:\.min)?\.js", 1),
+    ]),
+    ("Bootstrap", "UI", [
+        ("html", r"bootstrap(?:-)?([\d.]+)?(?:\.min)?\.css", 1),
+    ]),
+    ("Tailwind CSS", "UI", [
+        ("html", r"tailwindcss/(\d+\.\d+\.\d+)", 1),
+        ("html", r"tw-(bg|text|flex|grid)-", None),
+    ]),
+]
+
+
+def _fetch(url: str, timeout: float = 10.0) -> tuple[int, dict[str, str], str, str]:
+    """GET the URL (following up to 3 redirects).
+
+    Returns (status, headers_lower, body_text_truncated, final_url).
+    """
+    import http.client
+    seen: set[str] = set()
+    cur = url
+    for _ in range(4):
+        if cur in seen:
+            break
+        seen.add(cur)
+        u = urlparse(cur if "://" in cur else "https://" + cur)
+        scheme = (u.scheme or "https").lower()
+        host = u.hostname or ""
+        port = u.port or (443 if scheme == "https" else 80)
+        path = u.path or "/"
+        if u.query:
+            path += "?" + u.query
+        try:
+            if scheme == "https":
+                conn = http.client.HTTPSConnection(
+                    host, port, timeout=timeout,
+                    context=ssl._create_unverified_context(),
+                )
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=timeout)
+            conn.request("GET", path, headers={
+                "Host": host,
+                "User-Agent": "Mozilla/5.0 (compatible; network-tools/0.1)",
+                "Accept": "text/html,application/xhtml+xml,*/*",
+                "Accept-Language": "en-US,en;q=0.7",
+                "Connection": "close",
+            })
+            resp = conn.getresponse()
+            headers = {k.lower(): v for k, v in resp.getheaders()}
+            if resp.status in (301, 302, 307, 308) and headers.get("location"):
+                loc = headers["location"]
+                if not loc.startswith("http"):
+                    loc = f"{scheme}://{host}{loc if loc.startswith('/') else '/' + loc}"
+                cur = loc
+                conn.close()
+                continue
+            body = resp.read(200 * 1024).decode("utf-8", errors="replace")
+            conn.close()
+            return resp.status, headers, body, cur
+        except Exception as exc:
+            return 0, {}, str(exc), cur
+    return 0, {}, "(too many redirects)", cur
+
+
+def _match_signatures(
+    headers: dict[str, str], body: str, set_cookie: str,
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+
+    def add(name: str, cat: str, version: str, signals: list[str]) -> None:
+        # Merge multiple signals for the same name
+        for existing in found:
+            if existing["name"] == name:
+                if version and not existing["version"]:
+                    existing["version"] = version
+                for s in signals:
+                    if s not in existing["signals"]:
+                        existing["signals"].append(s)
+                if len(existing["signals"]) >= 2:
+                    existing["confidence"] = "high"
+                return
+        found.append({
+            "name": name, "category": cat,
+            "version": version or "",
+            "signals": signals,
+            "confidence": "med" if len(signals) >= 2 else "low",
+        })
+
+    for name, category, sigs in SIGNATURES:
+        for sig in sigs:
+            kind = sig[0]
+            try:
+                if kind == "header":
+                    _, hdr, pattern, vg = sig
+                    val = headers.get(hdr, "")
+                    if not val:
+                        continue
+                    if pattern is None:
+                        add(name, category, "", [f"header {hdr}"])
+                    else:
+                        m = re.search(pattern, val, re.I)
+                        if m:
+                            version = m.group(vg) if vg and m.lastindex and vg <= m.lastindex else ""
+                            add(name, category, version or "", [f"header {hdr}: {val[:50]}"])
+                elif kind == "html":
+                    _, pattern, vg = sig
+                    m = re.search(pattern, body, re.I)
+                    if m:
+                        version = ""
+                        if vg and m.lastindex and vg <= m.lastindex:
+                            version = m.group(vg) or ""
+                        add(name, category, version, [f"html /{pattern[:40]}/"])
+                elif kind == "cookie":
+                    _, cookie_name, _ = sig
+                    if cookie_name in set_cookie:
+                        add(name, category, "", [f"cookie {cookie_name}"])
+            except re.error:
+                continue
+            except IndexError:
+                continue
+
+    # Confidence: 2+ signals = high; otherwise med (if version) or low
+    for f in found:
+        if len(f["signals"]) >= 2:
+            f["confidence"] = "high"
+        elif f["version"]:
+            f["confidence"] = "med"
+
+    return found
+
+
+@router.get("/cms/fingerprint")
+async def cms_fingerprint(url: str = Query(...),
+                          confirm: bool = Query(default=False)) -> dict[str, Any]:
+    url = url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="url is required")
+    u = urlparse(url if "://" in url else "https://" + url)
+    host = u.hostname or ""
+    if not host:
+        raise HTTPException(status_code=400, detail="could not parse host")
+
+    verdict, reason = check_target(host)
+    if verdict == "deny":
+        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+    if verdict == "warn" and not confirm:
+        raise HTTPException(
+            status_code=409,
+            detail={"need_confirm": True, "reason": reason, "target": host},
+        )
+
+    t0 = time.monotonic()
+    status, headers, body, final_url = await asyncio.to_thread(_fetch, url)
+    if status == 0:
+        raise HTTPException(status_code=502, detail=f"fetch failed: {body[:200]}")
+
+    set_cookie = headers.get("set-cookie", "")
+    matches = _match_signatures(headers, body, set_cookie)
+
+    by_cat: dict[str, list[dict[str, Any]]] = {}
+    for m in matches:
+        by_cat.setdefault(m["category"], []).append(m)
+
+    findings: list[dict[str, Any]] = []
+    if not matches:
+        findings.append({"severity": "info", "label": "No stack signatures matched",
+                         "detail": "Either obscured / SPA / behind CDN with no leaks"})
+    # Helpful info-level finding: surface version-disclosing servers
+    for m in matches:
+        if m["version"] and m["category"] in ("Web server", "Backend"):
+            findings.append({
+                "severity": "info",
+                "label": f"{m['name']} version disclosed",
+                "detail": f"version {m['version']} surfaced — consider hiding in prod",
+            })
+
+    elapsed = round(time.monotonic() - t0, 2)
+    await hids_notify.notify(
+        "info", "cms",
+        f"CMS fingerprint — {host}: {len(matches)} technologies",
+        {"host": host, "url": url, "tech_count": len(matches),
+         "elapsed_seconds": elapsed},
+    )
+
+    return {
+        "url": url,
+        "final_url": final_url,
+        "host": host,
+        "status_code": status,
+        "elapsed_seconds": elapsed,
+        "technologies": matches,
+        "by_category": by_cat,
+        "interesting_headers": {
+            k: headers.get(k, "")
+            for k in ("server", "x-powered-by", "x-generator", "via",
+                      "cf-ray", "x-vercel-id", "x-shopify-stage")
+            if headers.get(k)
+        },
+        "findings": findings,
+        "policy": {"verdict": verdict, "reason": reason},
+    }
