@@ -123,17 +123,24 @@ jobs:
       - name: Install AppImage runtime deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 xvfb jq
+          sudo apt-get install -y libfuse2 jq
 
-      - name: Launch AppImage under xvfb
+      - name: Extract AppImage
+        working-directory: artifacts
         run: |
-          chmod +x artifacts/*.AppImage
-          # --no-sandbox: CI runners can't grant the SUID sandbox cap
-          # --disable-gpu: no GPU on headless runner
-          # &: background so we can poll /health while it runs
-          xvfb-run -a -- artifacts/*.AppImage --no-sandbox --disable-gpu > app.log 2>&1 &
-          echo $! > app.pid
-          echo "launched, pid=$(cat app.pid)"
+          chmod +x *.AppImage
+          ./*.AppImage --appimage-extract > /dev/null
+          ls squashfs-root/resources/backend/network-tools-backend/ | head -20
+
+      - name: Run sidecar directly (bypass Electron)
+        # If the sidecar can't boot, the Electron GUI can't help. Run the
+        # PyInstaller binary directly so we capture its stderr instead of
+        # losing it through Electron's spawn().
+        run: |
+          cd artifacts/squashfs-root/resources/backend/network-tools-backend
+          ./network-tools-backend > /tmp/sidecar.log 2>&1 &
+          echo $! > /tmp/sidecar.pid
+          echo "sidecar launched, pid=$(cat /tmp/sidecar.pid)"
 
       - name: Wait for /health
         run: |
@@ -176,19 +183,17 @@ jobs:
           cat /tmp/posture.json | jq . 2>/dev/null || cat /tmp/posture.json
           echo "::endgroup::"
 
-      - name: Tail app log
+      - name: Tail sidecar log
         if: always()
         run: |
-          echo "::group::Full app log"
-          cat app.log || true
+          echo "::group::Full sidecar log"
+          cat /tmp/sidecar.log 2>/dev/null || echo "(no log)"
           echo "::endgroup::"
 
       - name: Cleanup
         if: always()
         run: |
-          if [ -f app.pid ]; then
-            kill $(cat app.pid) 2>/dev/null || true
+          if [ -f /tmp/sidecar.pid ]; then
+            kill $(cat /tmp/sidecar.pid) 2>/dev/null || true
           fi
-          # also kill any orphan xvfb / electron / sidecar
-          pkill -f MyHackingPal 2>/dev/null || true
           pkill -f network-tools-backend 2>/dev/null || true
