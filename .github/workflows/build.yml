@@ -44,9 +44,11 @@ jobs:
             target: linux
             target_args: --linux --arm64
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
+            # AppImage only on arm64 — electron-builder bundles an x86-only
+            # fpm for .deb packaging and chokes with "Exec format error"
+            # under arm64. AppImage is the more universal Linux format anyway.
             artifact_glob: |
               frontend/dist-electron/*.AppImage
-              frontend/dist-electron/*.deb
           - os: macos-latest
             target: mac
             target_args: --mac
