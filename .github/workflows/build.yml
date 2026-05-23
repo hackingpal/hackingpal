@@ -34,7 +34,11 @@ jobs:
               frontend/dist-electron/*.blockmap
           - os: ubuntu-latest
             target: linux
-            target_args: --linux --x64
+            # Name targets explicitly so the runner only builds x64 variants.
+            # Bare `--linux --x64` still iterates anything in the arch list
+            # that has arm64 (AppImage does), producing a cross-arch AppImage
+            # the x86_64 smoke test then trips over.
+            target_args: --linux AppImage deb --x64
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
             artifact_glob: |
               frontend/dist-electron/*.AppImage
