@@ -25,6 +25,7 @@ jobs:
         include:
           - os: windows-latest
             target: win
+            target_args: --win
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend.exe
             artifact_glob: |
               frontend/dist-electron/*.exe
@@ -33,13 +34,22 @@ jobs:
               frontend/dist-electron/*.blockmap
           - os: ubuntu-latest
             target: linux
+            target_args: --linux --x64
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
             artifact_glob: |
               frontend/dist-electron/*.AppImage
               frontend/dist-electron/*.deb
               frontend/dist-electron/*.snap
+          - os: ubuntu-24.04-arm
+            target: linux
+            target_args: --linux --arm64
+            sidecar_path: backend/dist/network-tools-backend/network-tools-backend
+            artifact_glob: |
+              frontend/dist-electron/*.AppImage
+              frontend/dist-electron/*.deb
           - os: macos-latest
             target: mac
+            target_args: --mac
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
             artifact_glob: |
               frontend/dist-electron/mac*/**
@@ -99,7 +109,7 @@ jobs:
           # On macOS this leaves the app unsigned (user gets a Gatekeeper
           # warning on first launch); fine for personal use.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: npx electron-builder --${{ matrix.target }} --publish never
+        run: npx electron-builder ${{ matrix.target_args }} --publish never
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
