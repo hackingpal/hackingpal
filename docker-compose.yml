@@ -16,6 +16,9 @@ services:
     environment:
       - NT_BACKEND_HOST=0.0.0.0
       - NT_BACKEND_PORT=8765
+      # Optional: enables the chat assistant when running on Linux (no Keychain).
+      # On macOS, the desktop app uses the Keychain instead; ignore this.
+      # - ANTHROPIC_API_KEY=sk-ant-…
     volumes:
       - myhackingpal-data:/app/data
     # For LAN scanning from the host's network (Linux only — Docker Desktop

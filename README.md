@@ -57,6 +57,18 @@ remaining 4 are macOS-only routers (`brew`, `wifi-scan`, `bt/*`) returning
 helpful 503s. Live `nmap -sS` against `scanme.nmap.org` from inside the
 container completes in 0.11s, confirming NET_RAW is applied.
 
+**Android companion app shipped (`mobile/`)** — a Flutter app that points
+at the backend over Tailscale (default `http://100.75.23.96:8765`, editable
+in Settings). v1 ships 7 quick-lookup tools (IP, DNS Recon, WHOIS, TLS
+Audit, Fingerprint, CT Logs, Email Security) plus a streaming chat tab
+against `/chat/stream`. Package `dev.adamsjack.myhackingpal`,
+compileSdk=36, minSdk=24. Cleartext is permitted because the only network
+in play is your tailnet (which is already encrypted).
+
+For the chat tab to work against the Linux container, set
+`ANTHROPIC_API_KEY` in `docker-compose.yml` (the env-var path falls back
+to the macOS Keychain when running the desktop app natively).
+
 ---
 
 ## Installation

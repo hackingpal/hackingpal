@@ -5,6 +5,7 @@ stays encrypted at rest under the user's login keychain.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 
 from fastapi import APIRouter, HTTPException
@@ -66,6 +67,11 @@ def keychain_delete_named(account: str) -> bool:
 
 # Back-compat helpers — the original chat router uses these.
 def keychain_get() -> str | None:
+    # Env var first so Linux/Docker deployments (no `security` CLI) can still
+    # supply an Anthropic key without writing to disk.
+    env_key = os.environ.get("ANTHROPIC_API_KEY")
+    if env_key:
+        return env_key.strip()
     return keychain_get_named(KEYCHAIN_ACCOUNT)
 
 
