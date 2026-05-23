@@ -110,8 +110,14 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
 
   return (
     <nav className="w-60 shrink-0 border-r border-divider bg-bg-sidebar flex flex-col">
-      {/* Top inset — clears the macOS traffic lights AND provides drag region */}
-      <header className="app-drag pt-7 pb-3 px-4 border-b border-divider bg-bg-sidebar">
+      {/* Top inset — on macOS we use titleBarStyle: "hiddenInset" so we need
+          to clear the traffic lights with pt-7. On Linux/Windows the OS title
+          bar is visible above us so a tiny pt-2 is enough. `platform` is null
+          on first paint; default to Mac inset to avoid a layout jump. */}
+      <header className={
+        "app-drag pb-3 px-4 border-b border-divider bg-bg-sidebar " +
+        (platform === "linux" || platform === "win32" ? "pt-2" : "pt-7")
+      }>
         <div className="flex items-center gap-2.5">
           <BrandMark />
           <h1 className="text-[13px] font-bold tracking-[0.08em] text-ink-primary leading-tight">

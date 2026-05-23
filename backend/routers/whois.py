@@ -31,8 +31,9 @@ from lib.target_policy import check_target
 
 router = APIRouter(tags=["whois"])
 
-WHOIS = "/usr/bin/whois"
-DIG   = "/usr/bin/dig"
+import shutil as _shutil
+WHOIS = _shutil.which("whois") or "/usr/bin/whois"
+DIG   = _shutil.which("dig")   or "/usr/bin/dig"
 
 
 def _classify(target: str) -> tuple[str, str | None]:

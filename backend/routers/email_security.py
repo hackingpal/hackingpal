@@ -23,7 +23,8 @@ from lib.target_policy import check_target
 
 router = APIRouter(tags=["email-security"])
 
-DIG = "/usr/bin/dig"
+import shutil as _shutil
+DIG = _shutil.which("dig") or "/usr/bin/dig"
 
 DKIM_SELECTORS = (
     "default", "google", "k1", "k2", "selector1", "selector2",

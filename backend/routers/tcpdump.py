@@ -38,11 +38,17 @@ router = APIRouter(tags=["tcpdump"])
 
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-tcpdump"
 
+# Resolve once at import. shutil.which() checks PATH; on Linux tcpdump lives
+# in /usr/sbin/ but is often not on a non-root user's PATH — fall back to the
+# canonical path so the sudoers entry and command both match.
+import shutil as _shutil
+TCPDUMP = _shutil.which("tcpdump") or "/usr/sbin/tcpdump"
+
 
 def _is_passwordless() -> bool:
     try:
         r = subprocess.run(
-            ["sudo", "-n", "/usr/sbin/tcpdump", "--version"],
+            ["sudo", "-n", TCPDUMP, "--version"],
             capture_output=True, timeout=3,
         )
         return r.returncode == 0
@@ -170,7 +176,7 @@ async def tcpdump_ws(ws: WebSocket) -> None:
                 await ws.close(); return
             flags += shlex.split(bpf)
 
-        cmd = ["sudo", "-n", "/usr/sbin/tcpdump", *flags]
+        cmd = ["sudo", "-n", TCPDUMP, *flags]
         listener = asyncio.create_task(listen_for_stop())
         await ws.send_json({"type": "started", "iface": iface,
                             "cmd": " ".join(shlex.quote(c) for c in cmd)})

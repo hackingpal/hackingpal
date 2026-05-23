@@ -40,7 +40,11 @@ from lib.target_policy import check_target
 
 router = APIRouter(tags=["tls"])
 
-OPENSSL = "/opt/homebrew/bin/openssl"  # falls back to /usr/bin/openssl
+import shutil as _shutil
+# Prefer whatever's on PATH (catches Linux distros + non-default Homebrew
+# prefixes). Fall back to canonical Mac/Linux paths so the tuple iteration
+# below still has a chance even if nothing's on PATH.
+OPENSSL = _shutil.which("openssl") or "/opt/homebrew/bin/openssl"
 
 
 def _resolve(host: str) -> str | None:

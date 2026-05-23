@@ -156,8 +156,8 @@ export const GROUPS: NavGroup[] = [
     items: [
       { id: "wifi", label: "WiFi Integrity" },
       { id: "vpn",  label: "VPN Manager"    },
-      { id: "term", label: "Terminal"       },
-      { id: "brew", label: "Brew",           platforms: MAC_ONLY },
+      { id: "term", label: "Terminal" },
+      { id: "brew", label: "Packages" },
     ],
   },
 ];

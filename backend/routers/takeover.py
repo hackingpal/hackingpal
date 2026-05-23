@@ -41,7 +41,8 @@ from lib.target_policy import check_target
 
 router = APIRouter(tags=["takeover"])
 
-DIG = "/usr/bin/dig"
+import shutil as _shutil
+DIG = _shutil.which("dig") or "/usr/bin/dig"
 
 
 # (label, CNAME suffix list, body-signature list)

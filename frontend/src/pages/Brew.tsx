@@ -1,13 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchBrewInstalled, fetchBrewStatus, openWs, searchBrew,
-  type BrewExecEvent,
+  type BrewExecEvent, type PackageManager,
 } from "../api";
 
 type Tab = "search" | "installed";
 
+// Display label per manager — Mac shows "Brew", Linux shows the actual tool.
+const MGR_LABEL: Record<PackageManager, string> = {
+  brew:   "Brew",
+  apt:    "apt",
+  dnf:    "dnf",
+  pacman: "pacman",
+  none:   "Packages",
+};
+
 export default function Brew() {
   const [available, setAvailable] = useState<boolean | null>(null);
+  const [manager,   setManager]   = useState<PackageManager>("brew");
   const [tab,       setTab]       = useState<Tab>("search");
   const [query,     setQuery]     = useState("");
   const [searching, setSearching] = useState(false);
@@ -21,7 +31,9 @@ export default function Brew() {
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    fetchBrewStatus().then((s) => setAvailable(s.available)).catch(() => setAvailable(false));
+    fetchBrewStatus()
+      .then((s) => { setAvailable(s.available); setManager(s.manager); })
+      .catch(() => setAvailable(false));
     fetchBrewInstalled().then(setInstalled).catch(() => setInstalled(null));
   }, []);
 
@@ -64,10 +76,14 @@ export default function Brew() {
       <div className="h-full flex flex-col">
         <header className="border-b border-divider px-6 pt-4 pb-3">
           <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">Utilities</div>
-          <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">Brew</h2>
+          <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">{MGR_LABEL[manager]}</h2>
         </header>
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-amber text-sm font-mono">brew is not installed on this system.</div>
+          <div className="text-amber text-sm font-mono">
+            {manager === "none"
+              ? "No supported package manager (brew / apt / dnf / pacman) found on this system."
+              : `${manager} is not installed on this system.`}
+          </div>
         </div>
       </div>
     );
@@ -79,7 +95,7 @@ export default function Brew() {
         <div className="flex items-end gap-6">
           <div>
             <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">Utilities</div>
-            <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">Brew</h2>
+            <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">{MGR_LABEL[manager]}</h2>
           </div>
           <div className="flex gap-1">
             <TabBtn active={tab === "search"}    onClick={() => setTab("search")}>Search</TabBtn>
@@ -91,7 +107,7 @@ export default function Brew() {
             <div className="flex-1 flex gap-2 items-center">
               <input value={query} onChange={(e) => setQuery(e.target.value)}
                      onKeyDown={(e) => { if (e.key === "Enter") void runSearch(); }}
-                     placeholder="search formulae and casks"
+                     placeholder={manager === "brew" ? "search formulae and casks" : "search packages"}
                      className="flex-1 bg-bg-card border border-divider rounded
                                 px-3 py-1.5 text-sm font-mono text-ink-primary
                                 placeholder:text-ink-dim focus:outline-none focus:border-accent

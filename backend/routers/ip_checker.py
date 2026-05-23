@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import shutil
 import socket
 import subprocess
 import threading
@@ -127,9 +128,10 @@ def _compute_report(target: str) -> IpReport:
             dnsbl.append(DnsblEntry(name=name, status=status, listed=listed))
 
     abuse: list[str] = []
+    whois_bin = shutil.which("whois") or "/usr/bin/whois"
     try:
         proc = subprocess.run(
-            ["/usr/bin/whois", ip], capture_output=True, text=True, timeout=12,
+            [whois_bin, ip], capture_output=True, text=True, timeout=12,
         )
         abuse = ip_intel.whois_abuse_lines(proc.stdout)
     except Exception:

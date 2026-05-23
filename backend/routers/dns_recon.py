@@ -31,7 +31,8 @@ from lib.target_policy import check_target, require_target
 
 router = APIRouter(tags=["dns-recon"])
 
-DIG = "/usr/bin/dig"
+import shutil as _shutil
+DIG = _shutil.which("dig") or "/usr/bin/dig"
 
 # Short, opinionated subdomain wordlist. Kept inline so we don't have to ship
 # an asset file alongside the PyInstaller bundle.

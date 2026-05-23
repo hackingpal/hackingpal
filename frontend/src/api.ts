@@ -878,17 +878,29 @@ export const execCommand = (command: string, cwd?: string) =>
 
 export const fetchDefaultCwd = () => api<{ cwd: string }>("/terminal/cwd");
 
-// ── Brew ──────────────────────────────────────────────────────────────────────
+// ── Brew / packages ───────────────────────────────────────────────────────────
+// Endpoint paths keep the `brew` prefix for compatibility, but the backend
+// dispatches across brew / apt / dnf / pacman. `manager` field tells the UI
+// which one is in play so we can label the page correctly.
 
-export type BrewSearchResult = { rc: number; formulae: string[]; casks: string[] };
+export type PackageManager = "brew" | "apt" | "dnf" | "pacman" | "none";
 
-export const fetchBrewStatus    = () => api<{ available: boolean; path: string }>("/brew/status");
-export const fetchBrewInstalled = () => api<{ rc: number; formulae: string[]; casks: string[] }>("/brew/installed");
+export type BrewSearchResult = {
+  rc: number; manager: PackageManager; formulae: string[]; casks: string[];
+};
+
+export type BrewInstalledResult = {
+  rc: number; manager: PackageManager; formulae: string[]; casks: string[];
+};
+
+export const fetchBrewStatus    = () =>
+  api<{ available: boolean; manager: PackageManager; path: string }>("/brew/status");
+export const fetchBrewInstalled = () => api<BrewInstalledResult>("/brew/installed");
 export const searchBrew         = (q: string) =>
   api<BrewSearchResult>(`/brew/search?q=${encodeURIComponent(q)}`);
 
 export type BrewExecEvent =
-  | { type: "started"; cmd: string }
+  | { type: "started"; cmd: string; manager?: PackageManager }
   | { type: "line";    text: string }
   | { type: "done";    rc: number; stopped: boolean }
   | { type: "error";   detail: string };
