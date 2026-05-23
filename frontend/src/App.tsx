@@ -14,6 +14,9 @@ import ReverseIp from "./pages/ReverseIp";
 import Cms from "./pages/Cms";
 import MacosPosture from "./pages/MacosPosture";
 import LinuxPosture from "./pages/LinuxPosture";
+import Systemd from "./pages/Systemd";
+import FirewallRules from "./pages/FirewallRules";
+import UsersAudit from "./pages/UsersAudit";
 import LocalDiscovery from "./pages/LocalDiscovery";
 import Jwt from "./pages/Jwt";
 import Graphql from "./pages/Graphql";
@@ -300,6 +303,9 @@ export default function App() {
            active === "hash"        ? <HashCracker /> :
            active === "macos"       ? <MacosPosture /> :
            active === "linuxposture" ? <LinuxPosture /> :
+           active === "systemd"     ? <Systemd /> :
+           active === "firewallrules" ? <FirewallRules /> :
+           active === "usersaudit"  ? <UsersAudit /> :
            active === "localdisco"  ? <LocalDiscovery /> :
            active === "ports"       ? <PortScanner /> :
            active === "nmap"        ? <Nmap /> :

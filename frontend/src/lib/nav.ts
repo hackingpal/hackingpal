@@ -129,17 +129,20 @@ export const GROUPS: NavGroup[] = [
   {
     section: "MONITORING",
     items: [
-      { id: "ids", label: "IDS" },
+      { id: "ids",           label: "IDS"                                       },
+      { id: "systemd",       label: "Systemd Units",     platforms: LINUX_ONLY },
+      { id: "firewallrules", label: "Firewall Rules",    platforms: LINUX_ONLY },
     ],
   },
   {
     section: "FORENSICS",
     items: [
-      { id: "persistence",   label: "Persistence"     },
-      { id: "processes",     label: "Processes"       },
-      { id: "stego",         label: "Steganography"   },
-      { id: "macos",         label: "macOS Posture",  platforms: MAC_ONLY   },
-      { id: "linuxposture",  label: "Linux Posture",  platforms: LINUX_ONLY },
+      { id: "persistence",   label: "Persistence"                              },
+      { id: "processes",     label: "Processes"                                },
+      { id: "stego",         label: "Steganography"                            },
+      { id: "macos",         label: "macOS Posture",  platforms: MAC_ONLY     },
+      { id: "linuxposture",  label: "Linux Posture",  platforms: LINUX_ONLY   },
+      { id: "usersaudit",    label: "Users Audit",    platforms: LINUX_ONLY   },
     ],
   },
   {

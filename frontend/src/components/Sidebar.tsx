@@ -38,6 +38,7 @@ export type NavId =
   | "revshell" | "obfuscator" | "pivot" | "credhrv" | "c2"
   | "hash" | "cvss"
   | "ids" | "persistence" | "processes" | "stego" | "macos" | "linuxposture"
+  | "systemd" | "firewallrules" | "usersaudit"
   | "wifi" | "vpn" | "term" | "brew";
 
 import { filterGroups, type Platform } from "../lib/nav";

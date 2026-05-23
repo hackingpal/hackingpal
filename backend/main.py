@@ -32,6 +32,7 @@ from routers import (
     s3_scanner, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
     subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit, vpn,
     whois, wifi, wifi_scan, wpa_capture, xss,
+    systemd_units, firewall_rules, users_audit,
 )
 
 logger = logging.getLogger("myhackingpal")
@@ -79,6 +80,9 @@ app.include_router(reverse_ip.router)
 app.include_router(cms.router)
 app.include_router(macos_posture.router)
 app.include_router(linux_posture.router)
+app.include_router(systemd_units.router)
+app.include_router(firewall_rules.router)
+app.include_router(users_audit.router)
 app.include_router(local_discovery.router)
 app.include_router(jwt_analyzer.router)
 app.include_router(graphql.router)

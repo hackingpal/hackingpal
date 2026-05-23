@@ -1073,6 +1073,84 @@ export type LinuxPosture = {
 
 export const fetchLinuxPosture = () => api<LinuxPosture>("/linux/posture");
 
+// ── Systemd units ─────────────────────────────────────────────────────────────
+
+export type SystemdUnit = {
+  name: string; load: string; active: string; sub: string; description: string;
+};
+
+export const fetchSystemdUnits = (type = "service", state = "all") =>
+  api<{ count: number; type: string; state: string; units: SystemdUnit[] }>(
+    `/systemd/units?type=${encodeURIComponent(type)}&state=${encodeURIComponent(state)}`);
+
+export type SystemdUnitDetail = {
+  name: string; description: string;
+  load_state: string; active_state: string; sub_state: string; file_state: string;
+  exec_start: string; restart: string; restart_sec: string;
+  user: string; group: string; fragment_path: string; documentation: string;
+  main_pid: string; status_raw: string;
+};
+
+export const fetchSystemdUnit = (name: string) =>
+  api<SystemdUnitDetail>(`/systemd/unit/${encodeURIComponent(name)}`);
+
+export const fetchSystemdJournal = (name: string, lines = 200) =>
+  api<{ name: string; lines: string[]; rc: number }>(
+    `/systemd/journal/${encodeURIComponent(name)}?lines=${lines}`);
+
+// ── Firewall rules ────────────────────────────────────────────────────────────
+
+export type FirewallChain = {
+  name: string; type: string; hook: string; priority: string;
+  policy: string; rules: string[];
+};
+
+export type FirewallTable = {
+  family: string; name: string; chains: FirewallChain[];
+};
+
+export type FirewallRules = {
+  backend: string;          // "nftables" | "iptables" | "none"
+  needs_root: boolean;
+  error: string;
+  tables: FirewallTable[];
+  summary: { tables: number; chains: number; rules: number };
+  raw: string;
+};
+
+export const fetchFirewallRules = () => api<FirewallRules>("/firewall/rules");
+
+// ── Users audit ───────────────────────────────────────────────────────────────
+
+export type LinuxUser = {
+  name: string; uid: number; gid: number; gecos: string;
+  home: string; shell: string;
+  is_login: boolean; is_system: boolean; last_login: string;
+};
+
+export type SshKeyEntry = {
+  type: string; fingerprint: string; comment: string; perms_ok: string;
+};
+
+export type UsersAudit = {
+  users: LinuxUser[];
+  privileged_groups: Record<string, string[]>;
+  ssh_keys: Record<string, SshKeyEntry[]>;
+  sudoers: {
+    sudoers_perms: string;
+    world_writable: string[];
+    non_root_owned: { path: string; uid: number }[];
+    dropin_files: { path: string; perms: string; uid: number }[];
+  };
+  findings: { severity: "info" | "warn" | "high"; label: string; detail?: string }[];
+  summary: {
+    total_users: number; login_users: number; system_users: number;
+    privileged_groups: number; users_with_ssh_keys: number;
+  };
+};
+
+export const fetchUsersAudit = () => api<UsersAudit>("/users/audit");
+
 // ── Local discovery ───────────────────────────────────────────────────────────
 
 export type LocalDiscoveryInit = {
