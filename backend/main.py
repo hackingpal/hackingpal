@@ -27,7 +27,7 @@ from routers import (
     dorking, email_security, engagements, evil_twin, fingerprint, gcp_recon,
     github_leak, graphql, hash_cracker, http_probe, ids, idor, imds, ip_checker,
     jwt_analyzer, kerberos_roast, lan_scan, lateral, ldap_enum, lfi,
-    local_discovery, macos_posture, nmap, people_enum, persistence, ping,
+    local_discovery, linux_posture, macos_posture, nmap, people_enum, persistence, ping,
     port_scanner, presets, processes, profile_finder, reverse_ip, reverse_shell,
     s3_scanner, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
     subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit, vpn,
@@ -78,6 +78,7 @@ app.include_router(takeover.router)
 app.include_router(reverse_ip.router)
 app.include_router(cms.router)
 app.include_router(macos_posture.router)
+app.include_router(linux_posture.router)
 app.include_router(local_discovery.router)
 app.include_router(jwt_analyzer.router)
 app.include_router(graphql.router)

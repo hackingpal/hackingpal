@@ -13,7 +13,8 @@ export type Platform = "darwin" | "linux" | "win32";
 export type NavItem = { id: NavId | string; label: string; platforms?: Platform[] };
 export type NavGroup = { section: string; items: NavItem[] };
 
-export const MAC_ONLY: Platform[] = ["darwin"];
+export const MAC_ONLY:   Platform[] = ["darwin"];
+export const LINUX_ONLY: Platform[] = ["linux"];
 
 export const GROUPS: NavGroup[] = [
   {
@@ -134,26 +135,27 @@ export const GROUPS: NavGroup[] = [
   {
     section: "FORENSICS",
     items: [
-      { id: "persistence", label: "Persistence",   platforms: MAC_ONLY },
-      { id: "processes",   label: "Processes"     },
-      { id: "stego",       label: "Steganography" },
-      { id: "macos",       label: "macOS Posture", platforms: MAC_ONLY },
+      { id: "persistence",   label: "Persistence"     },
+      { id: "processes",     label: "Processes"       },
+      { id: "stego",         label: "Steganography"   },
+      { id: "macos",         label: "macOS Posture",  platforms: MAC_ONLY   },
+      { id: "linuxposture",  label: "Linux Posture",  platforms: LINUX_ONLY },
     ],
   },
   {
     section: "WIRELESS",
     items: [
-      { id: "wifiscan", label: "WiFi Scan",        platforms: MAC_ONLY },
-      { id: "eviltwin", label: "Evil Twin Detect", platforms: MAC_ONLY },
-      { id: "bt",       label: "Bluetooth Recon",  platforms: MAC_ONLY },
+      { id: "wifiscan", label: "WiFi Scan"        },
+      { id: "eviltwin", label: "Evil Twin Detect" },
+      { id: "bt",       label: "Bluetooth Recon"  },
       { id: "wpacap",   label: "WPA Handshake / PMKID" },
     ],
   },
   {
     section: "UTILITIES",
     items: [
-      { id: "wifi", label: "WiFi Integrity", platforms: MAC_ONLY },
-      { id: "vpn",  label: "VPN Manager",    platforms: MAC_ONLY },
+      { id: "wifi", label: "WiFi Integrity" },
+      { id: "vpn",  label: "VPN Manager"    },
       { id: "term", label: "Terminal"       },
       { id: "brew", label: "Brew",           platforms: MAC_ONLY },
     ],

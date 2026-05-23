@@ -1,22 +1,32 @@
-"""Bluetooth Recon — enumerate paired / connected / recent devices via
-`system_profiler SPBluetoothDataType -json`.
+"""Bluetooth Recon — enumerate paired / connected / recent devices.
 
-We don't do active scanning here — CoreBluetooth's CBCentralManager scan
-needs a delegate-driven async loop and an event-pump that doesn't play well
-with FastAPI's request lifecycle. system_profiler's already-collected device
-list covers the same ground: paired devices, current connections, last-seen
-times, addresses, manufacturer-decoded names, services.
+macOS: parses `system_profiler SPBluetoothDataType -json`. We don't do active
+CoreBluetooth scanning (requires a delegate-driven event loop that fights with
+FastAPI's request lifecycle); system_profiler's collected data covers the same
+ground.
+
+Linux: shells out to `bluetoothctl` (bluez). Same response shape, so the
+frontend page renders identically. Active discovery is not initiated here —
+we surface whatever bluez already knows about (paired, connected, and
+recently-seen devices in the cache).
 """
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import subprocess
+import sys
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
 router = APIRouter(prefix="/bt", tags=["bt-recon"])
 
+IS_DARWIN = sys.platform == "darwin"
+
+
+# ── macOS implementation ─────────────────────────────────────────────────────
 
 def _run_sp() -> dict[str, Any]:
     try:
@@ -37,9 +47,7 @@ def _run_sp() -> dict[str, Any]:
         raise HTTPException(500, f"could not parse system_profiler output: {e}")
 
 
-def _normalize_device(addr: str, info: dict[str, Any]) -> dict[str, Any]:
-    """system_profiler returns each device as {bdaddr: {device_keys: ...}}.
-    Normalize into a flat dict for the frontend."""
+def _normalize_device_mac(addr: str, info: dict[str, Any]) -> dict[str, Any]:
     return {
         "address":       addr,
         "name":          info.get("device_name", ""),
@@ -57,53 +65,197 @@ def _normalize_device(addr: str, info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@router.get("/status")
-def status() -> dict[str, Any]:
-    """Quick view of the controller + counts."""
+def _status_mac() -> dict[str, Any]:
     data = _run_sp()
     payload = data.get("SPBluetoothDataType") or []
     controllers: list[dict[str, Any]] = []
     for item in payload:
         ctrl = item.get("controller_properties", {})
         controllers.append({
-            "address":          ctrl.get("controller_address", ""),
-            "state":            ctrl.get("controller_state", ""),
-            "discoverable":     ctrl.get("controller_discoverable", "") == "attrib_On",
-            "firmware":         ctrl.get("controller_firmwareVersion", ""),
-            "manufacturer":     ctrl.get("controller_manufacturer", ""),
-            "vendor_id":        ctrl.get("controller_vendorID", ""),
-            "product_id":       ctrl.get("controller_productID", ""),
+            "address":      ctrl.get("controller_address", ""),
+            "state":        ctrl.get("controller_state", ""),
+            "discoverable": ctrl.get("controller_discoverable", "") == "attrib_On",
+            "firmware":     ctrl.get("controller_firmwareVersion", ""),
+            "manufacturer": ctrl.get("controller_manufacturer", ""),
+            "vendor_id":    ctrl.get("controller_vendorID", ""),
+            "product_id":   ctrl.get("controller_productID", ""),
         })
     return {"controllers": controllers}
 
 
-@router.get("/devices")
-def devices() -> dict[str, Any]:
+def _devices_mac() -> dict[str, Any]:
     data = _run_sp()
     payload = data.get("SPBluetoothDataType") or []
-
     connected: list[dict[str, Any]] = []
     paired:    list[dict[str, Any]] = []
-    not_paired: list[dict[str, Any]] = []   # recently-seen, not paired
-
+    not_paired: list[dict[str, Any]] = []
     for item in payload:
         for d in item.get("device_connected", []):
             for addr, info in d.items():
-                connected.append(_normalize_device(addr, info))
+                connected.append(_normalize_device_mac(addr, info))
         for d in item.get("device_paired", []):
             for addr, info in d.items():
-                paired.append(_normalize_device(addr, info))
+                paired.append(_normalize_device_mac(addr, info))
         for d in item.get("device_not_paired", []):
             for addr, info in d.items():
-                not_paired.append(_normalize_device(addr, info))
-
+                not_paired.append(_normalize_device_mac(addr, info))
     return {
-        "connected": connected,
-        "paired":    paired,
-        "not_paired": not_paired,
+        "connected": connected, "paired": paired, "not_paired": not_paired,
         "summary": {
-            "connected":  len(connected),
-            "paired":     len(paired),
+            "connected": len(connected), "paired": len(paired),
             "not_paired": len(not_paired),
         },
     }
+
+
+# ── Linux implementation ─────────────────────────────────────────────────────
+
+_BT_INFO_RE = re.compile(r"^\s*([A-Za-z][\w \-]*?):\s*(.+?)\s*$")
+
+
+def _bctl(args: list[str], timeout: int = 6) -> str:
+    """Run bluetoothctl. Returns combined output, "" on failure."""
+    bctl = shutil.which("bluetoothctl")
+    if not bctl:
+        raise HTTPException(503,
+            "bluetoothctl not found — `apt install bluez` (or distro equivalent) "
+            "and ensure the bluetooth service is running.")
+    try:
+        r = subprocess.run([bctl, *args],
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return ""
+    return r.stdout or ""
+
+
+def _list_controllers_linux() -> list[dict[str, Any]]:
+    """`bluetoothctl list` → controllers; `show <addr>` for details."""
+    out = _bctl(["list"])
+    controllers: list[dict[str, Any]] = []
+    for line in out.splitlines():
+        # "Controller AA:BB:CC:DD:EE:FF NameHere [default]"
+        m = re.match(r"\s*Controller\s+([0-9A-Fa-f:]{17})\s+(.*?)(?:\s+\[default\])?\s*$", line)
+        if not m:
+            continue
+        addr = m.group(1)
+        name = m.group(2).strip()
+        info = _bctl(["show", addr])
+        info_d = _parse_bt_info(info)
+        controllers.append({
+            "address":      addr,
+            "state":        "powered" if info_d.get("Powered", "").lower() == "yes" else "off",
+            "discoverable": info_d.get("Discoverable", "").lower() == "yes",
+            "firmware":     info_d.get("Modalias", ""),
+            "manufacturer": name or info_d.get("Name", ""),
+            "vendor_id":    "",
+            "product_id":   "",
+        })
+    return controllers
+
+
+def _parse_bt_info(text: str) -> dict[str, str]:
+    """Parse `bluetoothctl info|show` output into key/value dict.
+
+    `bluetoothctl info <addr>` lines look like:
+        Device AA:BB:CC:DD:EE:FF (public)
+            Name: Acme Earbuds
+            Alias: Acme Earbuds
+            Class: 0x00240418
+            Icon: audio-headset
+            Paired: yes
+            Trusted: yes
+            Blocked: no
+            Connected: no
+            UUID: ...   (one line per service)
+    """
+    out: dict[str, str] = {}
+    uuids: list[str] = []
+    for line in text.splitlines():
+        # Skip the header line (e.g. "Device XX:XX...") and category markers.
+        m = _BT_INFO_RE.match(line)
+        if not m:
+            continue
+        k, v = m.group(1).strip(), m.group(2).strip()
+        if k == "UUID":
+            # Bluez format: "UUID: <name>             (<uuid>)"
+            mm = re.match(r"(.+?)\s*\(([0-9a-fA-F-]+)\)\s*$", v)
+            uuids.append(mm.group(1).strip() if mm else v)
+            continue
+        out[k] = v
+    if uuids:
+        out["_uuids"] = "\n".join(uuids)
+    return out
+
+
+def _list_known_addresses_linux() -> list[str]:
+    """`bluetoothctl devices` lists every device the daemon knows about,
+    paired or not. Returns the BD addresses in display order."""
+    out = _bctl(["devices"])
+    addrs: list[str] = []
+    for line in out.splitlines():
+        m = re.match(r"\s*Device\s+([0-9A-Fa-f:]{17})\s+", line)
+        if m:
+            addrs.append(m.group(1))
+    return addrs
+
+
+def _normalize_device_linux(addr: str, info: dict[str, str]) -> dict[str, Any]:
+    name = info.get("Alias") or info.get("Name", "")
+    services_raw = info.get("_uuids", "")
+    services = [s for s in services_raw.splitlines() if s] if services_raw else []
+    return {
+        "address":      addr,
+        "name":         name,
+        # bluez doesn't decode the manufacturer string for arbitrary devices;
+        # surface the Modalias which encodes vendor:product:version.
+        "manufacturer": info.get("Modalias", ""),
+        "minor_type":   info.get("Icon", ""),
+        "vendor_id":    "",
+        "product_id":   "",
+        "firmware":     "",
+        # RSSI is only present during/after active discovery.
+        "battery":      info.get("Battery Percentage", ""),
+        "rssi":         info.get("RSSI", ""),
+        "connected":    info.get("Connected", "").lower() == "yes",
+        "last_seen":    "",
+        "services":     services,
+    }
+
+
+def _devices_linux() -> dict[str, Any]:
+    addrs = _list_known_addresses_linux()
+    connected:  list[dict[str, Any]] = []
+    paired:     list[dict[str, Any]] = []
+    not_paired: list[dict[str, Any]] = []
+    for addr in addrs:
+        info = _parse_bt_info(_bctl(["info", addr]))
+        dev = _normalize_device_linux(addr, info)
+        if dev["connected"]:
+            connected.append(dev)
+        if info.get("Paired", "").lower() == "yes":
+            paired.append(dev)
+        elif not dev["connected"]:
+            not_paired.append(dev)
+    return {
+        "connected": connected, "paired": paired, "not_paired": not_paired,
+        "summary": {
+            "connected": len(connected), "paired": len(paired),
+            "not_paired": len(not_paired),
+        },
+    }
+
+
+# ── public endpoints ─────────────────────────────────────────────────────────
+
+@router.get("/status")
+def status() -> dict[str, Any]:
+    if IS_DARWIN:
+        return _status_mac()
+    return {"controllers": _list_controllers_linux()}
+
+
+@router.get("/devices")
+def devices() -> dict[str, Any]:
+    if IS_DARWIN:
+        return _devices_mac()
+    return _devices_linux()

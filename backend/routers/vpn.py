@@ -2,13 +2,21 @@
 
 The desktop tool manages a wg0 server set up under ~/vpn-setup. Endpoints
 expose the same controls the old GUI offered. Operations that need root
-(`wg-quick up/down`) use osascript to prompt for admin once — there's no
-sudoers shortcut here because wg-quick varies by environment.
+(`wg-quick up/down`) use the platform's standard admin-prompt helper:
+
+  - macOS: osascript "do shell script ... with administrator privileges"
+  - Linux: pkexec (PolicyKit) if present, falling back to sudo with the
+           SUDO_ASKPASS helper. If neither is available we surface a 501
+           with a manual command the user can paste.
+
+There's no sudoers shortcut here because wg-quick varies by environment.
 """
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +30,21 @@ router = APIRouter(tags=["vpn"])
 
 SERVER_CFG  = Path.home() / "vpn-setup" / "wg0.conf"
 CLIENTS_DIR = Path.home() / "vpn-setup" / "clients"
-WG          = "/opt/homebrew/bin/wg"
-WG_QUICK    = "/opt/homebrew/bin/wg-quick"
+
+IS_DARWIN = sys.platform == "darwin"
+
+
+def _find_wg() -> tuple[str | None, str | None]:
+    """Locate wg + wg-quick. Returns (wg_path, wg_quick_path) or (None, None)."""
+    wg = shutil.which("wg")
+    wg_quick = shutil.which("wg-quick")
+    if IS_DARWIN:
+        # Homebrew on Apple Silicon installs outside the default PATH for GUI
+        # apps, so check the canonical location too.
+        wg = wg or ("/opt/homebrew/bin/wg" if Path("/opt/homebrew/bin/wg").exists() else None)
+        wg_quick = wg_quick or ("/opt/homebrew/bin/wg-quick"
+                                if Path("/opt/homebrew/bin/wg-quick").exists() else None)
+    return wg, wg_quick
 
 
 class VpnClient(BaseModel):
@@ -40,32 +61,62 @@ class VpnStatus(BaseModel):
     missing: list[str] = []
 
 
-def _is_installed() -> tuple[bool, list[str]]:
+def _is_installed() -> tuple[bool, list[str], str | None, str | None]:
     missing: list[str] = []
-    for path in (WG, WG_QUICK):
-        if not Path(path).exists():
-            missing.append(path)
+    wg, wg_quick = _find_wg()
+    if wg is None:
+        missing.append("wg")
+    if wg_quick is None:
+        missing.append("wg-quick")
     if not SERVER_CFG.exists():
         missing.append(str(SERVER_CFG))
-    return (len(missing) == 0, missing)
+    return (len(missing) == 0, missing, wg, wg_quick)
 
 
 def _admin_run(cmd: str) -> tuple[int, str]:
-    """Run `cmd` via osascript admin prompt. Returns (rc, output)."""
-    script = f'do shell script "{cmd}" with administrator privileges'
-    r = subprocess.run(["osascript", "-e", script],
-                       capture_output=True, text=True, timeout=120)
-    return r.returncode, (r.stdout or "") + (r.stderr or "")
+    """Run `cmd` as root via the OS-native admin prompt. Returns (rc, output)."""
+    if IS_DARWIN:
+        script = f'do shell script "{cmd}" with administrator privileges'
+        r = subprocess.run(["osascript", "-e", script],
+                           capture_output=True, text=True, timeout=120)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    # Linux: prefer pkexec (PolicyKit prompt, works under GNOME/KDE/etc.).
+    pkexec = shutil.which("pkexec")
+    if pkexec:
+        # pkexec wants an absolute path to the binary and individual args, not
+        # a shell string. The caller passes a pre-shell-quoted command, so we
+        # bounce it through `sh -c` — that costs us nothing and keeps the
+        # call sites uniform.
+        r = subprocess.run(
+            [pkexec, "/bin/sh", "-c", cmd],
+            capture_output=True, text=True, timeout=120,
+        )
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    # Fall back to sudo with SUDO_ASKPASS (works if the user configured a
+    # graphical askpass like ssh-askpass / lxqt-openssh-askpass). If askpass
+    # isn't set, sudo will fail non-interactively rather than hang.
+    sudo = shutil.which("sudo")
+    if sudo:
+        r = subprocess.run(
+            [sudo, "-A", "/bin/sh", "-c", cmd],
+            capture_output=True, text=True, timeout=120,
+        )
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+    return 127, ("no admin-prompt helper found — install polkit (pkexec) "
+                 "or configure sudo with SUDO_ASKPASS")
 
 
 @router.get("/vpn/status", response_model=VpnStatus)
 def status() -> VpnStatus:
-    ok, missing = _is_installed()
+    ok, missing, wg, _ = _is_installed()
     if not ok:
         return VpnStatus(available=False, running=False,
                          config_path=str(SERVER_CFG), missing=missing)
 
-    show = subprocess.run([WG, "show", "wg0"], capture_output=True, text=True)
+    show = subprocess.run([wg, "show", "wg0"], capture_output=True, text=True)
     is_up = show.returncode == 0
     clients: list[VpnClient] = []
     if CLIENTS_DIR.exists():
@@ -86,14 +137,15 @@ def status() -> VpnStatus:
 
 
 def _toggle(direction: str) -> dict[str, Any]:
-    ok, missing = _is_installed()
+    ok, missing, _, wg_quick = _is_installed()
     if not ok:
         raise HTTPException(status_code=400,
                             detail=f"wireguard not set up — missing: {missing}")
-    cmd = f"{shlex.quote(WG_QUICK)} {direction} {shlex.quote(str(SERVER_CFG))}"
+    cmd = f"{shlex.quote(wg_quick)} {direction} {shlex.quote(str(SERVER_CFG))}"
     rc, out = _admin_run(cmd)
     if rc != 0:
-        if "-128" in out or "canceled" in out.lower() or "cancelled" in out.lower():
+        low = out.lower()
+        if "-128" in out or "canceled" in low or "cancelled" in low or "dismissed" in low:
             raise HTTPException(status_code=400, detail="cancelled by user")
         raise HTTPException(status_code=500, detail=out.strip() or "command failed")
     sev = "info" if direction == "up" else "warning"

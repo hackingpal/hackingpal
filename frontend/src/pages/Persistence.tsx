@@ -70,8 +70,9 @@ export default function Persistence() {
           </div>
 
           <div className="flex-1 text-xs text-ink-muted">
-            Scans LaunchAgents · LaunchDaemons · StartupItems. Each target is
-            codesigned and flagged if missing/invalid or running from a writable temp dir.
+            Scans system auto-start locations (LaunchAgents/Daemons on macOS;
+            systemd, cron, autostart, rc.local on Linux). Targets are verified
+            for integrity and flagged if missing, world-writable, or in a temp dir.
           </div>
 
           <div className="flex gap-1">

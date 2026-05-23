@@ -116,10 +116,116 @@ def plist_program(data: dict) -> str:
 # ── path heuristics ────────────────────────────────────────────────────────────
 
 SUSPICIOUS_DIR_PREFIXES = (
+    # macOS
     "/tmp/", "/var/tmp/", "/private/tmp/", "/private/var/tmp/",
     "/Users/Shared/",
+    # Linux
+    "/dev/shm/", "/run/user/", "/run/lock/",
 )
 
 
 def is_suspicious_path(path: str) -> bool:
     return any(path.startswith(p) for p in SUSPICIOUS_DIR_PREFIXES)
+
+
+# ── Linux package provenance ──────────────────────────────────────────────────
+# Map the result onto the existing sign_status vocabulary so the frontend can
+# render it without changes: "apple" = trusted (package owns it), "developer-id"
+# = locally installed in a standard prefix, "unsigned" = unowned non-standard,
+# "invalid" = world-writable, "missing" = file doesn't exist on disk.
+
+_DPKG    = shutil.which("dpkg")
+_RPM     = shutil.which("rpm")
+_PACMAN  = shutil.which("pacman")
+
+# Cache provenance by file identity (same shape used by codesign_check).
+_pkg_cache: dict[tuple, dict[str, str]] = {}
+
+_TRUSTED_PREFIXES = (
+    "/usr/bin/", "/usr/sbin/", "/bin/", "/sbin/", "/usr/lib/", "/usr/libexec/",
+    "/usr/local/bin/", "/usr/local/sbin/", "/opt/",
+)
+
+_SHELL_BUILTINS = frozenset({
+    "cd", "exec", "source", ".", "eval", "set", "unset", "export",
+    "if", "for", "while", "until", "case", "function",
+    "true", "false", "echo", "exit", "return", ":",
+})
+
+
+def linux_pkg_owner(path: str | Path) -> dict[str, str]:
+    """Return {status, team, authority} for a Linux executable.
+
+    `team` is the owning package (or ""), `authority` is the package manager
+    name. Status uses the same vocabulary as `codesign_check` so existing
+    severity classification + frontend tint code work unchanged.
+    """
+    # Shell built-ins (cron's `cd / && run-parts …` pattern) aren't real
+    # binaries on disk — return developer-id (info severity) so we don't
+    # spam HIGH alerts on every hourly cron line.
+    spath = str(path)
+    if "/" not in spath and spath in _SHELL_BUILTINS:
+        return {"status": "developer-id", "team": "", "authority": "shell"}
+
+    p = Path(path)
+    key = _file_identity(p)
+    if key is None:
+        return {"status": "missing", "team": "", "authority": ""}
+
+    cached = _pkg_cache.get(key)
+    if cached is not None:
+        return cached
+
+    # World-writable file = anyone can swap the binary out → high severity.
+    try:
+        mode = p.stat().st_mode
+        if mode & 0o002:
+            result = {"status": "invalid", "team": "", "authority": "world-writable"}
+            _pkg_cache[key] = result
+            return result
+    except OSError:
+        pass
+
+    target = str(p.resolve()) if p.exists() else str(p)
+
+    # Try each available package manager. We accept the first that claims the
+    # file — multi-PM systems (e.g. dnf + flatpak) are rare and the answer is
+    # the same shape either way.
+    if _DPKG:
+        r = subprocess.run([_DPKG, "-S", target],
+                           capture_output=True, text=True, timeout=4)
+        if r.returncode == 0 and r.stdout:
+            # "openssh-server: /usr/sbin/sshd"
+            pkg = r.stdout.split(":", 1)[0].strip()
+            result = {"status": "apple", "team": pkg, "authority": "dpkg"}
+            _pkg_cache[key] = result
+            return result
+    if _RPM:
+        r = subprocess.run([_RPM, "-qf", target],
+                           capture_output=True, text=True, timeout=4)
+        if r.returncode == 0 and r.stdout and "not owned by" not in r.stdout:
+            pkg = r.stdout.strip().splitlines()[0]
+            result = {"status": "apple", "team": pkg, "authority": "rpm"}
+            _pkg_cache[key] = result
+            return result
+    if _PACMAN:
+        r = subprocess.run([_PACMAN, "-Qo", target],
+                           capture_output=True, text=True, timeout=4)
+        if r.returncode == 0 and "is owned by" in r.stdout:
+            # "/usr/bin/sshd is owned by openssh 9.7p1-1"
+            try:
+                pkg = r.stdout.split("is owned by", 1)[1].strip().split()[0]
+            except IndexError:
+                pkg = ""
+            result = {"status": "apple", "team": pkg, "authority": "pacman"}
+            _pkg_cache[key] = result
+            return result
+
+    # Not owned by any package manager. Distinguish trusted-prefix from random.
+    if any(target.startswith(pfx) for pfx in _TRUSTED_PREFIXES):
+        status = "developer-id"
+    else:
+        status = "unsigned"
+    result = {"status": status, "team": "", "authority": "local"}
+    _pkg_cache[key] = result
+    return result

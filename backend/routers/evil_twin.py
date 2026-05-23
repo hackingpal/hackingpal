@@ -23,13 +23,12 @@ WS  /ws/evil-twin
 from __future__ import annotations
 
 import asyncio
-import time
 from collections import defaultdict
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from .wifi_scan import SECURITY_NAMES, _import_corewlan, _network_to_dict
+from .wifi_scan import scan_networks
 
 router = APIRouter(tags=["evil-twin"])
 
@@ -54,10 +53,15 @@ async def evil_twin_ws(ws: WebSocket) -> None:
         interval = max(0.5, min(float(init.get("interval_sec", 2.0)), 30.0))
         target = (init.get("target_ssid") or "").strip() or None
 
-        CWWiFiClient = _import_corewlan()
-        client = CWWiFiClient.sharedWiFiClient()
-        iface = client.interface()
-        if iface is None:
+        # First scan also serves as a health check — surface scanner errors
+        # before we start the round loop so the UI can show a usable message.
+        loop = asyncio.get_event_loop()
+        try:
+            first = await loop.run_in_executor(None, scan_networks)
+        except HTTPException as e:
+            await ws.send_json({"type": "error", "detail": str(e.detail)})
+            await ws.close(); return
+        if not first.get("interface"):
             await ws.send_json({"type": "error", "detail": "no WiFi interface"})
             await ws.close(); return
 
@@ -71,14 +75,15 @@ async def evil_twin_ws(ws: WebSocket) -> None:
                 break
             await ws.send_json({"type": "scan_start", "round": round_no, "total": rounds})
 
-            def _scan_sync():
-                nets, err = iface.scanForNetworksWithName_error_(None, None)
-                if err is not None or not nets:
-                    return []
-                return [_network_to_dict(n) for n in nets]
-
-            loop = asyncio.get_event_loop()
-            rows = await loop.run_in_executor(None, _scan_sync)
+            if round_no == 1:
+                rows = first.get("networks", [])
+            else:
+                try:
+                    snap = await loop.run_in_executor(None, scan_networks)
+                    rows = snap.get("networks", [])
+                except HTTPException as e:
+                    await ws.send_json({"type": "error", "detail": str(e.detail)})
+                    rows = []
 
             for r in rows:
                 ssid = r["ssid"]

@@ -13,6 +13,7 @@ import Takeover from "./pages/Takeover";
 import ReverseIp from "./pages/ReverseIp";
 import Cms from "./pages/Cms";
 import MacosPosture from "./pages/MacosPosture";
+import LinuxPosture from "./pages/LinuxPosture";
 import LocalDiscovery from "./pages/LocalDiscovery";
 import Jwt from "./pages/Jwt";
 import Graphql from "./pages/Graphql";
@@ -298,6 +299,7 @@ export default function App() {
            active === "cvss"        ? <CvssCalculator /> :
            active === "hash"        ? <HashCracker /> :
            active === "macos"       ? <MacosPosture /> :
+           active === "linuxposture" ? <LinuxPosture /> :
            active === "localdisco"  ? <LocalDiscovery /> :
            active === "ports"       ? <PortScanner /> :
            active === "nmap"        ? <Nmap /> :

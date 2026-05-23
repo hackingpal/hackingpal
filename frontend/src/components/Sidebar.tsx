@@ -37,7 +37,7 @@ export type NavId =
   | "wifiscan" | "eviltwin" | "bt" | "wpacap"
   | "revshell" | "obfuscator" | "pivot" | "credhrv" | "c2"
   | "hash" | "cvss"
-  | "ids" | "persistence" | "processes" | "stego" | "macos"
+  | "ids" | "persistence" | "processes" | "stego" | "macos" | "linuxposture"
   | "wifi" | "vpn" | "term" | "brew";
 
 import { filterGroups, type Platform } from "../lib/nav";

@@ -1017,6 +1017,50 @@ export type MacosPosture = {
 
 export const fetchMacosPosture = () => api<MacosPosture>("/macos/posture");
 
+// ── Linux posture ─────────────────────────────────────────────────────────────
+
+export type LinuxFinding = {
+  severity: "info" | "warn" | "high";
+  label: string;
+  detail?: string;
+};
+
+export type LinuxPosture = {
+  mac: {
+    selinux:  "enforcing" | "permissive" | "disabled" | "unknown" | "absent";
+    apparmor: "loaded" | "enforcing" | "absent" | "unknown";
+    enforcing_profiles: number;
+    raw: string;
+  };
+  firewall: {
+    backend: string;       // "ufw" | "firewalld" | "iptables" | "none" | …
+    active: boolean;
+    rules: number;
+    raw: string;
+  };
+  sshd: {
+    present: boolean;
+    permit_root_login: string;
+    password_authentication: string;
+    x11_forwarding: string;
+    max_auth_tries: string;
+    kbdint_authentication: string;
+    raw_path: string;
+  };
+  sysctl: { values: Record<string, string> };
+  updates: { manager: string; pending: number; security: number; raw: string };
+  sudoers: {
+    sudoers_perms: string;
+    world_writable: string[];
+    non_root_owned: { path: string; uid: number }[];
+  };
+  disk: { luks_devices: string[]; any_encrypted: boolean };
+  findings: LinuxFinding[];
+  elapsed_seconds: number;
+};
+
+export const fetchLinuxPosture = () => api<LinuxPosture>("/linux/posture");
+
 // ── Local discovery ───────────────────────────────────────────────────────────
 
 export type LocalDiscoveryInit = {
