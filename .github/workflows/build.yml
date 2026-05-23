@@ -42,11 +42,14 @@ jobs:
               frontend/dist-electron/*.snap
           - os: ubuntu-24.04-arm
             target: linux
-            target_args: --linux --arm64
+            # Name the AppImage target explicitly so electron-builder doesn't
+            # also iterate the deb target (which would try to run an x86-only
+            # fpm binary and crash with "Exec format error" on arm64). Just
+            # restricting deb's arch list to x64 isn't enough — electron-builder
+            # still attempts the build for that arch when no target name is
+            # given. AppImage is the universal Linux format anyway.
+            target_args: --linux AppImage --arm64
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
-            # AppImage only on arm64 — electron-builder bundles an x86-only
-            # fpm for .deb packaging and chokes with "Exec format error"
-            # under arm64. AppImage is the more universal Linux format anyway.
             artifact_glob: |
               frontend/dist-electron/*.AppImage
           - os: macos-latest
