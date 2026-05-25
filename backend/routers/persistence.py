@@ -14,6 +14,7 @@ from __future__ import annotations
 import configparser
 import csv
 import io
+import json
 import os
 import re
 import shutil
@@ -587,22 +588,34 @@ def _win_unquote_command(value: str) -> str:
     return v.split()[0] if v else ""
 
 
-def _win_sign_status(program: str) -> dict[str, str]:
-    """Best-effort signature read for a Windows file.
+def _win_expand(program: str) -> str:
+    """Expand %SystemRoot% / %ProgramFiles% / etc in a path string.
 
-    We do NOT call signtool / Get-AuthenticodeSignature here — those add
-    seconds per entry and need PowerShell. Instead:
-      * file missing               → status="missing"
-      * file inside %WinDir%       → status="apple" (Microsoft-trusted location)
-      * otherwise file exists      → status="unsigned" (caller can drill down)
-    The frontend renders "apple" as the "trusted system" colour; we reuse the
-    vocabulary so the same React component works without changes.
+    Registry Run values often contain unexpanded environment variables
+    (`%windir%\\AzureArcSetup\\...`); Path.is_file() against those strings
+    returns False even when the file exists, which used to misclassify
+    every env-var entry as 'missing'. Expand once at scan time so both the
+    heuristic and the Authenticode batch see real paths.
+    """
+    if not program:
+        return ""
+    return os.path.expandvars(program)
+
+
+def _win_sign_status(program: str) -> dict[str, str]:
+    """Best-effort signature read for a Windows file. Path-heuristic only —
+    `_audit_windows()` overwrites this with real Authenticode results where
+    available, so this only kicks in when PowerShell is unavailable or
+    Get-AuthenticodeSignature times out.
+
+    Returns the same {status, team, authority} shape as the Mac/Linux
+    sign-check helpers so the rest of the audit machinery is unchanged.
     """
     if not program:
         return {"status": "missing", "team": "", "authority": ""}
-    p = Path(program)
+    expanded = _win_expand(program)
     try:
-        exists = p.is_file()
+        exists = Path(expanded).is_file()
     except OSError:
         exists = False
     if not exists:
@@ -610,12 +623,114 @@ def _win_sign_status(program: str) -> dict[str, str]:
     sysroot = os.environ.get("SystemRoot") or r"C:\Windows"
     progf = os.environ.get("ProgramFiles") or r"C:\Program Files"
     progf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
-    low = str(p).lower()
+    low = expanded.lower()
     if low.startswith(sysroot.lower()):
         return {"status": "apple", "team": "Microsoft", "authority": "SystemRoot"}
     if low.startswith(progf.lower()) or low.startswith(progf86.lower()):
         return {"status": "developer-id", "team": "", "authority": "Program Files"}
     return {"status": "unsigned", "team": "", "authority": ""}
+
+
+# ── Authenticode batch (single PowerShell session for N paths) ───────────────
+
+def _parse_subject(subject: str) -> tuple[str, str]:
+    """Pull (CN, O) out of an X.500 subject string like
+    `CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US`.
+    Splits on top-level commas only — values containing literal commas are
+    rare in code-signing certs but we still handle the common case.
+    """
+    cn = org = ""
+    for raw in subject.split(","):
+        part = raw.strip()
+        up = part.upper()
+        if up.startswith("CN="):
+            cn = part[3:].strip()
+        elif up.startswith("O="):
+            org = part[2:].strip()
+    return cn, org
+
+
+def _authenticode_batch(paths: list[str], timeout: float = 30.0) -> dict[str, dict[str, str]]:
+    """Run Get-AuthenticodeSignature on a batch of paths in a single
+    PowerShell session. Returns `{path: {status, team, authority}}`.
+
+    Status mapping into the cross-platform vocabulary:
+      * Status=Valid + Microsoft publisher → "apple" (trusted system signer)
+      * Status=Valid + other publisher     → "developer-id"
+      * Status=NotSigned                   → "unsigned"
+      * Status=HashMismatch / NotTrusted / etc → "invalid"
+
+    Returns `{}` on any error (PowerShell missing, timeout, JSON parse fail)
+    so the caller falls back to the path heuristic. We pre-filter `paths` to
+    existing files — Get-AuthenticodeSignature on a non-existent path emits
+    a non-fatal error to stderr but skips the entry, which messes up the
+    output-to-input alignment.
+    """
+    if not paths:
+        return {}
+    # Dedupe + filter to actually-existing files.
+    existing = sorted({p for p in paths if p and Path(p).is_file()})
+    if not existing:
+        return {}
+
+    quoted = ["'" + p.replace("'", "''") + "'" for p in existing]
+    ps = (
+        "$ErrorActionPreference='SilentlyContinue';"
+        "$ProgressPreference='SilentlyContinue';"
+        "$paths = @(" + ",".join(quoted) + ");"
+        "Get-AuthenticodeSignature -LiteralPath $paths | "
+        "Select-Object @{N='Path';E={$_.Path}}, "
+                     "@{N='Status';E={[string]$_.Status}}, "
+                     "@{N='Subject';E={if ($_.SignerCertificate) { $_.SignerCertificate.Subject } else { '' }}} | "
+        "ConvertTo-Json -Compress"
+    )
+    try:
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive",
+             "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {}
+    if r.returncode != 0 or not r.stdout.strip():
+        return {}
+    try:
+        data = json.loads(r.stdout)
+    except Exception:                                  # noqa: BLE001
+        return {}
+    if isinstance(data, dict):
+        data = [data]
+
+    out: dict[str, dict[str, str]] = {}
+    for entry in data:
+        if not isinstance(entry, dict):
+            continue
+        path = str(entry.get("Path", "") or "")
+        if not path:
+            continue
+        status_str = str(entry.get("Status", "") or "").strip()
+        subject = str(entry.get("Subject", "") or "")
+        cn, org = _parse_subject(subject)
+
+        if status_str == "Valid":
+            is_microsoft = "microsoft" in cn.lower() or "microsoft" in org.lower()
+            if is_microsoft:
+                out[path] = {"status": "apple",
+                             "team": org or cn or "Microsoft",
+                             "authority": "Authenticode"}
+            else:
+                out[path] = {"status": "developer-id",
+                             "team": cn or org or "",
+                             "authority": "Authenticode"}
+        elif status_str == "NotSigned":
+            out[path] = {"status": "unsigned", "team": "", "authority": ""}
+        elif status_str in ("HashMismatch", "NotTrusted", "UnknownError",
+                            "Incompatible", "NotSupportedFileFormat"):
+            out[path] = {"status": "invalid", "team": "", "authority": status_str}
+        else:
+            # Unknown status — be conservative, mark unsigned
+            out[path] = {"status": "unsigned", "team": "", "authority": status_str}
+    return out
 
 
 def _scan_windows_run_keys() -> list[PersistenceEntry]:
@@ -636,7 +751,7 @@ def _scan_windows_run_keys() -> list[PersistenceEntry]:
                 except OSError:
                     break
                 i += 1
-                program = _win_unquote_command(str(value))
+                program = _win_expand(_win_unquote_command(str(value)))
                 sign = _win_sign_status(program)
                 sus = _win_is_suspicious(program)
                 entries.append(PersistenceEntry(
@@ -740,7 +855,7 @@ def _scan_windows_scheduled_tasks() -> list[PersistenceEntry]:
         if task_name.startswith("TaskName"):
             continue
 
-        program = _win_unquote_command(task_to_run)
+        program = _win_expand(_win_unquote_command(task_to_run))
         sign = _win_sign_status(program) if program else {
             "status": "missing", "team": "", "authority": "",
         }
@@ -778,6 +893,27 @@ def _audit_windows() -> list[PersistenceEntry]:
         ))
     entries += _scan_windows_startup_folders()
     entries += _scan_windows_scheduled_tasks()
+
+    # Authenticode pass: batch every distinct program path through one
+    # PowerShell session and overwrite the heuristic sign_status with the
+    # real certificate verdict where it succeeds. Entries whose path isn't
+    # in the result keep their heuristic classification — fail-safe by design.
+    paths = [e.program for e in entries if e.program]
+    sign_map = _authenticode_batch(paths)
+    if sign_map:
+        for e in entries:
+            if not e.program:
+                continue
+            sign = sign_map.get(e.program)
+            if sign is None:
+                continue
+            e.sign_status    = sign["status"]
+            e.sign_team      = sign["team"]
+            e.sign_authority = sign["authority"]
+            # Re-classify severity since sign_status may have shifted; e.g.
+            # a SystemRoot binary that the heuristic called "apple" might
+            # actually be Authenticode-Invalid (HashMismatch / NotTrusted).
+            e.severity = _classify(e.sign_status, e.suspicious_path)
     return entries
 
 
