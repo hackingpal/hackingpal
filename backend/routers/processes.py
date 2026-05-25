@@ -26,14 +26,18 @@ from lib.platform_util import IS_DARWIN
 router = APIRouter(tags=["forensics"])
 
 
-# Signal name → signal number. Limited to the ones the UI exposes.
-SIGNAL_MAP: dict[str, int] = {
-    "TERM": signal_mod.SIGTERM,
-    "KILL": signal_mod.SIGKILL,
-    "STOP": signal_mod.SIGSTOP,
-    "CONT": signal_mod.SIGCONT,
-    "HUP":  signal_mod.SIGHUP,
-}
+# Signal name → signal number. Limited to the ones the UI exposes. Windows
+# only ships a subset of POSIX signals — SIGKILL/SIGSTOP/SIGCONT/SIGHUP all
+# raise AttributeError at module import there. Build the map conditionally
+# so the sidecar can boot on Windows; the kill endpoint then rejects unknown
+# signal names with a clean error instead of crashing the whole backend.
+SIGNAL_MAP: dict[str, int] = {}
+for _short, _attr in (("TERM", "SIGTERM"), ("KILL", "SIGKILL"),
+                      ("STOP", "SIGSTOP"), ("CONT", "SIGCONT"),
+                      ("HUP",  "SIGHUP")):
+    _sig = getattr(signal_mod, _attr, None)
+    if _sig is not None:
+        SIGNAL_MAP[_short] = _sig
 
 # PIDs that are categorically off-limits — killing them would panic the system.
 FORBIDDEN_PIDS = {0, 1}
