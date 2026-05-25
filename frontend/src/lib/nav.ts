@@ -13,8 +13,11 @@ export type Platform = "darwin" | "linux" | "win32";
 export type NavItem = { id: NavId | string; label: string; platforms?: Platform[] };
 export type NavGroup = { section: string; items: NavItem[] };
 
-export const MAC_ONLY:   Platform[] = ["darwin"];
-export const LINUX_ONLY: Platform[] = ["linux"];
+export const MAC_ONLY:     Platform[] = ["darwin"];
+export const LINUX_ONLY:   Platform[] = ["linux"];
+export const WINDOWS_ONLY: Platform[] = ["win32"];
+// For routers that work on Mac+Linux but the Windows port hasn't landed yet.
+export const NOT_WINDOWS:  Platform[] = ["darwin", "linux"];
 
 export const GROUPS: NavGroup[] = [
   {
@@ -50,7 +53,8 @@ export const GROUPS: NavGroup[] = [
       { id: "tls",         label: "TLS Auditor"   },
       { id: "fingerprint", label: "Fingerprint"   },
       { id: "http",        label: "HTTP Probe"    },
-      { id: "tcpdump",     label: "TCPDump"       },
+      // Windows needs npcap + windump (separate install) — port pending.
+      { id: "tcpdump",     label: "TCPDump",        platforms: NOT_WINDOWS },
     ],
   },
   {
@@ -137,28 +141,33 @@ export const GROUPS: NavGroup[] = [
   {
     section: "FORENSICS",
     items: [
-      { id: "persistence",   label: "Persistence"                              },
-      { id: "processes",     label: "Processes"                                },
-      { id: "stego",         label: "Steganography"                            },
-      { id: "macos",         label: "macOS Posture",  platforms: MAC_ONLY     },
-      { id: "linuxposture",  label: "Linux Posture",  platforms: LINUX_ONLY   },
-      { id: "usersaudit",    label: "Users Audit",    platforms: LINUX_ONLY   },
+      { id: "persistence",    label: "Persistence"                                },
+      { id: "processes",      label: "Processes"                                  },
+      { id: "stego",          label: "Steganography"                              },
+      { id: "macos",          label: "macOS Posture",    platforms: MAC_ONLY     },
+      { id: "linuxposture",   label: "Linux Posture",    platforms: LINUX_ONLY   },
+      { id: "windowsposture", label: "Windows Posture",  platforms: WINDOWS_ONLY },
+      { id: "usersaudit",     label: "Users Audit",      platforms: LINUX_ONLY   },
     ],
   },
   {
     section: "WIRELESS",
     items: [
+      // wifi_scan + evil_twin now have native Windows support (netsh wlan).
       { id: "wifiscan", label: "WiFi Scan"        },
       { id: "eviltwin", label: "Evil Twin Detect" },
-      { id: "bt",       label: "Bluetooth Recon"  },
-      { id: "wpacap",   label: "WPA Handshake / PMKID" },
+      { id: "bt",       label: "Bluetooth Recon",       platforms: NOT_WINDOWS },
+      { id: "wpacap",   label: "WPA Handshake / PMKID", platforms: MAC_ONLY    },
     ],
   },
   {
     section: "UTILITIES",
     items: [
-      { id: "wifi", label: "WiFi Integrity" },
-      { id: "vpn",  label: "VPN Manager"    },
+      // wifi (Integrity), vpn (WireGuard wg-quick), and tcpdump (libpcap)
+      // need OS-specific ports before Windows can use them. Hidden on win32
+      // so users don't click into a 501 error toast.
+      { id: "wifi", label: "WiFi Integrity", platforms: NOT_WINDOWS },
+      { id: "vpn",  label: "VPN Manager",    platforms: NOT_WINDOWS },
       { id: "term", label: "Terminal" },
       { id: "brew", label: "Packages" },
     ],

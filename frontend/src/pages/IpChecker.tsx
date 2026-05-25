@@ -184,7 +184,9 @@ export default function IpChecker() {
 
           {bulkResults && <BulkResults results={bulkResults} onPick={(t) => { setMode("single"); void lookup(t); }} />}
 
-          {!report && !bulkResults && !error && !busy && mode === "single" && <EmptyState />}
+          {!report && !bulkResults && !error && !busy && mode === "single" && (
+            <EmptyState onPick={(t) => void lookup(t)} />
+          )}
 
           {busy && (
             <div className="text-ink-dim text-xs font-mono caret-blink">
@@ -193,11 +195,13 @@ export default function IpChecker() {
           )}
         </div>
 
-        <HistoryPanel
-          items={history}
-          onPick={(t) => { setMode("single"); void lookup(t); }}
-          onClear={clearHistory}
-        />
+        {history.length > 0 && (
+          <HistoryPanel
+            items={history}
+            onPick={(t) => { setMode("single"); void lookup(t); }}
+            onClear={clearHistory}
+          />
+        )}
       </div>
     </div>
   );
@@ -351,22 +355,60 @@ function HistoryPanel({
   );
 }
 
-function EmptyState() {
+const EMPTY_SAMPLES = ["8.8.8.8", "1.1.1.1", "cloudflare.com", "github.com"];
+
+const EMPTY_CHECKS: Array<{ label: string; blurb: string }> = [
+  { label: "DNSBL",   blurb: "Spam & abuse blocklist hits" },
+  { label: "ASN",     blurb: "Autonomous system & country" },
+  { label: "WHOIS",   blurb: "Owner & abuse contact" },
+  { label: "Hosting", blurb: "Datacenter / VPS heuristic" },
+];
+
+function EmptyState({ onPick }: { onPick: (t: string) => void }) {
   return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   ▶  ▶  ▶    │
-        │   IP CHECK   │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Enter an IP or hostname above and press <kbd className="px-1.5 py-0.5 rounded
-            bg-bg-card border border-divider text-[10px] text-ink-primary">Enter</kbd>
+    <div className="h-full min-h-[260px] flex items-center justify-center p-6">
+      <div className="w-full max-w-xl text-center">
+        <div className="mx-auto w-14 h-14 rounded-lg bg-accent/10 border border-accent/30
+                        flex items-center justify-center text-accent text-2xl leading-none
+                        select-none">
+          ⌖
         </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          DNSBL · ASN · WHOIS abuse contact · datacenter heuristic
+        <h3 className="mt-4 text-base font-semibold text-ink-primary tracking-wide">
+          IP &amp; hostname intelligence
+        </h3>
+        <p className="mt-1 text-xs text-ink-muted">
+          Enter a target above and press{" "}
+          <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
+                          text-[10px] text-ink-primary font-mono">Enter</kbd>,
+          or try a sample.
+        </p>
+
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {EMPTY_SAMPLES.map((s) => (
+            <button
+              key={s}
+              onClick={() => onPick(s)}
+              className="px-2.5 py-1 text-[11px] font-mono rounded
+                         bg-bg-card border border-divider text-ink-muted
+                         hover:border-accent/50 hover:text-accent transition"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-2 text-left">
+          {EMPTY_CHECKS.map((c) => (
+            <div
+              key={c.label}
+              className="rounded border border-divider bg-bg-card px-3 py-2"
+            >
+              <div className="text-[10px] uppercase tracking-[0.2em] text-accent">
+                {c.label}
+              </div>
+              <div className="mt-0.5 text-[11px] text-ink-muted">{c.blurb}</div>
+            </div>
+          ))}
         </div>
       </div>
     </div>

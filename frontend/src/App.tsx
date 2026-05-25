@@ -14,6 +14,7 @@ import ReverseIp from "./pages/ReverseIp";
 import Cms from "./pages/Cms";
 import MacosPosture from "./pages/MacosPosture";
 import LinuxPosture from "./pages/LinuxPosture";
+import WindowsPosture from "./pages/WindowsPosture";
 import Systemd from "./pages/Systemd";
 import FirewallRules from "./pages/FirewallRules";
 import UsersAudit from "./pages/UsersAudit";
@@ -179,7 +180,7 @@ export default function App() {
               ~150px, so we reserve that space on the right edge instead. */}
         <div
           className={
-            "app-drag h-7 border-b border-divider bg-bg-sidebar flex items-center justify-between " +
+            "app-drag h-8 border-b border-divider bg-bg-sidebar flex items-center justify-between gap-3 " +
             (platform === "win32" ? "pr-[150px] " : "pr-4 ") +
             (sidebarHidden && platform !== "win32" && platform !== "linux"
               ? "pl-[88px]"
@@ -308,6 +309,7 @@ export default function App() {
            active === "hash"        ? <HashCracker /> :
            active === "macos"       ? <MacosPosture /> :
            active === "linuxposture" ? <LinuxPosture /> :
+           active === "windowsposture" ? <WindowsPosture /> :
            active === "systemd"     ? <Systemd /> :
            active === "firewallrules" ? <FirewallRules /> :
            active === "usersaudit"  ? <UsersAudit /> :

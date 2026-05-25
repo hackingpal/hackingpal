@@ -1073,6 +1073,74 @@ export type LinuxPosture = {
 
 export const fetchLinuxPosture = () => api<LinuxPosture>("/linux/posture");
 
+// ── Windows posture ───────────────────────────────────────────────────────────
+
+export type WindowsFinding = {
+  severity: "info" | "warn" | "high";
+  label: string;
+  detail?: string;
+};
+
+export type WindowsPosture = {
+  bitlocker: {
+    status:      "enabled" | "disabled" | "partial" | "unknown";
+    mount?:      string;
+    volume?:     string;
+    method?:     string;
+    protection?: string | number;
+    percentage?: number;
+    raw:         string;
+  };
+  defender: {
+    status:               "enabled" | "disabled" | "partial" | "unknown";
+    antivirus?:           boolean;
+    realtime?:            boolean;
+    antispyware?:         boolean;
+    tamper_protected?:    boolean;
+    service?:             boolean;
+    behaviour_monitor?:   boolean;
+    ioav_protection?:     boolean;
+    network_inspection?:  boolean;
+    sig_version?:         string;
+    sig_updated?:         string;
+    raw:                  string;
+  };
+  uac: {
+    status:                    "enabled" | "disabled" | "unknown";
+    enable_lua?:               number;
+    consent_prompt_admin?:     number;
+    consent_prompt_user?:      number;
+    prompt_on_secure_desktop?: number;
+    raw:                       string;
+  };
+  firewall: {
+    profiles: {
+      name: string; enabled: boolean;
+      inbound: string; outbound: string;
+    }[];
+    all_enabled: boolean;
+    raw: string;
+  };
+  smartscreen: {
+    status:    "enabled" | "partial" | "disabled" | "unknown";
+    explorer?: string;
+    raw:       string;
+  };
+  secureboot: {
+    status: "enabled" | "disabled" | "legacy-bios" | "unknown";
+    raw:    string;
+  };
+  updates: {
+    recent: { id: string; description: string; installed: string }[];
+    days_since_last: number;     // -1 when unknown
+    raw: string;
+  };
+  findings:   WindowsFinding[];
+  elapsed_ms: number;
+};
+
+export const fetchWindowsPosture = () => api<WindowsPosture>("/windows/posture");
+
 // ── Systemd units ─────────────────────────────────────────────────────────────
 
 export type SystemdUnit = {

@@ -37,7 +37,7 @@ export type NavId =
   | "wifiscan" | "eviltwin" | "bt" | "wpacap"
   | "revshell" | "obfuscator" | "pivot" | "credhrv" | "c2"
   | "hash" | "cvss"
-  | "ids" | "persistence" | "processes" | "stego" | "macos" | "linuxposture"
+  | "ids" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
   | "wifi" | "vpn" | "term" | "brew";
 
@@ -112,13 +112,14 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
   return (
     <nav className="w-60 shrink-0 border-r border-divider bg-bg-sidebar flex flex-col">
       {/* Top inset — on macOS (hiddenInset) and Windows (hidden+overlay) the
-          OS title bar is gone, so we need pt-7 to clear the overlaid window
-          controls. On Linux the native title bar is still visible above us so
-          pt-2 is enough. `platform` is null on first paint; default to the
-          taller inset to avoid a layout jump. */}
+          OS title bar is gone, so we need pt-10 to fully clear the overlaid
+          window controls (traffic lights sit ~28px tall, so pt-7 left them
+          visually touching the brand mark). On Linux the native title bar is
+          still visible above us so pt-2 is enough. `platform` is null on
+          first paint; default to the taller inset to avoid a layout jump. */}
       <header className={
         "app-drag pb-3 px-4 border-b border-divider bg-bg-sidebar " +
-        (platform === "linux" ? "pt-2" : "pt-7")
+        (platform === "linux" ? "pt-2" : "pt-10")
       }>
         <div className="flex items-center gap-2.5">
           <BrandMark />
