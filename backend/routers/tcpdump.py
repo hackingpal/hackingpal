@@ -71,63 +71,117 @@ def status() -> dict[str, Any]:
     }
 
 
+_IFACE_SKIP_PREFIXES = (
+    # macOS pseudo-interfaces / tunnels
+    "utun", "ipsec", "stf", "gif",
+    # Linux tunnel / encapsulation interfaces from iproute2
+    "tunl", "gre", "erspan", "ip6tnl", "sit", "ip_vti", "ip6_vti",
+)
+
+
 @router.get("/tcpdump/interfaces")
 def interfaces() -> dict[str, list[str]]:
     require_unix(_TCPDUMP_HINT)
-    try:
-        out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
-    except FileNotFoundError:
-        return {"interfaces": ["any"]}
-    names = re.findall(r"^(\w+):", out, re.MULTILINE)
-    # Filter out tunnels / loopback-only / inactive things
-    keep = ["any"] + [n for n in names if not n.startswith(("utun", "ipsec", "stf", "gif"))]
+    names: list[str] = []
+
+    # On Linux prefer `ip -o link show up`. iproute2 is universally present
+    # on modern distros, while net-tools (ifconfig) is increasingly absent.
+    ip_bin = _shutil.which("ip")
+    if ip_bin and sys.platform.startswith("linux"):
+        try:
+            r = subprocess.run([ip_bin, "-o", "link", "show", "up"],
+                               capture_output=True, text=True, timeout=4)
+            # Line shape: "11: eth0@if103: <BROADCAST,...>" — capture up to the
+            # first ':' or '@' so veth pair names come back clean.
+            names = [m.group(1) for m in re.finditer(
+                r"^\d+:\s+([^:@\s]+)[:@]", r.stdout, re.MULTILINE)]
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    if not names:
+        try:
+            out = subprocess.run(["ifconfig"], capture_output=True,
+                                 text=True, timeout=4).stdout
+            names = re.findall(r"^(\w+):", out, re.MULTILINE)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return {"interfaces": ["any"]}
+
+    keep = ["any"] + [n for n in names if not n.startswith(_IFACE_SKIP_PREFIXES)]
     return {"interfaces": keep}
 
 
 @router.post("/tcpdump/install", dependencies=[Depends(require_local_auth)])
 def install_sudoers() -> dict[str, Any]:
-    """Drop a `<user> ALL=(root) NOPASSWD: /usr/sbin/tcpdump` entry.
+    """Drop a `<user> ALL=(root) NOPASSWD: <tcpdump>` entry.
 
-    Shows a native macOS password prompt via osascript. Returns whether the
-    install succeeded.
+    Shows the OS-native admin prompt: osascript on macOS, pkexec (polkit) on
+    Linux. Returns whether the install succeeded.
     """
-    if sys.platform != "darwin":
-        raise HTTPException(
-            status_code=501,
-            detail=("Passwordless sudoers auto-install is macOS-only. "
-                    "On Linux, add a sudoers entry manually: "
-                    f"echo '{getpass.getuser()} ALL=(root) NOPASSWD: $(which tcpdump)' "
-                    "| sudo tee /etc/sudoers.d/myhackingpal-tcpdump && "
-                    "sudo chmod 0440 /etc/sudoers.d/myhackingpal-tcpdump"),
-        )
     if _is_passwordless():
         return {"installed": True, "already": True}
 
     user = getpass.getuser()
     tmp = Path(tempfile.gettempdir()) / "_nt_tcpdump_sudoers"
-    tmp.write_text(f"{user} ALL=(root) NOPASSWD: /usr/sbin/tcpdump\n")
+    tmp.write_text(f"{user} ALL=(root) NOPASSWD: {TCPDUMP}\n")
 
-    install_cmd = (
-        f"/usr/sbin/visudo -cf {shlex.quote(str(tmp))} && "
-        f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
-        f"/usr/sbin/chown root:wheel {shlex.quote(SUDOERS_PATH)} && "
-        f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
-    )
-    script = f'do shell script "{install_cmd}" with administrator privileges'
-    try:
-        r = subprocess.run(["osascript", "-e", script],
-                           capture_output=True, text=True, timeout=120)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    if r.returncode != 0:
-        err = (r.stderr or "").strip()
-        # User clicked Cancel
-        if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
-            raise HTTPException(status_code=400,
-                                detail="install cancelled by user")
-        raise HTTPException(status_code=500,
-                            detail=err or "install failed")
-    return {"installed": _is_passwordless()}
+    if sys.platform == "darwin":
+        install_cmd = (
+            f"/usr/sbin/visudo -cf {shlex.quote(str(tmp))} && "
+            f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
+            f"/usr/sbin/chown root:wheel {shlex.quote(SUDOERS_PATH)} && "
+            f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
+        )
+        script = f'do shell script "{install_cmd}" with administrator privileges'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()
+            if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
+                raise HTTPException(status_code=400,
+                                    detail="install cancelled by user")
+            raise HTTPException(status_code=500, detail=err or "install failed")
+        return {"installed": _is_passwordless()}
+
+    if sys.platform.startswith("linux"):
+        pkexec = _shutil.which("pkexec")
+        if not pkexec:
+            raise HTTPException(
+                status_code=501,
+                detail=("pkexec not installed. Install policykit-1 (Debian/Ubuntu) "
+                        "or polkit (RHEL/Arch), or add a sudoers entry manually: "
+                        f"echo '{user} ALL=(root) NOPASSWD: {TCPDUMP}' "
+                        f"| sudo tee {SUDOERS_PATH} && "
+                        f"sudo chmod 0440 {SUDOERS_PATH}"),
+            )
+        visudo = _shutil.which("visudo") or "/usr/sbin/visudo"
+        install_cmd = (
+            f"{shlex.quote(visudo)} -cf {shlex.quote(str(tmp))} && "
+            f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
+            # Linux's superuser group is `root`, not Mac's `wheel`.
+            f"/bin/chown root:root {shlex.quote(SUDOERS_PATH)} && "
+            f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
+        )
+        try:
+            r = subprocess.run(
+                [pkexec, "/bin/sh", "-c", install_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = ((r.stdout or "") + (r.stderr or "")).strip()
+            # pkexec: 126 = auth failed / dismissed, 127 = no agent
+            if r.returncode in (126, 127):
+                raise HTTPException(status_code=400,
+                                    detail="install cancelled or no polkit agent available")
+            raise HTTPException(status_code=500, detail=err or "install failed")
+        return {"installed": _is_passwordless()}
+
+    raise HTTPException(status_code=501,
+                        detail="passwordless install not supported on this platform")
 
 
 @router.websocket("/ws/tcpdump")
