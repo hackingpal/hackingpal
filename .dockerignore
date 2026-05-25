@@ -6,8 +6,14 @@
 .vscode/
 .DS_Store
 
-# --- Frontend (not needed for backend image) ---
-frontend/
+# --- Frontend ---
+# Source is needed for the multi-stage build (Node stage compiles the React
+# UI; final image only carries the dist/ output). Excludes below skip the
+# heavy generated artifacts so the build context stays small.
+frontend/node_modules/
+frontend/dist/
+frontend/dist-electron/
+frontend/build/
 
 # --- Python build/cache ---
 **/__pycache__/

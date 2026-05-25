@@ -46,6 +46,14 @@ The following invariants are enforced in code:
   intentionally lifting the loopback restriction and accept that responsibility.
   At minimum: bind to a private VPN/Tailscale interface, put it behind an
   authenticating reverse proxy, and treat the token as a shared secret.
+- The Docker browser UI. The same `docker-compose.yml` deploy also serves the
+  React UI at `http://<host>:8765/`. The page is **unauthenticated** — anyone
+  who can reach the port can use the API surface. The five privileged endpoints
+  (`/terminal/exec`, `/nmap/install`, `/tcpdump/install`, `/vpn/start`,
+  `/vpn/stop`) reject non-loopback callers, so they are not reachable from a
+  remote browser — but every other endpoint is. Place the container behind a
+  reverse proxy with authentication, or restrict the listener to a trusted
+  network interface.
 
 ## Reporting Scope
 

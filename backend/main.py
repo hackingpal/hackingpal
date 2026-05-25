@@ -15,9 +15,11 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from lib.auth import AUTH_TOKEN, require_localhost
 
@@ -169,6 +171,16 @@ def auth_token() -> dict[str, str]:
     is automatically invalidated.
     """
     return {"token": AUTH_TOKEN}
+
+
+# ── Optional browser UI mount ────────────────────────────────────────────────
+# The Docker image bundles the built React app under /app/frontend_dist and
+# serves it at "/". The Electron PyInstaller sidecar has no such directory,
+# so the mount is conditional and that build path remains unaffected.
+# Registered after every explicit route so it only catches unmatched paths.
+_FRONTEND_DIST = Path(__file__).parent / "frontend_dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_FRONTEND_DIST, html=True), name="frontend")
 
 
 # ── Sidecar entrypoint ────────────────────────────────────────────────────────

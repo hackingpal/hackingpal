@@ -1,11 +1,19 @@
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      # Repo root, so the multi-stage Dockerfile can see both backend/ and
+      # frontend/ (the Node stage compiles the React UI; the Python stage
+      # serves it from /app/frontend_dist).
+      context: .
+      dockerfile: backend/Dockerfile
     image: myhackingpal/backend:latest
     container_name: myhackingpal-backend
     restart: unless-stopped
+    # The image bundles both the API (all paths under /<router>/) and the
+    # browser UI (served at /). Browse http://<host>:8765/ to use the UI;
+    # the 5 privileged endpoints (terminal/exec, nmap/install, tcpdump/install,
+    # vpn/start, vpn/stop) reject non-loopback callers, so the browser can't
+    # invoke them — see SECURITY.md "Threat Model".
     ports:
       - "8765:8765"
     # NET_RAW: tcpdump + nmap SYN/UDP/OS raw sockets.
