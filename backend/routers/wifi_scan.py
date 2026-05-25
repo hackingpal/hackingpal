@@ -31,7 +31,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from lib.platform_util import IS_DARWIN, require_unix
+from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
 
 router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"])
 
@@ -309,13 +309,173 @@ def _scan_iw(iface: str) -> tuple[list[dict[str, Any]], str | None, str | None]:
     return rows, None, None
 
 
+# ── Windows scanner (netsh wlan) ─────────────────────────────────────────────
+
+# netsh wlan output is localised — these patterns target English Windows.
+# Non-English systems would need a different parser; calling
+# `netsh wlan show networks mode=bssid` on a Spanish/German box returns
+# "Tipo de red"/"Netzwerktyp" etc.
+_WIN_SSID_RE   = re.compile(r"^SSID\s+\d+\s*:\s*(.*?)\s*$")
+_WIN_BSSID_RE  = re.compile(r"^\s*BSSID\s+\d+\s*:\s*([0-9a-fA-F:]{17})\s*$")
+_WIN_AUTH_RE   = re.compile(r"^\s*Authentication\s*:\s*(.+?)\s*$")
+_WIN_SIGNAL_RE = re.compile(r"^\s*Signal\s*:\s*(\d+)%\s*$")
+_WIN_CHAN_RE   = re.compile(r"^\s*Channel\s*:\s*(\d+)\s*$")
+_WIN_BAND_RE   = re.compile(r"^\s*Band\s*:\s*([\d.]+)\s*GHz\s*$")
+
+
+def _win_security_normalise(auth: str) -> str:
+    a = auth.strip().lower()
+    if not a or a in ("open", "none"):
+        return "None"
+    if "wep" in a:
+        return "WEP"
+    if "wpa3" in a:
+        return "WPA3"
+    if "wpa2" in a:
+        return "WPA2"
+    if "wpa" in a:
+        return "WPA"
+    return auth.strip() or "None"
+
+
+def _scan_windows() -> dict[str, Any]:
+    """Windows WiFi scan via `netsh wlan show networks mode=bssid`.
+
+    netsh is the only stable cross-Windows-version option without depending on
+    PowerShell or third-party libraries (no winrt installed). The output is
+    text-formatted with one block per SSID + nested BSSID entries. Returns
+    the same dict shape as the Mac/Linux scanners so the FE renders unchanged.
+    """
+    netsh = shutil.which("netsh") or r"C:\Windows\System32\netsh.exe"
+    try:
+        r = subprocess.run(
+            [netsh, "wlan", "show", "networks", "mode=bssid"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError:
+        raise HTTPException(503, "netsh not found — Windows WiFi APIs unavailable")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(504, "netsh wlan scan timed out")
+    if r.returncode != 0:
+        # Common errors:
+        #   "The wireless local area network interface is powered down" — WiFi off
+        #   "The Wireless AutoConfig Service (wlansvc) is not running" — service down
+        raise HTTPException(
+            500, f"netsh wlan scan failed (rc={r.returncode}): "
+                 f"{(r.stderr or r.stdout or '').strip()}")
+
+    rows: list[dict[str, Any]] = []
+    cur_ssid: str | None = None
+    cur_auth: str = ""
+    cur_bssid_entry: dict[str, Any] | None = None
+
+    def _flush_bssid() -> None:
+        if cur_bssid_entry and cur_bssid_entry.get("bssid"):
+            bssid = cur_bssid_entry["bssid"].lower()
+            rssi_pct = int(cur_bssid_entry.get("signal_pct", 0))
+            rssi_dbm = rssi_pct - 100  # same monotonic mapping as nmcli
+            rows.append({
+                "ssid":     cur_ssid if cur_ssid else None,
+                "bssid":    bssid,
+                "rssi":     rssi_dbm,
+                "noise":    0,
+                "channel":  int(cur_bssid_entry.get("channel", 0)),
+                "band":     int(cur_bssid_entry.get("band", 0)),
+                "width":    0,
+                "security": _win_security_normalise(cur_auth),
+                "security_id": -1,
+                "country":  None,
+                "beacon_interval": 0,
+                "oui":      bssid[:8],
+                "is_hidden": not bool(cur_ssid),
+            })
+
+    for raw in r.stdout.splitlines():
+        m = _WIN_SSID_RE.match(raw)
+        if m:
+            _flush_bssid()
+            cur_bssid_entry = None
+            cur_ssid = m.group(1).strip() or None
+            cur_auth = ""
+            continue
+        m = _WIN_AUTH_RE.match(raw)
+        if m:
+            cur_auth = m.group(1)
+            continue
+        m = _WIN_BSSID_RE.match(raw)
+        if m:
+            _flush_bssid()
+            cur_bssid_entry = {"bssid": m.group(1).lower()}
+            continue
+        if cur_bssid_entry is None:
+            continue
+        m = _WIN_SIGNAL_RE.match(raw)
+        if m:
+            cur_bssid_entry["signal_pct"] = int(m.group(1))
+            continue
+        m = _WIN_CHAN_RE.match(raw)
+        if m:
+            cur_bssid_entry["channel"] = int(m.group(1))
+            continue
+        m = _WIN_BAND_RE.match(raw)
+        if m:
+            try:
+                ghz = float(m.group(1))
+            except ValueError:
+                ghz = 0.0
+            if 2.0 <= ghz < 3.0:    cur_bssid_entry["band"] = 1   # 2.4 GHz
+            elif 4.0 <= ghz < 6.0:  cur_bssid_entry["band"] = 2   # 5 GHz
+            elif 5.9 <= ghz < 7.2:  cur_bssid_entry["band"] = 3   # 6 GHz (Wi-Fi 6E)
+            continue
+    _flush_bssid()
+
+    # Pull the currently-associated SSID/BSSID from `netsh wlan show interfaces`.
+    cur_ssid_now: str | None = None
+    cur_bssid_now: str | None = None
+    iface_name = ""
+    try:
+        r2 = subprocess.run(
+            [netsh, "wlan", "show", "interfaces"],
+            capture_output=True, text=True, timeout=8,
+        )
+    except Exception:
+        r2 = None
+    if r2 is not None and r2.returncode == 0:
+        for raw in r2.stdout.splitlines():
+            ls = raw.strip()
+            if ls.lower().startswith("name") and ":" in ls:
+                # The first "Name :" block is the interface display name.
+                if not iface_name:
+                    iface_name = ls.split(":", 1)[1].strip()
+            elif ls.lower().startswith("ssid") and ":" in ls and not ls.lower().startswith("bssid"):
+                v = ls.split(":", 1)[1].strip()
+                if v:
+                    cur_ssid_now = v
+            elif ls.lower().startswith("bssid") and ":" in ls:
+                v = ls.split(":", 1)[1].strip().lower()
+                if re.fullmatch(r"[0-9a-f:]{17}", v):
+                    cur_bssid_now = v
+
+    return {
+        "interface":     iface_name,
+        "current_ssid":  cur_ssid_now,
+        "current_bssid": cur_bssid_now,
+        "networks":      sorted(rows, key=lambda r: -r["rssi"]),
+        "permission_hint": None,
+    }
+
+
 # ── public function: used by evil_twin too ───────────────────────────────────
 
 def scan_networks() -> dict[str, Any]:
     """Platform-agnostic WiFi scan. Returns the same shape as /wifi-scan/scan."""
-    require_unix("WiFi scan uses CoreWLAN (macOS) or nmcli/iw (Linux); "
-                 "Windows port not implemented yet.")
-    return _scan_mac() if IS_DARWIN else _scan_linux()
+    if IS_DARWIN:
+        return _scan_mac()
+    if IS_LINUX:
+        return _scan_linux()
+    if IS_WINDOWS:
+        return _scan_windows()
+    raise HTTPException(501, "Unsupported platform for WiFi scan.")
 
 
 @router.get("/scan")
