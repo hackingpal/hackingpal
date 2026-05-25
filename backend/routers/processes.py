@@ -9,6 +9,7 @@ from __future__ import annotations
 import getpass
 import os
 import shlex
+import shutil
 import signal as signal_mod
 import socket
 import subprocess
@@ -21,7 +22,21 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from lib import forensics, hids_notify, ids as ids_lib   # reuse the lsof snapshot
-from lib.platform_util import IS_DARWIN
+from lib.platform_util import IS_DARWIN, IS_LINUX
+
+
+def _sign_check(path: str) -> dict[str, str]:
+    """Native signature/provenance check, dispatched per OS.
+
+    Mac uses codesign; Linux uses dpkg/rpm/pacman package ownership.
+    Both return the same {status, team, authority} shape so the rest of
+    this module (severity classification, frontend rendering) doesn't care.
+    """
+    if IS_DARWIN:
+        return forensics.codesign_check(path)
+    if IS_LINUX:
+        return forensics.linux_pkg_owner(path)
+    return {"status": "", "team": "", "authority": ""}
 
 router = APIRouter(tags=["forensics"])
 
@@ -100,13 +115,14 @@ def list_processes(unsigned_only: bool = False) -> dict[str, Any]:
         if exe:
             unique_exes.add(exe)
 
-    # codesign_check spends ~30ms per binary in subprocess calls — fan them out
-    # across threads so 400+ unique exes don't serialize into ~12s of latency.
+    # _sign_check spends ~30ms per binary in subprocess calls (codesign on Mac,
+    # dpkg/rpm on Linux) — fan them out across threads so 400+ unique exes
+    # don't serialize into ~12s of latency.
     sign_cache: dict[str, dict[str, str]] = {}
     if unique_exes:
         with ThreadPoolExecutor(max_workers=16) as pool:
             for exe, sign in zip(unique_exes,
-                                 pool.map(forensics.codesign_check, unique_exes)):
+                                 pool.map(_sign_check, unique_exes)):
                 sign_cache[exe] = sign
 
     entries: list[ProcessEntry] = []
@@ -184,8 +200,11 @@ def _risk_assessment(pid: int) -> dict[str, Any]:
 
     self_owned = (username == me)
 
-    # Apple-signed processes (Finder, WindowServer, kernel, etc.) are usually critical
-    sign = forensics.codesign_check(exe) if exe else {"status": ""}
+    # System-trusted processes are usually critical: Apple-signed on macOS
+    # (Finder, WindowServer, kernel_task), package-owned on Linux (sshd, init).
+    # linux_pkg_owner reuses the "apple" status string for package-owned bins
+    # so the same flag drives the same risk classification on both OSes.
+    sign = _sign_check(exe) if exe else {"status": ""}
     apple_signed = sign.get("status") == "apple"
 
     # Low PIDs are typically system bootstrap
@@ -209,24 +228,45 @@ def _risk_assessment(pid: int) -> dict[str, Any]:
 
 
 def _kill_admin(pid: int, signum: int) -> tuple[bool, str]:
-    """Send the signal via osascript admin prompt. Returns (ok, message)."""
-    if not IS_DARWIN:
-        # Linux pkexec/sudo path and a Windows UAC path are TODO; surfacing
-        # an explicit message is clearer than osascript FileNotFoundError.
-        return False, "admin kill is currently macOS-only"
-    cmd = f"/bin/kill -{signum} {pid}"
-    script = f'do shell script "{cmd}" with administrator privileges'
-    try:
-        r = subprocess.run(["osascript", "-e", script],
-                           capture_output=True, text=True, timeout=60)
-    except subprocess.TimeoutExpired:
-        return False, "admin prompt timed out"
-    out = (r.stdout or "") + (r.stderr or "")
-    if r.returncode == 0:
-        return True, "killed via admin"
-    if "-128" in out or "canceled" in out.lower() or "cancelled" in out.lower():
-        return False, "cancelled by user"
-    return False, out.strip() or "admin kill failed"
+    """Send the signal via an OS-native admin prompt. Returns (ok, message)."""
+    if IS_DARWIN:
+        cmd = f"/bin/kill -{signum} {pid}"
+        script = f'do shell script "{cmd}" with administrator privileges'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            return False, "admin prompt timed out"
+        out = (r.stdout or "") + (r.stderr or "")
+        if r.returncode == 0:
+            return True, "killed via admin"
+        if "-128" in out or "canceled" in out.lower() or "cancelled" in out.lower():
+            return False, "cancelled by user"
+        return False, out.strip() or "admin kill failed"
+
+    if IS_LINUX:
+        # pkexec brings up the polkit prompt on desktop Linux. In a headless
+        # container or server with no polkit agent, pkexec exits non-zero —
+        # surface a clean message instead of leaking the raw error.
+        pkexec = shutil.which("pkexec")
+        if not pkexec:
+            return False, "pkexec not installed — install policykit-1 (Debian) or polkit (RHEL/Arch)"
+        kill_bin = shutil.which("kill") or "/bin/kill"
+        try:
+            r = subprocess.run(
+                [pkexec, kill_bin, f"-{signum}", str(pid)],
+                capture_output=True, text=True, timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            return False, "admin prompt timed out"
+        if r.returncode == 0:
+            return True, "killed via pkexec"
+        # pkexec exits 126 on auth failure / user dismissal, 127 when no agent.
+        if r.returncode in (126, 127):
+            return False, "cancelled or no polkit agent available"
+        return False, ((r.stdout or "") + (r.stderr or "")).strip() or "pkexec kill failed"
+
+    return False, "admin kill not supported on this platform"
 
 
 def _kill_one(pid: int, signal_name: str, admin: bool, confirm: bool) -> dict[str, Any]:

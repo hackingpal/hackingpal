@@ -50,18 +50,24 @@ def codesign_check(path: str | Path) -> dict[str, str]:
     if _CODESIGN is None:
         return {"status": "", "team": "", "authority": ""}
 
-    # First: cheap verify pass
-    verify = subprocess.run(
-        [_CODESIGN, "--verify", "--no-strict", str(p)],
-        capture_output=True, text=True, timeout=8,
-    )
-    valid = verify.returncode == 0
+    # codesign on very large binaries (Docker.app's com.docker.backend,
+    # Electron helper bundles) can blow past 8s. Cache the empty result so
+    # one slow binary doesn't 500 every /processes/list call.
+    try:
+        verify = subprocess.run(
+            [_CODESIGN, "--verify", "--no-strict", str(p)],
+            capture_output=True, text=True, timeout=8,
+        )
+        valid = verify.returncode == 0
 
-    # Then: detailed display
-    show = subprocess.run(
-        [_CODESIGN, "-dvv", str(p)],
-        capture_output=True, text=True, timeout=8,
-    )
+        show = subprocess.run(
+            [_CODESIGN, "-dvv", str(p)],
+            capture_output=True, text=True, timeout=8,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        result = {"status": "", "team": "", "authority": ""}
+        _codesign_cache[key] = result
+        return result
     raw = (show.stdout + show.stderr).strip()
     if "code object is not signed" in raw.lower():
         result = {"status": "unsigned", "team": "", "authority": ""}
