@@ -133,8 +133,12 @@ jobs:
             exit 1
           fi
 
-          # Helper: probe an endpoint and assert HTTP status.
-          # Usage: probe <label> <url> <expected_status>
+          # Helper: probe an endpoint and assert HTTP status. `want` may be
+          # one status (e.g. "501") or a "|"-separated set ("200|503") for
+          # endpoints whose acceptable response depends on the runner's
+          # environment (e.g. /wifi-scan/scan: 200 on a real Windows host
+          # with WiFi, 503 on a headless CI VM with no wlansvc).
+          # Usage: probe <label> <url> <expected_status[|alt[|alt]]>
           fail=0
           probe() {
             local label="$1" url="$2" want="$3"
@@ -142,7 +146,12 @@ jobs:
             got=$(curl -s -o "$RUNNER_TEMP/body.txt" -w "%{http_code}" --max-time 15 "$url" || echo 000)
             local body
             body=$(head -c 200 "$RUNNER_TEMP/body.txt" | tr '\n' ' ')
-            if [ "$got" = "$want" ]; then
+            local match=0
+            local IFS='|'
+            for w in $want; do
+              if [ "$got" = "$w" ]; then match=1; break; fi
+            done
+            if [ "$match" = "1" ]; then
               echo "  OK   $got  $label  -> $body"
             else
               echo "::warning::FAIL $got (want $want)  $label  -> $body"
@@ -157,11 +166,16 @@ jobs:
           probe "stego/info"         "http://127.0.0.1:8765/stego/info"          200
           probe "ip/8.8.8.8"         "http://127.0.0.1:8765/ip/8.8.8.8"          200
           probe "persistence/audit"  "http://127.0.0.1:8765/persistence/audit"   200
+          # Windows-only — runs on the CI VM; should respond cleanly even if some
+          # sections (BitLocker on an unsupported volume, etc.) return partial.
+          probe "windows/posture"    "http://127.0.0.1:8765/windows/posture"     200
           # Mac/Linux-only — expect 501 (not 500), proves the guard, not a crash
           probe "macos/posture"      "http://127.0.0.1:8765/macos/posture"       501
           probe "linux/posture"      "http://127.0.0.1:8765/linux/posture"       501
           probe "wifi/report"        "http://127.0.0.1:8765/wifi/report"         501
-          probe "wifi-scan/scan"     "http://127.0.0.1:8765/wifi-scan/scan"      501
+          # wifi-scan: 200 on a real Windows machine with WiFi, 503 on CI VMs
+          # where the Wireless AutoConfig Service (wlansvc) isn't running.
+          probe "wifi-scan/scan"     "http://127.0.0.1:8765/wifi-scan/scan"      "200|503"
           probe "vpn/status"         "http://127.0.0.1:8765/vpn/status"          501
           probe "tcpdump/status"     "http://127.0.0.1:8765/tcpdump/status"      501
           probe "bt/status"          "http://127.0.0.1:8765/bt/status"           501

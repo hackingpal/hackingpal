@@ -357,12 +357,23 @@ def _scan_windows() -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "netsh wlan scan timed out")
     if r.returncode != 0:
-        # Common errors:
-        #   "The wireless local area network interface is powered down" — WiFi off
-        #   "The Wireless AutoConfig Service (wlansvc) is not running" — service down
+        err = (r.stderr or r.stdout or "").strip()
+        # These aren't backend errors — they're "no WiFi available right now"
+        # conditions (desktop with no WiFi card, WiFi disabled, headless CI VM).
+        # Return 503 so the frontend can show a "WiFi unavailable" state
+        # instead of a generic 500 error toast.
+        no_wifi_markers = (
+            "wlansvc",                            # Wireless AutoConfig service down
+            "is not running",
+            "no wireless interface",
+            "There is no wireless interface",
+            "powered down",
+            "not currently allowed",
+        )
+        if any(m.lower() in err.lower() for m in no_wifi_markers):
+            raise HTTPException(503, f"WiFi unavailable: {err}")
         raise HTTPException(
-            500, f"netsh wlan scan failed (rc={r.returncode}): "
-                 f"{(r.stderr or r.stdout or '').strip()}")
+            500, f"netsh wlan scan failed (rc={r.returncode}): {err}")
 
     rows: list[dict[str, Any]] = []
     cur_ssid: str | None = None
