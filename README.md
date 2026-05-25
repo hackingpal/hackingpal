@@ -75,11 +75,18 @@ to the macOS Keychain when running the desktop app natively).
 
 ### Option 1 — Download (recommended)
 
-Download the latest release for your platform from [Releases](https://github.com/myhackingpal/myhackingpal/releases):
+Latest builds are produced by CI on every push to `main` — pick the artifact
+that matches your OS from the [Actions tab](https://github.com/myhackingpal/myhackingpal/actions/workflows/build.yml)
+(latest green run → "Artifacts"). All builds are currently unsigned, so first
+launch shows a Gatekeeper / SmartScreen warning that you'll need to click past.
 
-- macOS: `MyHackingPal-mac-arm64.zip`
-- Windows: `MyHackingPal-win-x64.exe` *(coming soon)*
-- Linux: `MyHackingPal-linux-x86_64.AppImage` *(coming soon)*
+- macOS (Apple Silicon): `MyHackingPal-macos-latest` → `.app` bundle
+- Windows (x64): `MyHackingPal-windows-latest` → `MyHackingPal Setup 0.1.0.exe`
+  (NSIS installer, ~145 MB) **or** `MyHackingPal 0.1.0.exe` (portable, no install)
+- Linux (x64 / arm64): `MyHackingPal-ubuntu-latest` (x86_64 `.AppImage` + `.deb`)
+  or `MyHackingPal-ubuntu-24.04-arm` (arm64 `.AppImage`)
+
+A signed-release flow with GitHub Releases + electron-updater is on the roadmap.
 
 ### Option 2 — Docker (backend API only)
 
@@ -98,8 +105,9 @@ curl http://127.0.0.1:8765/health
 The compose file grants `NET_RAW` + `NET_ADMIN` so tcpdump and nmap
 SYN/UDP/OS scans work. For LAN scanning from the host's network on a Linux
 host, switch to `network_mode: host` (see the comment inline in
-`docker-compose.yml`). macOS-only tools (`brew`, `wifi`, `bt`,
-`macos-posture`) return a clean 503 with a hint message.
+`docker-compose.yml`). Endpoints that need OS-specific APIs return a clean
+501/503 with a hint message — e.g. `/macos/posture` is macOS-only,
+`/linux/posture` is Linux-only, `/windows/posture` is Windows-only.
 
 Interactive API docs are at `http://127.0.0.1:8765/docs`.
 
@@ -114,6 +122,24 @@ producing a packaged binary.
 - [macOS](docs/README-macos.md) — Gatekeeper, Keychain, sudoers drop-ins
 - [Windows](docs/README-windows.md) — SmartScreen, Credential Manager, Npcap *(in progress)*
 - [Linux](docs/README-linux.md) — capabilities, Secret Service, AppImage notes *(in progress)*
+
+### Platform support matrix
+
+|                                | macOS | Linux | Windows |
+| ------------------------------ | :---: | :---: | :-----: |
+| Cross-platform tools (~60)     |   ✅  |   ✅  |   ✅    |
+| Persistence audit              |   ✅ launchd | ✅ systemd + cron + autostart | ✅ Registry Run + Startup + Scheduled Tasks |
+| Security posture               |   ✅ SIP/GK/FV/XP | ✅ SELinux/UFW/sshd | ✅ BitLocker/Defender/UAC/Firewall |
+| WiFi scan                      |   ✅ CoreWLAN | ✅ nmcli/iw | ✅ netsh wlan |
+| WiFi integrity / VPN / TCPDump |   ✅   |   ✅  | ⏳ planned |
+| Bluetooth recon                |   ✅ system_profiler | ✅ bluetoothctl | ⏳ planned |
+| WPA capture                    |   ✅ (forward to Kali VM) | ⏳ | ⏳ |
+| Systemd / Firewall rules / Users audit | n/a |  ✅  |   n/a   |
+
+Endpoints flagged ⏳ return HTTP 501 with an explanatory hint on that OS;
+the sidebar hides them automatically via `GET /system/info`. The CI smoke
+step on `windows-latest` verifies that the sidecar boots, probes 14
+endpoints, and asserts the 501-guards stay clean rather than 500-crash.
 
 ---
 
@@ -199,27 +225,32 @@ RFC1918 / loopback / metadata IPs unless you also tick "Allow internal".
 
 ### MONITORING
 
-| Tool | Endpoint(s)         | What it does                                                     |
-| ---- | ------------------- | ---------------------------------------------------------------- |
-| IDS  | `WS /ws/ids`        | Lightweight host-IDS — new listening ports, failed-auth events   |
+| Tool           | Endpoint(s)                  | What it does                                                     |
+| -------------- | ---------------------------- | ---------------------------------------------------------------- |
+| IDS            | `WS /ws/ids`                 | Lightweight host-IDS — new listening ports, failed-auth events   |
+| Systemd Units *(linux)* | `/systemd/*`         | List + inspect units, tail journal                               |
+| Firewall Rules *(linux)*| `GET /firewall/rules`| nft / iptables-save parsed into chains + rules                   |
 
 ### FORENSICS
 
-| Tool           | Endpoint(s)                       | What it does                                              |
-| -------------- | --------------------------------- | --------------------------------------------------------- |
-| Persistence    | `GET /persistence/audit` *(mac)*  | LaunchAgents / LaunchDaemons audit with codesign          |
-| Processes      | `GET /processes/list` + kill      | Running processes + listeners + signature status          |
-| Steganography  | `/stego/*`                        | LSB embed/extract (PNG/BMP/WAV), JPEG analyze, AES-GCM    |
-| macOS Posture  | `GET /macos/posture` *(mac)*      | SIP / Gatekeeper / FileVault / firewall / XProtect        |
+| Tool             | Endpoint(s)                  | What it does                                                                       |
+| ---------------- | ---------------------------- | ---------------------------------------------------------------------------------- |
+| Persistence      | `GET /persistence/audit`     | Mac: launchd. Linux: systemd + cron + autostart + rc.local. Windows: Registry Run + Startup + Scheduled Tasks. |
+| Processes        | `GET /processes/list` + kill | Running processes + listeners + signature status                                   |
+| Steganography    | `/stego/*`                   | LSB embed/extract (PNG/BMP/WAV), JPEG analyze, AES-GCM                             |
+| macOS Posture *(mac)*     | `GET /macos/posture`    | SIP / Gatekeeper / FileVault / firewall / XProtect                            |
+| Linux Posture *(linux)*   | `GET /linux/posture`    | SELinux / AppArmor / firewall / sshd / sysctl / sudoers / LUKS                |
+| Windows Posture *(windows)* | `GET /windows/posture` | BitLocker / Defender / UAC / firewall / SmartScreen / Secure Boot / updates  |
+| Users Audit *(linux)*     | `GET /users/audit`      | passwd / sudoers / lastlog / authorized_keys fingerprint scan                 |
 
 ### UTILITIES
 
-| Tool             | Endpoint(s)             | What it does                                          |
-| ---------------- | ----------------------- | ----------------------------------------------------- |
-| WiFi Integrity *(mac)* | `GET /wifi/report` | SSID/BSSID/gateway/DNS sanity                         |
-| VPN Manager *(mac)*    | `/vpn/*`           | WireGuard `wg0` start/stop/status                     |
-| Terminal              | `POST /terminal/exec` | One-shot shell exec (no PTY)                          |
-| Brew *(mac)*          | `/brew/*` + WS         | Homebrew search / install streaming                   |
+| Tool             | Endpoint(s)             | What it does                                                                  |
+| ---------------- | ----------------------- | ----------------------------------------------------------------------------- |
+| WiFi Integrity   | `GET /wifi/report`      | SSID/BSSID/gateway/DNS sanity *(mac + linux; Windows port pending)*           |
+| VPN Manager      | `/vpn/*`                | WireGuard `wg0` start/stop/status *(mac + linux; Windows uses different svc)* |
+| Terminal         | `POST /terminal/exec`   | One-shot shell exec (no PTY)                                                  |
+| Packages         | `/brew/*` + WS          | Homebrew (mac) / apt (Debian) / dnf (Fedora) / pacman (Arch) search + install |
 
 ---
 
@@ -369,21 +400,32 @@ rm -rf ~/Desktop/MyHackingPal.app
 cp -R ~/network_tools/frontend/dist-electron/mac-arm64/MyHackingPal.app ~/Desktop/
 ```
 
-Cross-platform configs exist for Windows + Linux in `package.json` but
-binaries have not been produced. Mac-only routers are tagged via the
-`platforms` array on each NavItem in `src/lib/nav.ts` and auto-hide on
-non-Mac runs via `GET /system/info`.
+Cross-platform builds are produced by CI on every push (see [Roadmap](#roadmap)):
+Windows `.exe` (NSIS + portable), Linux `.AppImage` + `.deb`, macOS `.app` —
+all via the `windows-latest` / `ubuntu-latest` / `ubuntu-24.04-arm` /
+`macos-latest` matrix in `.github/workflows/build.yml`. PyInstaller can't
+cross-compile, which is why the matrix runs natively on each OS.
+
+Platform-specific routers are tagged via the `platforms` array on each
+NavItem in `src/lib/nav.ts` and auto-hide on the wrong OS via
+`GET /system/info`. The central platform helper lives at
+`backend/lib/platform_util.py` (`IS_DARWIN` / `IS_LINUX` / `IS_WINDOWS`,
+`app_data_dir()`, `require_darwin()` / `require_linux()` / `require_windows()`
+helpers).
 
 ---
 
 ## Roadmap
 
 - [x] macOS build (Apple Silicon `.app`)
-- [in progress] Windows build (`.exe` installer)
-- [in progress] Linux build (`.AppImage` / `.deb`)
+- [x] Windows build (NSIS installer + portable `.exe`, x64) — verified end-to-end on CI
+- [x] Linux build (`.AppImage` + `.deb`, x64 + arm64)
 - [x] Docker image (backend API server, 2026-05-22)
+- [x] Cross-platform forensics: persistence audit, security posture, WiFi scan all native on mac/linux/windows
 - [ ] Code signing / notarization (macOS + Windows)
 - [ ] Auto-update channel via electron-updater
+- [ ] Windows tcpdump (via npcap) + Windows WireGuard wrapper
+- [ ] Authenticode signature check for Windows persistence entries
 
 ---
 
