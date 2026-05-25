@@ -21,13 +21,15 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from lib import hids_notify
+from lib.platform_util import require_darwin
 
 router = APIRouter(tags=["macos"])
 
@@ -114,6 +116,9 @@ def _xprotect() -> dict[str, Any]:
 
 @router.get("/macos/posture")
 async def macos_posture() -> dict[str, Any]:
+    require_darwin("macos/posture is macOS-only; see /linux/posture (Linux) "
+                   "or /windows/posture (Windows).")
+
     t0 = time.monotonic()
 
     sip = _sip()

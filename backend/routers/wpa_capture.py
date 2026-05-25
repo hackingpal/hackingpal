@@ -25,6 +25,8 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from lib.platform_util import require_darwin
+
 router = APIRouter(prefix="/wpa-capture", tags=["wpa-capture"])
 
 # Tools we know about + their roles
@@ -41,6 +43,9 @@ TOOL_INFO = {
 @router.get("/status")
 def status() -> dict[str, Any]:
     """Detect installed wireless tools + list wireless interfaces (best effort)."""
+    require_darwin("WPA capture wraps macOS-native networksetup + Homebrew "
+                   "aircrack-ng tooling. For Win/Linux, use Kali in a VM with "
+                   "USB-WiFi passthrough.")
     tools: dict[str, dict[str, Any]] = {}
     for name, descr in TOOL_INFO.items():
         path = shutil.which(name)

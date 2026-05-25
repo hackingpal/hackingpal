@@ -6,9 +6,9 @@ while an engagement is "active" gets auto-recorded into it (frontend posts
 into `/engagements/{id}/results`). Results can be **promoted to findings**
 with a severity + evidence; findings render in the report export.
 
-DB lives at `~/Library/Application Support/MyHackingPal/engagements.db` so it
-survives reinstalls of the .app bundle. We use stdlib `sqlite3` — no extra
-deps, schema is migrated in-place if the file already exists.
+The DB path is OS-appropriate (see `lib.platform_util.app_data_dir`) so the
+file survives reinstalls of the .app bundle. We use stdlib `sqlite3` — no
+extra deps, schema is migrated in-place if the file already exists.
 """
 from __future__ import annotations
 
@@ -21,17 +21,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-# Use ~/Library/Application Support/MyHackingPal/ on macOS. On other platforms
-# fall back to ~/.config/MyHackingPal/ — the bundle is currently Mac-only but
-# this keeps the dev workflow on Linux clean.
+from lib.platform_util import app_data_dir
+
+
 def _db_path() -> Path:
-    home = Path.home()
-    if os.uname().sysname == "Darwin":
-        base = home / "Library" / "Application Support" / "MyHackingPal"
-    else:
-        base = home / ".config" / "MyHackingPal"
-    base.mkdir(parents=True, exist_ok=True)
-    return base / "engagements.db"
+    return app_data_dir() / "engagements.db"
 
 
 SCHEMA = [

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from lib.auth import require_local_auth
+from lib.platform_util import IS_WINDOWS
 
 router = APIRouter(prefix="/terminal", tags=["terminal"])
 
@@ -69,8 +70,10 @@ def exec_cmd(req: ExecRequest) -> ExecResponse:
         return ExecResponse(cwd=target, cmd=cmd, returncode=0,
                             stdout="", stderr="", truncated=False)
 
+    # shlex with posix=True mangles Windows paths like `C:\Users\…` by treating
+    # backslashes as escape characters. Use posix=False on Windows.
     try:
-        parts = shlex.split(cmd, posix=True)
+        parts = shlex.split(cmd, posix=not IS_WINDOWS)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"parse error: {exc}")
 

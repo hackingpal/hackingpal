@@ -33,8 +33,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from lib.auth import require_local_auth
+from lib.platform_util import require_unix
 
 router = APIRouter(tags=["tcpdump"])
+
+_TCPDUMP_HINT = ("tcpdump wraps the libpcap-based tcpdump binary on macOS/Linux. "
+                 "Windows would need npcap + windump (separate install) — "
+                 "native port pending.")
 
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-tcpdump"
 
@@ -58,6 +63,7 @@ def _is_passwordless() -> bool:
 
 @router.get("/tcpdump/status")
 def status() -> dict[str, Any]:
+    require_unix(_TCPDUMP_HINT)
     return {
         "passwordless": _is_passwordless(),
         "sudoers_path": SUDOERS_PATH,
@@ -67,6 +73,7 @@ def status() -> dict[str, Any]:
 
 @router.get("/tcpdump/interfaces")
 def interfaces() -> dict[str, list[str]]:
+    require_unix(_TCPDUMP_HINT)
     try:
         out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
     except FileNotFoundError:

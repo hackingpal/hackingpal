@@ -8,7 +8,10 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+
+_IS_DARWIN = sys.platform == "darwin"
 
 # Optional data files — bundle only if present. Lets CI builds skip the 51 MB
 # rockyou wordlist; hash_cracker handles its absence gracefully.
@@ -76,12 +79,18 @@ hiddenimports = [
     *collect_submodules("Crypto"),        # pycryptodome (bloodhound dep)
     *collect_submodules("bloodhound"),    # SharpHound-equivalent collector
     *collect_submodules("dns"),           # dnspython
-    # Wireless — CoreWLAN + CoreBluetooth PyObjC bindings
-    *collect_submodules("CoreWLAN"),
-    *collect_submodules("CoreBluetooth"),
-    *collect_submodules("CoreFoundation"),
-    *collect_submodules("Foundation"),
 ]
+
+# Wireless — CoreWLAN + CoreBluetooth PyObjC bindings are macOS-only.
+# Collecting them on Windows/Linux is wasted analysis time at best and
+# triggers PyInstaller warnings ("module not found") at worst.
+if _IS_DARWIN:
+    hiddenimports += [
+        *collect_submodules("CoreWLAN"),
+        *collect_submodules("CoreBluetooth"),
+        *collect_submodules("CoreFoundation"),
+        *collect_submodules("Foundation"),
+    ]
 
 # Data files — botocore ships service models as JSON in its package; azure ships
 # locale files; google ships proto descriptors. All need to land in the bundle.

@@ -31,7 +31,7 @@ from routers import (
     port_scanner, presets, processes, profile_finder, reverse_ip, reverse_shell,
     s3_scanner, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
     subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit, vpn,
-    whois, wifi, wifi_scan, wpa_capture, xss,
+    whois, wifi, wifi_scan, windows_posture, wpa_capture, xss,
     systemd_units, firewall_rules, users_audit,
 )
 
@@ -41,16 +41,30 @@ logger = logging.getLogger("myhackingpal")
 # We check both NT_BACKEND_HOST (used by the sidecar entrypoint below) and
 # HOST (commonly read by container orchestration). If either is a wildcard,
 # bail out hard before FastAPI ever binds a socket.
+#
+# Escape hatch for the Docker deployment (see SECURITY.md "Threat Model"):
+# set MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 to acknowledge that you are lifting
+# the loopback restriction deliberately. Required because the container's
+# `ports: 8765:8765` mapping in docker-compose.yml needs the app to bind
+# the container's external interface.
 _FORBIDDEN_HOSTS = {"0.0.0.0", "::", "*"}
+_ALLOW_PUBLIC = os.environ.get("MYHACKINGPAL_ALLOW_PUBLIC_HOST", "").strip() == "1"
 for _var in ("NT_BACKEND_HOST", "HOST"):
     _val = os.environ.get(_var, "").strip()
-    if _val in _FORBIDDEN_HOSTS:
+    if _val in _FORBIDDEN_HOSTS and not _ALLOW_PUBLIC:
         sys.stderr.write(
             f"[myhackingpal] {_var}={_val!r}: "
             "MyHackingPal backend must not be exposed to the network. "
             "Refusing to start.\n"
+            "(Docker deployments: set MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 to opt in.)\n"
         )
         raise SystemExit(2)
+if _ALLOW_PUBLIC:
+    sys.stderr.write(
+        "[myhackingpal] MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 — startup guard bypassed. "
+        "Backend will accept non-loopback connections. The per-launch auth token "
+        "is now the only thing protecting privileged endpoints.\n"
+    )
 
 app = FastAPI(title="MyHackingPal", version="0.1.0")
 
@@ -80,6 +94,7 @@ app.include_router(reverse_ip.router)
 app.include_router(cms.router)
 app.include_router(macos_posture.router)
 app.include_router(linux_posture.router)
+app.include_router(windows_posture.router)
 app.include_router(systemd_units.router)
 app.include_router(firewall_rules.router)
 app.include_router(users_audit.router)

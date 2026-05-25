@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from lib import forensics, hids_notify, ids as ids_lib   # reuse the lsof snapshot
+from lib.platform_util import IS_DARWIN
 
 router = APIRouter(tags=["forensics"])
 
@@ -205,6 +206,10 @@ def _risk_assessment(pid: int) -> dict[str, Any]:
 
 def _kill_admin(pid: int, signum: int) -> tuple[bool, str]:
     """Send the signal via osascript admin prompt. Returns (ok, message)."""
+    if not IS_DARWIN:
+        # Linux pkexec/sudo path and a Windows UAC path are TODO; surfacing
+        # an explicit message is clearer than osascript FileNotFoundError.
+        return False, "admin kill is currently macOS-only"
     cmd = f"/bin/kill -{signum} {pid}"
     script = f'do shell script "{cmd}" with administrator privileges'
     try:

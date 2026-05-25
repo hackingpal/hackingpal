@@ -89,15 +89,31 @@ async function createWindow() {
     });
   }
 
+  // Title-bar treatment per OS:
+  //   darwin → hiddenInset (native traffic lights overlay the sidebar header)
+  //   win32  → hidden + titleBarOverlay (native min/max/close in top-right,
+  //            our app paints the rest of the bar; height matches App.tsx h-7)
+  //   linux  → default (keep the native title bar; many WMs need it)
+  const titleBar = process.platform === "darwin"
+    ? { titleBarStyle: "hiddenInset" }
+    : process.platform === "win32"
+      ? {
+          titleBarStyle: "hidden",
+          titleBarOverlay: {
+            color: "#0a0d12",       // matches backgroundColor / bg-base
+            symbolColor: "#a0a0a0", // matches ink-muted
+            height: 28,             // matches the h-7 strip in App.tsx
+          },
+        }
+      : {};
+
   const win = new BrowserWindow({
     width:  1100,
     height: 760,
     minWidth:  860,
     minHeight: 580,
     backgroundColor: "#0a0d12",
-    // hiddenInset gives macOS the traffic-light inset; on Win/Linux it has
-    // no effect, so the default native title bar shows up.
-    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    ...titleBar,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,

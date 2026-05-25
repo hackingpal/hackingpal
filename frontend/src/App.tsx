@@ -172,13 +172,18 @@ export default function App() {
         <Sidebar active={active} onSelect={setActive} platform={platform} />
       )}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top status strip — also draggable. When the sidebar is hidden the
-            macOS traffic lights overlay the top-left ~88px, so we inset the
-            toggle past them. */}
+        {/* Top status strip — also draggable.
+            - macOS: traffic lights overlay top-left ~88px when sidebar is
+              hidden, so we inset past them.
+            - win32: titleBarOverlay min/max/close sit in the top-right
+              ~150px, so we reserve that space on the right edge instead. */}
         <div
           className={
-            "app-drag h-7 border-b border-divider bg-bg-sidebar flex items-center justify-between pr-4 " +
-            (sidebarHidden ? "pl-[88px]" : "pl-3")
+            "app-drag h-7 border-b border-divider bg-bg-sidebar flex items-center justify-between " +
+            (platform === "win32" ? "pr-[150px] " : "pr-4 ") +
+            (sidebarHidden && platform !== "win32" && platform !== "linux"
+              ? "pl-[88px]"
+              : "pl-3")
           }
         >
           <div className="flex items-center gap-2 app-no-drag">

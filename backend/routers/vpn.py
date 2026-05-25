@@ -25,13 +25,15 @@ from pydantic import BaseModel
 
 from lib import hids_notify
 from lib.auth import require_local_auth
+from lib.platform_util import IS_DARWIN, require_unix
 
 router = APIRouter(tags=["vpn"])
 
 SERVER_CFG  = Path.home() / "vpn-setup" / "wg0.conf"
 CLIENTS_DIR = Path.home() / "vpn-setup" / "clients"
 
-IS_DARWIN = sys.platform == "darwin"
+_WG_VPN_HINT = ("VPN Manager wraps wg-quick on macOS/Linux. Windows uses the "
+                "WireGuard service / Tunnel app instead — native port pending.")
 
 
 def _find_wg() -> tuple[str | None, str | None]:
@@ -111,6 +113,7 @@ def _admin_run(cmd: str) -> tuple[int, str]:
 
 @router.get("/vpn/status", response_model=VpnStatus)
 def status() -> VpnStatus:
+    require_unix(_WG_VPN_HINT)
     ok, missing, wg, _ = _is_installed()
     if not ok:
         return VpnStatus(available=False, running=False,
@@ -137,6 +140,7 @@ def status() -> VpnStatus:
 
 
 def _toggle(direction: str) -> dict[str, Any]:
+    require_unix(_WG_VPN_HINT)
     ok, missing, _, wg_quick = _is_installed()
     if not ok:
         raise HTTPException(status_code=400,

@@ -31,6 +31,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from lib.platform_util import require_linux
+
 router = APIRouter(tags=["linux"])
 
 
@@ -393,8 +395,8 @@ def _classify(mac: dict[str, Any], fw: dict[str, Any],
 
 @router.get("/linux/posture")
 def linux_posture() -> dict[str, Any]:
-    if sys.platform == "darwin":
-        raise HTTPException(501, "linux/posture is Linux-only; see /macos/posture")
+    require_linux("linux/posture is Linux-only; see /macos/posture (Mac) "
+                  "or /windows/posture (Windows).")
 
     t0 = time.monotonic()
     mac     = _mac()

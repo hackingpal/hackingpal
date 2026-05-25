@@ -111,13 +111,14 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
 
   return (
     <nav className="w-60 shrink-0 border-r border-divider bg-bg-sidebar flex flex-col">
-      {/* Top inset — on macOS we use titleBarStyle: "hiddenInset" so we need
-          to clear the traffic lights with pt-7. On Linux/Windows the OS title
-          bar is visible above us so a tiny pt-2 is enough. `platform` is null
-          on first paint; default to Mac inset to avoid a layout jump. */}
+      {/* Top inset — on macOS (hiddenInset) and Windows (hidden+overlay) the
+          OS title bar is gone, so we need pt-7 to clear the overlaid window
+          controls. On Linux the native title bar is still visible above us so
+          pt-2 is enough. `platform` is null on first paint; default to the
+          taller inset to avoid a layout jump. */}
       <header className={
         "app-drag pb-3 px-4 border-b border-divider bg-bg-sidebar " +
-        (platform === "linux" || platform === "win32" ? "pt-2" : "pt-7")
+        (platform === "linux" ? "pt-2" : "pt-7")
       }>
         <div className="flex items-center gap-2.5">
           <BrandMark />

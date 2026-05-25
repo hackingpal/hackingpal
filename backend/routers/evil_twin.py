@@ -28,6 +28,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from lib.platform_util import IS_WINDOWS
+
 from .wifi_scan import scan_networks
 
 router = APIRouter(tags=["evil-twin"])
@@ -36,6 +38,14 @@ router = APIRouter(tags=["evil-twin"])
 @router.websocket("/ws/evil-twin")
 async def evil_twin_ws(ws: WebSocket) -> None:
     await ws.accept()
+    if IS_WINDOWS:
+        await ws.send_json({
+            "type": "error",
+            "detail": ("Evil-twin detection depends on the WiFi scanner which "
+                       "needs CoreWLAN (macOS) or nmcli/iw (Linux). Windows "
+                       "port pending."),
+        })
+        await ws.close(); return
     stop = asyncio.Event()
 
     async def listen_for_stop() -> None:

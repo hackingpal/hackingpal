@@ -1,31 +1,34 @@
-"""Persistence audit — scan auto-start locations on macOS or Linux.
+"""Persistence audit — scan auto-start locations on macOS, Linux, or Windows.
 
 REST: GET /persistence/audit  → structured report of every persistence entry,
 each enriched with target-binary integrity (codesign on macOS, package
-provenance on Linux).
+provenance on Linux, file-existence + Authenticode hint on Windows).
 
-The response shape is the same on both platforms; the `sign_status` field uses
+The response shape is the same on all platforms; the `sign_status` field uses
 the same vocabulary (apple / developer-id / unsigned / invalid / missing) so
-the frontend renders identically.
+the frontend renders identically. On Windows we repurpose tokens: "apple" ≈
+"signed by Microsoft", "developer-id" ≈ Authenticode-signed by a third party.
 """
 from __future__ import annotations
 
 import configparser
+import csv
+import io
 import os
 import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from lib import forensics
+from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
 
 router = APIRouter(tags=["forensics"])
-
-IS_DARWIN = sys.platform == "darwin"
 
 
 # ── Mac persistence locations ─────────────────────────────────────────────────
@@ -521,9 +524,273 @@ def _audit_linux() -> list[PersistenceEntry]:
 
 # ── public endpoint ───────────────────────────────────────────────────────────
 
+# ── Windows scanner ──────────────────────────────────────────────────────────
+# Three persistence vectors covered here:
+#   1. Registry Run/RunOnce keys (HKLM + HKCU, plus the 32-bit Wow6432Node view)
+#   2. Startup folders (per-user and all-users)
+#   3. Scheduled Tasks (schtasks /Query)
+# Services left for a future pass — they're noisier and most aren't "persistence"
+# in the forensic sense.
+
+# (hive_name, root_const, subkey) — populated lazily on Windows only because
+# `winreg` does not exist on non-Windows interpreters.
+def _windows_run_keys() -> list[tuple[str, Any, str]]:
+    import winreg  # type: ignore[import-not-found]
+    return [
+        ("HKLM Run",         winreg.HKEY_LOCAL_MACHINE,
+         r"Software\Microsoft\Windows\CurrentVersion\Run"),
+        ("HKLM RunOnce",     winreg.HKEY_LOCAL_MACHINE,
+         r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+        ("HKLM Run (Wow64)", winreg.HKEY_LOCAL_MACHINE,
+         r"Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Run"),
+        ("HKCU Run",         winreg.HKEY_CURRENT_USER,
+         r"Software\Microsoft\Windows\CurrentVersion\Run"),
+        ("HKCU RunOnce",     winreg.HKEY_CURRENT_USER,
+         r"Software\Microsoft\Windows\CurrentVersion\RunOnce"),
+    ]
+
+
+_WIN_SUS_PATH_PREFIXES = (
+    # %TEMP% / %TMP% — both per-user and system
+    "appdata\\local\\temp\\",
+    "windows\\temp\\",
+    # Public-writable share — common dropper location
+    "users\\public\\",
+    # Recycle-bin / volume-shadow tricks
+    "$recycle.bin\\",
+)
+
+
+def _win_is_suspicious(program: str) -> bool:
+    if not program:
+        return False
+    p = program.lower().replace("/", "\\")
+    return any(prefix in p for prefix in _WIN_SUS_PATH_PREFIXES)
+
+
+def _win_unquote_command(value: str) -> str:
+    """Extract the executable path from a registry RunOnce command string.
+
+    Windows RunOnce values often look like:  "C:\\Path\\To\\app.exe" --flag arg
+    We want just the path so we can stat it. Returns "" if we can't parse.
+    """
+    v = value.strip()
+    if not v:
+        return ""
+    # Strip "!" prefix (RunOnce "delete on success" marker) and "*" prefix
+    # ("run even in safe mode").
+    while v[:1] in ("!", "*"):
+        v = v[1:].strip()
+    if v.startswith('"'):
+        end = v.find('"', 1)
+        return v[1:end] if end > 0 else v[1:]
+    return v.split()[0] if v else ""
+
+
+def _win_sign_status(program: str) -> dict[str, str]:
+    """Best-effort signature read for a Windows file.
+
+    We do NOT call signtool / Get-AuthenticodeSignature here — those add
+    seconds per entry and need PowerShell. Instead:
+      * file missing               → status="missing"
+      * file inside %WinDir%       → status="apple" (Microsoft-trusted location)
+      * otherwise file exists      → status="unsigned" (caller can drill down)
+    The frontend renders "apple" as the "trusted system" colour; we reuse the
+    vocabulary so the same React component works without changes.
+    """
+    if not program:
+        return {"status": "missing", "team": "", "authority": ""}
+    p = Path(program)
+    try:
+        exists = p.is_file()
+    except OSError:
+        exists = False
+    if not exists:
+        return {"status": "missing", "team": "", "authority": ""}
+    sysroot = os.environ.get("SystemRoot") or r"C:\Windows"
+    progf = os.environ.get("ProgramFiles") or r"C:\Program Files"
+    progf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
+    low = str(p).lower()
+    if low.startswith(sysroot.lower()):
+        return {"status": "apple", "team": "Microsoft", "authority": "SystemRoot"}
+    if low.startswith(progf.lower()) or low.startswith(progf86.lower()):
+        return {"status": "developer-id", "team": "", "authority": "Program Files"}
+    return {"status": "unsigned", "team": "", "authority": ""}
+
+
+def _scan_windows_run_keys() -> list[PersistenceEntry]:
+    import winreg  # type: ignore[import-not-found]
+    entries: list[PersistenceEntry] = []
+    for label, hive, subkey in _windows_run_keys():
+        try:
+            key = winreg.OpenKey(hive, subkey, 0, winreg.KEY_READ)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+        try:
+            i = 0
+            while True:
+                try:
+                    name, value, _vtype = winreg.EnumValue(key, i)
+                except OSError:
+                    break
+                i += 1
+                program = _win_unquote_command(str(value))
+                sign = _win_sign_status(program)
+                sus = _win_is_suspicious(program)
+                entries.append(PersistenceEntry(
+                    source=label,
+                    plist=f"{label}\\{name}",
+                    label=str(name),
+                    program=program,
+                    run_at_load=True,
+                    keep_alive=False,
+                    sign_status=sign["status"],
+                    sign_team=sign["team"],
+                    sign_authority=sign["authority"],
+                    suspicious_path=sus,
+                    severity=_classify(sign["status"], sus),
+                ))
+        finally:
+            winreg.CloseKey(key)
+    return entries
+
+
+def _scan_windows_startup_folders() -> list[PersistenceEntry]:
+    candidates: list[tuple[str, Path]] = []
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(("Startup (user)",
+                           Path(appdata) / "Microsoft" / "Windows" / "Start Menu" /
+                           "Programs" / "Startup"))
+    programdata = os.environ.get("ProgramData") or r"C:\ProgramData"
+    candidates.append(("Startup (all users)",
+                       Path(programdata) / "Microsoft" / "Windows" / "Start Menu" /
+                       "Programs" / "StartUp"))
+
+    entries: list[PersistenceEntry] = []
+    for label, base in candidates:
+        if not base.exists() or not base.is_dir():
+            continue
+        for path in sorted(base.iterdir()):
+            if not path.is_file():
+                continue
+            # .lnk shortcuts dominate but .bat / .exe also valid. We can't
+            # cheaply parse .lnk targets from stdlib, so we surface the
+            # shortcut path itself and let the user resolve it.
+            program = str(path)
+            sign = _win_sign_status(program)
+            sus = _win_is_suspicious(program)
+            entries.append(PersistenceEntry(
+                source=label,
+                plist=str(path),
+                label=path.name,
+                program=program,
+                run_at_load=True,
+                keep_alive=False,
+                sign_status=sign["status"],
+                sign_team=sign["team"],
+                sign_authority=sign["authority"],
+                suspicious_path=sus,
+                severity=_classify(sign["status"], sus),
+            ))
+    return entries
+
+
+def _scan_windows_scheduled_tasks() -> list[PersistenceEntry]:
+    """Parse `schtasks /Query /FO CSV /V` output.
+
+    Verbose CSV is the only stable cross-version format. We filter to tasks
+    that are *enabled* and have a real "Task To Run" target — disabled and
+    folder-marker rows produce garbage entries otherwise.
+    """
+    schtasks = shutil.which("schtasks") or r"C:\Windows\System32\schtasks.exe"
+    try:
+        r = subprocess.run(
+            [schtasks, "/Query", "/FO", "CSV", "/V", "/NH"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        return []
+    if r.returncode != 0 or not r.stdout.strip():
+        return []
+
+    # schtasks emits one CSV per row, no header (we passed /NH).
+    # Columns (Win10/11 default):
+    #   0 HostName, 1 TaskName, 2 NextRunTime, 3 Status, 4 LogonMode,
+    #   5 LastRunTime, 6 LastResult, 7 Author, 8 TaskToRun, 9 StartIn,
+    #   10 Comment, 11 ScheduledTaskState, 12 IdleTime, 13 PowerManagement,
+    #   14 RunAsUser, 15 DeleteWhenDone, 16 ScheduleType, 17 StartTime,
+    #   18 StartDate, 19 EndDate, 20 Days, 21 Months, 22 RepeatEvery,
+    #   23 RepeatUntilTime, 24 RepeatUntilDuration, 25 RepeatStop, 26 Idle
+    entries: list[PersistenceEntry] = []
+    reader = csv.reader(io.StringIO(r.stdout))
+    for row in reader:
+        if len(row) < 12:
+            continue
+        task_name = row[1].strip()
+        task_to_run = row[8].strip()
+        state = row[11].strip()
+        if not task_name or task_name.lower() == "taskname":
+            continue
+        if state.lower() == "disabled":
+            continue
+        # "TaskName" header rows reappear between hosts on some Win10 builds.
+        if task_name.startswith("TaskName"):
+            continue
+
+        program = _win_unquote_command(task_to_run)
+        sign = _win_sign_status(program) if program else {
+            "status": "missing", "team": "", "authority": "",
+        }
+        sus = _win_is_suspicious(program)
+        entries.append(PersistenceEntry(
+            source="Scheduled Tasks",
+            plist=task_name,
+            label=task_name.lstrip("\\"),
+            program=program,
+            run_at_load=row[16].strip().lower() in ("at logon time", "at startup", "on boot"),
+            keep_alive=False,
+            sign_status=sign["status"],
+            sign_team=sign["team"],
+            sign_authority=sign["authority"],
+            suspicious_path=sus,
+            severity=_classify(sign["status"], sus),
+        ))
+    return entries
+
+
+def _audit_windows() -> list[PersistenceEntry]:
+    entries: list[PersistenceEntry] = []
+    try:
+        entries += _scan_windows_run_keys()
+    except Exception as exc:                            # noqa: BLE001
+        # winreg should always be importable on real Windows; if it isn't
+        # we're in a weird environment — surface a synthetic warn entry so
+        # the UI shows something rather than a blank list.
+        entries.append(PersistenceEntry(
+            source="Registry", plist="winreg",
+            label=f"registry scan failed: {exc}",
+            program="", run_at_load=False, keep_alive=False,
+            sign_status="invalid", sign_team="", sign_authority="error",
+            suspicious_path=False, severity="warn",
+        ))
+    entries += _scan_windows_startup_folders()
+    entries += _scan_windows_scheduled_tasks()
+    return entries
+
+
 @router.get("/persistence/audit")
 def audit() -> dict[str, list[PersistenceEntry]]:
-    entries = _audit_mac() if IS_DARWIN else _audit_linux()
+    if IS_DARWIN:
+        entries = _audit_mac()
+    elif IS_LINUX:
+        entries = _audit_linux()
+    elif IS_WINDOWS:
+        entries = _audit_windows()
+    else:
+        entries = []
     sev_order = {"high": 0, "warn": 1, "info": 2}
     entries.sort(key=lambda e: (sev_order[e.severity], e.source, e.label))
     return {"entries": entries}

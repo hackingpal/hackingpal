@@ -16,6 +16,11 @@ services:
     environment:
       - NT_BACKEND_HOST=0.0.0.0
       - NT_BACKEND_PORT=8765
+      # Required to bypass the loopback-only startup guard in main.py.
+      # See SECURITY.md "Threat Model" — Docker deploys deliberately lift
+      # the restriction, so the auth token becomes the only gate on
+      # privileged endpoints (tcpdump/nmap install, vpn, terminal/exec).
+      - MYHACKINGPAL_ALLOW_PUBLIC_HOST=1
       # Optional: enables the chat assistant when running on Linux (no Keychain).
       # On macOS, the desktop app uses the Keychain instead; ignore this.
       # - ANTHROPIC_API_KEY=sk-ant-…

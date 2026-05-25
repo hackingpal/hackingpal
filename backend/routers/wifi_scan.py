@@ -31,9 +31,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"])
+from lib.platform_util import IS_DARWIN, require_unix
 
-IS_DARWIN = sys.platform == "darwin"
+router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"])
 
 # CoreWLAN security type enum (CWSecurity) — Mac scans surface these as ints.
 SECURITY_NAMES = {
@@ -313,6 +313,8 @@ def _scan_iw(iface: str) -> tuple[list[dict[str, Any]], str | None, str | None]:
 
 def scan_networks() -> dict[str, Any]:
     """Platform-agnostic WiFi scan. Returns the same shape as /wifi-scan/scan."""
+    require_unix("WiFi scan uses CoreWLAN (macOS) or nmcli/iw (Linux); "
+                 "Windows port not implemented yet.")
     return _scan_mac() if IS_DARWIN else _scan_linux()
 
 

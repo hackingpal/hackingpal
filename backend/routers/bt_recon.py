@@ -21,9 +21,13 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from lib.platform_util import IS_DARWIN, require_unix
+
 router = APIRouter(prefix="/bt", tags=["bt-recon"])
 
-IS_DARWIN = sys.platform == "darwin"
+_BT_HINT = ("Bluetooth recon shells out to system_profiler (macOS) or "
+            "bluetoothctl (Linux); Windows uses a different BT stack — "
+            "native port pending.")
 
 
 # ── macOS implementation ─────────────────────────────────────────────────────
@@ -249,6 +253,7 @@ def _devices_linux() -> dict[str, Any]:
 
 @router.get("/status")
 def status() -> dict[str, Any]:
+    require_unix(_BT_HINT)
     if IS_DARWIN:
         return _status_mac()
     return {"controllers": _list_controllers_linux()}
@@ -256,6 +261,7 @@ def status() -> dict[str, Any]:
 
 @router.get("/devices")
 def devices() -> dict[str, Any]:
+    require_unix(_BT_HINT)
     if IS_DARWIN:
         return _devices_mac()
     return _devices_linux()

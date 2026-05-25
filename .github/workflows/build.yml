@@ -96,6 +96,100 @@ jobs:
           fi
           ls -lh "${{ matrix.sidecar_path }}"
 
+      - name: Smoke-test sidecar (Windows)
+        # Boot the freshly-built sidecar.exe, probe a handful of endpoints,
+        # and confirm the OS-specific 501 guards return cleanly (no crashes).
+        # Catches Windows-only import-time bugs (os.uname, PyObjC, posix shlex)
+        # that the Linux smoke job can't see.
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          SIDECAR="${{ matrix.sidecar_path }}"
+          LOG="$RUNNER_TEMP/sidecar.log"
+          PIDFILE="$RUNNER_TEMP/sidecar.pid"
+
+          # Launch the sidecar in the background. PyInstaller-onedir layout
+          # means the .exe must run from its bundle dir (loads ./_internal/).
+          BUNDLE_DIR="$(dirname "$SIDECAR")"
+          (cd "$BUNDLE_DIR" && ./network-tools-backend.exe > "$LOG" 2>&1) &
+          echo $! > "$PIDFILE"
+          echo "sidecar PID=$(cat "$PIDFILE")"
+
+          # Poll /health
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8765/health > "$RUNNER_TEMP/health.json" 2>/dev/null; then
+              echo "::notice::sidecar healthy after ${i}s"
+              cat "$RUNNER_TEMP/health.json"; echo
+              ready=1; break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "1" ]; then
+            echo "::error::sidecar never became ready after 60s"
+            echo "::group::Sidecar log"
+            cat "$LOG" 2>/dev/null || echo "(no log)"
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          # Helper: probe an endpoint and assert HTTP status.
+          # Usage: probe <label> <url> <expected_status>
+          fail=0
+          probe() {
+            local label="$1" url="$2" want="$3"
+            local got
+            got=$(curl -s -o "$RUNNER_TEMP/body.txt" -w "%{http_code}" --max-time 15 "$url" || echo 000)
+            local body
+            body=$(head -c 200 "$RUNNER_TEMP/body.txt" | tr '\n' ' ')
+            if [ "$got" = "$want" ]; then
+              echo "  OK   $got  $label  -> $body"
+            else
+              echo "::warning::FAIL $got (want $want)  $label  -> $body"
+              fail=$((fail + 1))
+            fi
+          }
+
+          echo "::group::Endpoint probes"
+          probe "health"             "http://127.0.0.1:8765/health"              200
+          probe "system/info"        "http://127.0.0.1:8765/system/info"         200
+          probe "hash/algorithms"    "http://127.0.0.1:8765/hash/algorithms"     200
+          probe "stego/info"         "http://127.0.0.1:8765/stego/info"          200
+          probe "ip/8.8.8.8"         "http://127.0.0.1:8765/ip/8.8.8.8"          200
+          probe "persistence/audit"  "http://127.0.0.1:8765/persistence/audit"   200
+          # Mac/Linux-only — expect 501 (not 500), proves the guard, not a crash
+          probe "macos/posture"      "http://127.0.0.1:8765/macos/posture"       501
+          probe "linux/posture"      "http://127.0.0.1:8765/linux/posture"       501
+          probe "wifi/report"        "http://127.0.0.1:8765/wifi/report"         501
+          probe "wifi-scan/scan"     "http://127.0.0.1:8765/wifi-scan/scan"      501
+          probe "vpn/status"         "http://127.0.0.1:8765/vpn/status"          501
+          probe "tcpdump/status"     "http://127.0.0.1:8765/tcpdump/status"      501
+          probe "bt/status"          "http://127.0.0.1:8765/bt/status"           501
+          probe "wpa-capture/status" "http://127.0.0.1:8765/wpa-capture/status"  501
+          echo "::endgroup::"
+
+          # Verify the sidecar correctly self-identifies as Windows.
+          if ! grep -q '"is_windows":true' "$RUNNER_TEMP/health.json" 2>/dev/null; then
+            # health endpoint doesn't return this; use /system/info instead
+            curl -fsS http://127.0.0.1:8765/system/info > "$RUNNER_TEMP/sys.json"
+            cat "$RUNNER_TEMP/sys.json"; echo
+            if ! grep -q '"is_windows":true' "$RUNNER_TEMP/sys.json"; then
+              echo "::error::sidecar did not self-report as Windows"
+              fail=$((fail + 1))
+            fi
+          fi
+
+          # Shut sidecar down cleanly; surface its log either way.
+          taskkill //F //IM network-tools-backend.exe 2>/dev/null || true
+          echo "::group::Sidecar log (tail)"
+          tail -n 50 "$LOG" 2>/dev/null || echo "(no log)"
+          echo "::endgroup::"
+
+          if [ "$fail" -gt 0 ]; then
+            echo "::error::$fail endpoint probe(s) failed"
+            exit 1
+          fi
+
       - name: Setup Node 20
         uses: actions/setup-node@v4
         with:
@@ -193,11 +287,11 @@ jobs:
           # non-privileged tools
           probe "/ip/8.8.8.8"                  "http://127.0.0.1:8765/ip/8.8.8.8"
           probe "/whois/example.com"           "http://127.0.0.1:8765/whois/example.com" || true
-          probe "/dns/recon/example.com"       "http://127.0.0.1:8765/dns/recon/example.com" || true
+          probe "/dns/recon/example.com"       "http://127.0.0.1:8765/dns/recon/example.com?confirm=true" || true
           # validates the Linux codesign short-circuit fix
           probe "/processes/list"              "http://127.0.0.1:8765/processes/list" || true
-          # mac-only — should return 503 with a hint, NOT crash
-          echo "::group::/macos/posture (expect 503)"
+          # mac-only — should return 501 with a hint, NOT crash
+          echo "::group::/macos/posture (expect 501)"
           curl -sS -o /tmp/posture.json -w "HTTP %{http_code}\n" http://127.0.0.1:8765/macos/posture || true
           cat /tmp/posture.json | jq . 2>/dev/null || cat /tmp/posture.json
           echo "::endgroup::"

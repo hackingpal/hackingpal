@@ -20,10 +20,9 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from lib import hids_notify
+from lib.platform_util import IS_DARWIN, require_unix
 
 router = APIRouter(tags=["wifi"])
-
-IS_DARWIN = sys.platform == "darwin"
 
 AIRPORT = ("/System/Library/PrivateFrameworks/Apple80211.framework"
            "/Versions/Current/Resources/airport")
@@ -342,6 +341,8 @@ def _add_dns_findings(out: WifiReport, findings: list[Finding]) -> None:
 
 @router.get("/wifi/report", response_model=WifiReport)
 def report() -> WifiReport:
+    require_unix("WiFi integrity probes use airport/networksetup/iw/nmcli — "
+                 "Windows port not implemented yet.")
     findings: list[Finding] = []
     out = WifiReport()
 
