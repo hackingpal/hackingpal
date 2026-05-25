@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import getpass
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -92,17 +93,12 @@ def status() -> dict[str, Any]:
 
 @router.post("/nmap/install", dependencies=[Depends(require_local_auth)])
 def install_sudoers() -> dict[str, Any]:
-    """Drop a `<user> ALL=(root) NOPASSWD: <nmap>` entry via osascript prompt."""
+    """Drop a `<user> ALL=(root) NOPASSWD: <nmap>` entry.
+
+    Uses the OS-native admin prompt: osascript on macOS, pkexec (polkit) on
+    Linux. Returns whether the install succeeded.
+    """
     binary = _resolved_binary()
-    if sys.platform != "darwin":
-        raise HTTPException(
-            status_code=501,
-            detail=("Passwordless sudoers auto-install is macOS-only. "
-                    "On Linux, add a sudoers entry manually: "
-                    f"echo '{getpass.getuser()} ALL=(root) NOPASSWD: {binary}' "
-                    "| sudo tee /etc/sudoers.d/myhackingpal-nmap && "
-                    "sudo chmod 0440 /etc/sudoers.d/myhackingpal-nmap"),
-        )
     if _is_passwordless(binary):
         return {"installed": True, "already": True}
 
@@ -110,24 +106,61 @@ def install_sudoers() -> dict[str, Any]:
     tmp = Path(tempfile.gettempdir()) / "_nt_nmap_sudoers"
     tmp.write_text(f"{user} ALL=(root) NOPASSWD: {binary}\n")
 
-    install_cmd = (
-        f"/usr/sbin/visudo -cf {shlex.quote(str(tmp))} && "
-        f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
-        f"/usr/sbin/chown root:wheel {shlex.quote(SUDOERS_PATH)} && "
-        f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
-    )
-    script = f'do shell script "{install_cmd}" with administrator privileges'
-    try:
-        r = subprocess.run(["osascript", "-e", script],
-                           capture_output=True, text=True, timeout=120)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-    if r.returncode != 0:
-        err = (r.stderr or "").strip()
-        if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
-            raise HTTPException(status_code=400, detail="install cancelled by user")
-        raise HTTPException(status_code=500, detail=err or "install failed")
-    return {"installed": _is_passwordless(binary)}
+    if sys.platform == "darwin":
+        install_cmd = (
+            f"/usr/sbin/visudo -cf {shlex.quote(str(tmp))} && "
+            f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
+            f"/usr/sbin/chown root:wheel {shlex.quote(SUDOERS_PATH)} && "
+            f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
+        )
+        script = f'do shell script "{install_cmd}" with administrator privileges'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()
+            if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
+                raise HTTPException(status_code=400, detail="install cancelled by user")
+            raise HTTPException(status_code=500, detail=err or "install failed")
+        return {"installed": _is_passwordless(binary)}
+
+    if sys.platform.startswith("linux"):
+        pkexec = shutil.which("pkexec")
+        if not pkexec:
+            raise HTTPException(
+                status_code=501,
+                detail=("pkexec not installed. Install policykit-1 (Debian/Ubuntu) "
+                        "or polkit (RHEL/Arch), or add a sudoers entry manually: "
+                        f"echo '{user} ALL=(root) NOPASSWD: {binary}' "
+                        f"| sudo tee {SUDOERS_PATH} && "
+                        f"sudo chmod 0440 {SUDOERS_PATH}"),
+            )
+        visudo = shutil.which("visudo") or "/usr/sbin/visudo"
+        install_cmd = (
+            f"{shlex.quote(visudo)} -cf {shlex.quote(str(tmp))} && "
+            f"/bin/mv {shlex.quote(str(tmp))} {shlex.quote(SUDOERS_PATH)} && "
+            f"/bin/chown root:root {shlex.quote(SUDOERS_PATH)} && "
+            f"/bin/chmod 0440 {shlex.quote(SUDOERS_PATH)}"
+        )
+        try:
+            r = subprocess.run(
+                [pkexec, "/bin/sh", "-c", install_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = ((r.stdout or "") + (r.stderr or "")).strip()
+            if r.returncode in (126, 127):
+                raise HTTPException(status_code=400,
+                                    detail="install cancelled or no polkit agent available")
+            raise HTTPException(status_code=500, detail=err or "install failed")
+        return {"installed": _is_passwordless(binary)}
+
+    raise HTTPException(status_code=501,
+                        detail="passwordless install not supported on this platform")
 
 
 @router.get("/nmap/scripts")
