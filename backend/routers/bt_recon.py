@@ -19,11 +19,12 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, require_unix
 
-router = APIRouter(prefix="/bt", tags=["bt-recon"])
+router = APIRouter(prefix="/bt", tags=["bt-recon"], dependencies=[Depends(require_local_auth)])
 
 _BT_HINT = ("Bluetooth recon shells out to system_profiler (macOS) or "
             "bluetoothctl (Linux); Windows uses a different BT stack — "

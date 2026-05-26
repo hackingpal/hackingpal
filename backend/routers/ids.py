@@ -19,13 +19,14 @@ import time
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify, ids
+from lib.auth import require_local_auth
 
 _HIDS_SEVERITY = {"warn": "warning", "high": "critical"}
 
-router = APIRouter(tags=["ids"])
+router = APIRouter(tags=["ids"], dependencies=[Depends(require_local_auth)])
 
 POLL_INTERVAL_S = 5.0
 DEBOUNCE_S      = 10.0

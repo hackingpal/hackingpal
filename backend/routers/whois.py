@@ -18,18 +18,57 @@ doesn't 409. Only deny blocks.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import re
 import socket
 import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 
 from lib import hids_notify
+from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import MAX_TARGET_LEN, validate_hostname
 
-router = APIRouter(tags=["whois"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["whois"], dependencies=[Depends(require_local_auth)])
+
+
+def _validate_whois_target(target: str) -> str:
+    """Validate a whois lookup target: IP, CIDR, or hostname/domain.
+
+    The whois endpoint is more permissive than the rest of the validators
+    because CIDR notation is a legitimate input shape. Returns the
+    stripped value on success.
+    """
+    s = (target or "").strip()
+    if not s:
+        raise MhpError("target is required", code=ErrorCode.INVALID_TARGET)
+    if len(s) > MAX_TARGET_LEN:
+        raise MhpError(
+            f"target is too long (max {MAX_TARGET_LEN} chars)",
+            code=ErrorCode.INVALID_TARGET,
+        )
+    if "/" in s:
+        try:
+            ipaddress.ip_network(s, strict=False)
+            return s
+        except ValueError:
+            raise MhpError(
+                "target is not a valid CIDR block",
+                code=ErrorCode.INVALID_TARGET,
+            ) from None
+    try:
+        ipaddress.ip_address(s)
+        return s
+    except ValueError:
+        pass
+    # Fall through to hostname/domain validation.
+    return validate_hostname(s, field="target")
 
 import shutil as _shutil
 WHOIS = _shutil.which("whois") or "/usr/bin/whois"
@@ -168,13 +207,16 @@ HOSTING_KEYWORDS = (
 
 @router.get("/whois/{target:path}")
 async def whois_lookup(target: str) -> dict[str, Any]:
-    target = target.strip()
-    if not target:
-        raise HTTPException(status_code=400, detail="empty target")
+    target = _validate_whois_target(target)
 
     verdict, reason = check_target(target)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": target},
+        )
     # passive mode: warn proceeds — verdict surfaced in response
 
     ttype, resolved_ip = _classify(target)

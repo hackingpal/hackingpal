@@ -16,9 +16,11 @@ import shutil
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
-router = APIRouter(tags=["packages"])
+from lib.auth import require_local_auth
+
+router = APIRouter(tags=["packages"], dependencies=[Depends(require_local_auth)])
 
 IS_DARWIN = sys.platform == "darwin"
 

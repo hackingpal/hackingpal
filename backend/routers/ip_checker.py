@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import shutil
 import socket
 import subprocess
@@ -11,12 +12,17 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from lib import ip_intel
+from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_target
 
-router = APIRouter(prefix="/ip", tags=["ip"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/ip", tags=["ip"], dependencies=[Depends(require_local_auth)])
 
 _CACHE_TTL = 300.0  # 5 minutes
 _CACHE: dict[str, tuple[float, "IpReport"]] = {}
@@ -61,7 +67,11 @@ def _classify_ip(ip: str) -> tuple[str, bool]:
 
 
 class BulkRequest(BaseModel):
-    targets: list[str] = Field(default_factory=list)
+    # Hard cap on the list length keeps a runaway client from blowing through
+    # the thread pool. Per-item validation runs in the handler so we can
+    # surface a precise error code (validators raising MhpError inside a
+    # pydantic field_validator get wrapped into a generic ValidationError).
+    targets: list[str] = Field(default_factory=list, max_length=_BULK_MAX)
 
 
 class BulkResult(BaseModel):
@@ -96,7 +106,13 @@ def _compute_report(target: str) -> IpReport:
     try:
         ip = socket.gethostbyname(target)
     except socket.gaierror as exc:
-        raise HTTPException(status_code=404, detail=f"Cannot resolve '{target}': {exc}")
+        logger.info("ip resolve failed target=%r err=%s", target, exc)
+        raise MhpError(
+            f"Cannot resolve {target!r}",
+            code=ErrorCode.RESOLVE_FAILED,
+            status_code=404,
+            extra={"target": target},
+        ) from None
 
     ip_class, is_internal = _classify_ip(ip)
 
@@ -179,23 +195,34 @@ def _lookup_cached(target: str) -> IpReport:
 
 @router.get("/{target}", response_model=IpReport)
 def lookup(target: str) -> IpReport:
+    # Path param validation. Strips whitespace, enforces length, rejects
+    # malformed hostnames *before* we ever resolve them.
+    target = validate_target(target)
     return _lookup_cached(target)
 
 
 @router.post("/bulk", response_model=BulkResponse)
 def bulk(req: BulkRequest) -> BulkResponse:
-    # Dedupe while preserving order, drop blanks
+    # Strip blanks + per-item validation. The first bad entry surfaces
+    # an INVALID_TARGET error with the offending value so the UI can
+    # highlight it; the rest of the batch is *not* run.
     seen: set[str] = set()
     targets: list[str] = []
     for raw in req.targets:
-        t = raw.strip()
-        if not t:
+        if not isinstance(raw, str):
+            raise MhpError(
+                "target entries must be strings",
+                code=ErrorCode.INVALID_TARGET,
+            )
+        s = raw.strip()
+        if not s:
             continue
-        k = t.lower()
+        normalised = validate_target(s)
+        k = normalised.lower()
         if k in seen:
             continue
         seen.add(k)
-        targets.append(t)
+        targets.append(normalised)
         if len(targets) >= _BULK_MAX:
             break
 
@@ -205,10 +232,11 @@ def bulk(req: BulkRequest) -> BulkResponse:
     def one(t: str) -> BulkResult:
         try:
             return BulkResult(target=t, ok=True, report=_lookup_cached(t))
-        except HTTPException as exc:
-            return BulkResult(target=t, ok=False, error=str(exc.detail))
+        except MhpError as exc:
+            return BulkResult(target=t, ok=False, error=exc.message)
         except Exception as exc:
-            return BulkResult(target=t, ok=False, error=str(exc))
+            logger.exception("ip bulk lookup failed target=%r", t)
+            return BulkResult(target=t, ok=False, error=f"lookup failed: {type(exc).__name__}")
 
     with ThreadPoolExecutor(max_workers=_BULK_WORKERS) as pool:
         results = list(pool.map(one, targets))

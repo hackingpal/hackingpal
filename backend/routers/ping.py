@@ -17,9 +17,11 @@ import asyncio
 import shlex
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-router = APIRouter(tags=["ping"])
+from lib.auth import require_local_auth
+
+router = APIRouter(tags=["ping"], dependencies=[Depends(require_local_auth)])
 
 
 def _build_cmd(target: str, count: int, interval: float) -> list[str]:

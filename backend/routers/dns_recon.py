@@ -19,17 +19,23 @@ WS    /ws/dns-recon
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import subprocess
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify
+from lib.auth import require_local_auth
+from lib.errors import ErrorCode, ws_error
 from lib.target_policy import check_target, require_target
+from lib.validators import validate_domain
 
-router = APIRouter(tags=["dns-recon"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(tags=["dns-recon"], dependencies=[Depends(require_local_auth)])
 
 import shutil as _shutil
 DIG = _shutil.which("dig") or "/usr/bin/dig"
@@ -119,6 +125,7 @@ def _try_axfr(domain: str, ns: str) -> tuple[bool, int, str]:
 
 @router.get("/dns/recon/{domain}")
 async def dns_recon(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
+    domain = validate_domain(domain)
     require_target(domain, confirm=confirm)
 
     a = _query(domain, "A")
@@ -220,22 +227,34 @@ async def dns_recon_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
-        domain = str(init.get("domain", "")).strip().lower()
+        raw_domain = str(init.get("domain", "")).strip().lower()
         wordlist_key = str(init.get("wordlist", "small"))
         confirm = bool(init.get("confirm", False))
 
-        if not domain:
-            await ws.send_json({"type": "error", "detail": "domain is required"})
+        try:
+            domain = validate_domain(raw_domain, field="domain")
+        except Exception as exc:
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_DOMAIN,
+                getattr(exc, "message", str(exc)) or "domain is required",
+            ))
             await ws.close(); return
 
         verdict, reason = check_target(domain)
         if verdict == "deny":
-            await ws.send_json({"type": "error", "detail": f"target denied: {reason}"})
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"target denied: {reason}",
+                target=domain,
+            ))
             await ws.close(); return
         if verdict == "warn" and not confirm:
-            await ws.send_json({"type": "error",
-                                "detail": f"need_confirm: {reason}",
-                                "need_confirm": True})
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                reason,
+                target=domain,
+                need_confirm=True,
+            ))
             await ws.close(); return
 
         wordlist = _WORDLIST_MEDIUM if wordlist_key == "medium" else _WORDLIST_SMALL
@@ -301,9 +320,13 @@ async def dns_recon_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("dns_recon_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during subdomain enumeration",
+            ))
         except Exception:
             pass
     finally:

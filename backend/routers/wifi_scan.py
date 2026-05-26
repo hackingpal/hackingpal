@@ -29,11 +29,12 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
 
-router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"])
+router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"], dependencies=[Depends(require_local_auth)])
 
 # CoreWLAN security type enum (CWSecurity) — Mac scans surface these as ints.
 SECURITY_NAMES = {

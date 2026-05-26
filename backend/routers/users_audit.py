@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-router = APIRouter(tags=["users"])
+from lib.auth import require_local_auth
+
+router = APIRouter(tags=["users"], dependencies=[Depends(require_local_auth)])
 
 IS_LINUX = sys.platform.startswith("linux")
 

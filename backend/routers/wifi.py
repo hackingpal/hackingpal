@@ -16,13 +16,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, require_unix
 
-router = APIRouter(tags=["wifi"])
+router = APIRouter(tags=["wifi"], dependencies=[Depends(require_local_auth)])
 
 AIRPORT = ("/System/Library/PrivateFrameworks/Apple80211.framework"
            "/Versions/Current/Resources/airport")

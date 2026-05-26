@@ -16,9 +16,11 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-router = APIRouter(tags=["systemd"])
+from lib.auth import require_local_auth
+
+router = APIRouter(tags=["systemd"], dependencies=[Depends(require_local_auth)])
 
 IS_LINUX = sys.platform.startswith("linux")
 

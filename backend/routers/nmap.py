@@ -39,7 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from lib import hids_notify, nmap_runner, target_policy
 from lib.auth import require_local_auth
 
-router = APIRouter(tags=["nmap"])
+router = APIRouter(tags=["nmap"], dependencies=[Depends(require_local_auth)])
 
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-nmap"
 
@@ -91,7 +91,7 @@ def status() -> dict[str, Any]:
     }
 
 
-@router.post("/nmap/install", dependencies=[Depends(require_local_auth)])
+@router.post("/nmap/install")
 def install_sudoers() -> dict[str, Any]:
     """Drop a `<user> ALL=(root) NOPASSWD: <nmap>` entry.
 

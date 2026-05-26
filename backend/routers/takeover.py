@@ -34,12 +34,13 @@ import subprocess
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 from lib.target_policy import check_target
 
-router = APIRouter(tags=["takeover"])
+router = APIRouter(tags=["takeover"], dependencies=[Depends(require_local_auth)])
 
 import shutil as _shutil
 DIG = _shutil.which("dig") or "/usr/bin/dig"

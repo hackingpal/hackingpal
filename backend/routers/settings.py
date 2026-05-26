@@ -8,10 +8,12 @@ from __future__ import annotations
 import os
 import subprocess
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/settings", tags=["settings"])
+from lib.auth import require_local_auth
+
+router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_local_auth)])
 
 KEYCHAIN_SERVICE = "MyHackingPal"
 KEYCHAIN_ACCOUNT = "anthropic_api_key"

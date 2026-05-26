@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from lib.auth import require_local_auth
 from lib.platform_util import IS_WINDOWS
 
-router = APIRouter(prefix="/terminal", tags=["terminal"])
+router = APIRouter(prefix="/terminal", tags=["terminal"], dependencies=[Depends(require_local_auth)])
 
 # Maximum output bytes we return — protect the websocket from a 100MB cat.
 MAX_OUTPUT = 256 * 1024
@@ -45,8 +45,7 @@ class ExecResponse(BaseModel):
     truncated: bool
 
 
-@router.post("/exec", response_model=ExecResponse,
-              dependencies=[Depends(require_local_auth)])
+@router.post("/exec", response_model=ExecResponse)
 def exec_cmd(req: ExecRequest) -> ExecResponse:
     cmd = req.command.strip()
     if not cmd:

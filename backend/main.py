@@ -21,6 +21,8 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from lib import errors as mhp_errors
+from lib import logging_setup
 from lib.auth import AUTH_TOKEN, require_localhost
 
 from routers import (
@@ -37,6 +39,7 @@ from routers import (
     systemd_units, firewall_rules, users_audit,
 )
 
+logging_setup.configure()
 logger = logging.getLogger("myhackingpal")
 
 # ── Startup guard: refuse to expose the backend to the network ───────────────
@@ -69,6 +72,11 @@ if _ALLOW_PUBLIC:
     )
 
 app = FastAPI(title="MyHackingPal", version="0.1.0")
+
+# Global error envelope + handlers. Every uncaught exception becomes
+# {"error": "...", "code": "..."} with the stack trace logged server-side
+# instead of leaked to the client.
+mhp_errors.install_handlers(app)
 
 # Loopback-only CORS: the only thing that ever calls us is the local
 # Electron renderer (or the Vite dev server during development).

@@ -29,11 +29,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from lib.auth import require_local_auth
 from lib.platform_util import require_linux
 
-router = APIRouter(tags=["linux"])
+router = APIRouter(tags=["linux"], dependencies=[Depends(require_local_auth)])
 
 
 def _run(cmd: list[str], timeout: int = 6) -> str:

@@ -35,10 +35,12 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-router = APIRouter(tags=["reverse_shell"])
+from lib.auth import require_local_auth
+
+router = APIRouter(tags=["reverse_shell"], dependencies=[Depends(require_local_auth)])
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 

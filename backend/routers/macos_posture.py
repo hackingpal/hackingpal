@@ -26,12 +26,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 from lib.platform_util import require_darwin
 
-router = APIRouter(tags=["macos"])
+router = APIRouter(tags=["macos"], dependencies=[Depends(require_local_auth)])
 
 
 def _run(cmd: list[str], timeout: int = 4) -> str:

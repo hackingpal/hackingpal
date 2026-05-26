@@ -23,6 +23,7 @@ see WAF/redirect behaviour, and we GET for /robots.txt explicitly.
 from __future__ import annotations
 
 import asyncio
+import logging
 import ssl
 import time
 from typing import Any
@@ -31,7 +32,11 @@ from urllib.parse import urlparse, urlsplit
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify
+from lib.errors import ErrorCode, MhpError, ws_error
 from lib.target_policy import check_target
+from lib.validators import validate_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["http-probe"])
 
@@ -144,28 +149,48 @@ async def http_probe_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
-        url = str(init.get("url", "")).strip()
+        raw_url = str(init.get("url", "")).strip()
         wordlist_key = str(init.get("wordlist", "small"))
-        concurrency = max(1, min(int(init.get("max_concurrency", 16)), 32))
+        try:
+            concurrency = max(1, min(int(init.get("max_concurrency", 16)), 32))
+        except (TypeError, ValueError):
+            concurrency = 16
         confirm = bool(init.get("confirm", False))
 
-        if not url:
-            await ws.send_json({"type": "error", "detail": "url is required"})
+        # `validate_url` enforces length + http(s) scheme + valid host. If
+        # the caller passed a bare hostname we tolerate it (legacy behaviour)
+        # by prepending https:// and re-running.
+        if raw_url and "://" not in raw_url:
+            raw_url = "https://" + raw_url
+        try:
+            url = validate_url(raw_url, field="url")
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close(); return
 
         scheme, host, port, base = _parse_url(url)
         if not host:
-            await ws.send_json({"type": "error", "detail": f"could not parse host from {url!r}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_URL,
+                f"could not parse host from {url!r}",
+            ))
             await ws.close(); return
 
         verdict, reason = check_target(host)
         if verdict == "deny":
-            await ws.send_json({"type": "error", "detail": f"target denied: {reason}"})
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"target denied: {reason}",
+                target=host,
+            ))
             await ws.close(); return
         if verdict == "warn" and not confirm:
-            await ws.send_json({"type": "error",
-                                "detail": f"need_confirm: {reason}",
-                                "need_confirm": True})
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                reason,
+                target=host,
+                need_confirm=True,
+            ))
             await ws.close(); return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -195,8 +220,11 @@ async def http_probe_ws(ws: WebSocket) -> None:
             # If we still couldn't reach the target, bail before the path probe
             if status is None and not base_headers:
                 detail = (err or get_err or "connection failed").splitlines()[0][:200]
-                await ws.send_json({"type": "error",
-                                    "detail": f"could not reach {host}:{port} — {detail}"})
+                await ws.send_json(ws_error(
+                    ErrorCode.UPSTREAM_FAILED,
+                    f"could not reach {host}:{port} — {detail}",
+                    target=host,
+                ))
                 return
 
             wordlist = PATHS_MEDIUM if wordlist_key == "medium" else PATHS_SMALL
@@ -282,9 +310,13 @@ async def http_probe_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("http_probe_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during http probe",
+            ))
         except Exception:
             pass
     finally:

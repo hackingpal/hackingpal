@@ -23,13 +23,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from lib import forensics
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
 
-router = APIRouter(tags=["forensics"])
+router = APIRouter(tags=["forensics"], dependencies=[Depends(require_local_auth)])
 
 
 # ── Mac persistence locations ─────────────────────────────────────────────────

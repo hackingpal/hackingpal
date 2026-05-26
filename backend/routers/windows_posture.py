@@ -26,11 +26,12 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from lib.auth import require_local_auth
 from lib.platform_util import IS_WINDOWS, require_windows
 
-router = APIRouter(tags=["windows"])
+router = APIRouter(tags=["windows"], dependencies=[Depends(require_local_auth)])
 
 
 def _run(cmd: list[str], timeout: int = 8) -> tuple[int, str]:

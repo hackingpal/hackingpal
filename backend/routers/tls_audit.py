@@ -33,12 +33,13 @@ from typing import Any
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 from lib.target_policy import check_target
 
-router = APIRouter(tags=["tls"])
+router = APIRouter(tags=["tls"], dependencies=[Depends(require_local_auth)])
 
 import shutil as _shutil
 # Prefer whatever's on PATH (catches Linux distros + non-default Homebrew

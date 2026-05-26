@@ -27,7 +27,7 @@ from lib import hids_notify
 from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, require_unix
 
-router = APIRouter(tags=["vpn"])
+router = APIRouter(tags=["vpn"], dependencies=[Depends(require_local_auth)])
 
 SERVER_CFG  = Path.home() / "vpn-setup" / "wg0.conf"
 CLIENTS_DIR = Path.home() / "vpn-setup" / "clients"
@@ -158,11 +158,11 @@ def _toggle(direction: str) -> dict[str, Any]:
     return {"ok": True, "output": out.strip()}
 
 
-@router.post("/vpn/start", dependencies=[Depends(require_local_auth)])
+@router.post("/vpn/start")
 def start() -> dict[str, Any]:
     return _toggle("up")
 
 
-@router.post("/vpn/stop", dependencies=[Depends(require_local_auth)])
+@router.post("/vpn/stop")
 def stop() -> dict[str, Any]:
     return _toggle("down")

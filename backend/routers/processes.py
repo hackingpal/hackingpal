@@ -18,10 +18,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import psutil
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from lib import forensics, hids_notify, ids as ids_lib   # reuse the lsof snapshot
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, IS_LINUX
 
 
@@ -38,7 +39,7 @@ def _sign_check(path: str) -> dict[str, str]:
         return forensics.linux_pkg_owner(path)
     return {"status": "", "team": "", "authority": ""}
 
-router = APIRouter(tags=["forensics"])
+router = APIRouter(tags=["forensics"], dependencies=[Depends(require_local_auth)])
 
 
 # Signal name → signal number. Limited to the ones the UI exposes. Windows

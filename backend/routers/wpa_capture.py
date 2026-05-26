@@ -19,11 +19,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, IS_LINUX, require_unix
 
-router = APIRouter(prefix="/wpa-capture", tags=["wpa-capture"])
+router = APIRouter(prefix="/wpa-capture", tags=["wpa-capture"], dependencies=[Depends(require_local_auth)])
 
 _WPA_HINT = ("WPA capture wraps the aircrack-ng / hcxdumptool toolchain on "
              "macOS and Linux. Windows is not supported (npcap monitor mode "

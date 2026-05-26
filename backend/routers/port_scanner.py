@@ -19,6 +19,7 @@ Protocol:
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import time
 from typing import Any
@@ -26,6 +27,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify, scanner
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import validate_target
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["port-scanner"])
 
@@ -64,21 +69,26 @@ async def port_scan_ws(ws: WebSocket) -> None:
         except (TypeError, ValueError):
             n_threads = 100
 
-        if not target:
-            await ws.send_json({"type": "error", "detail": "target is required"})
+        try:
+            target = validate_target(target, field="target")
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close()
             return
         try:
             ports = scanner.parse_ports(ports_s)
         except ValueError as exc:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(ErrorCode.INVALID_RANGE, str(exc)))
             await ws.close()
             return
         try:
             ip = scanner.resolve_host(target)
         except socket.gaierror as exc:
-            await ws.send_json({"type": "error",
-                                "detail": f"cannot resolve '{target}': {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.RESOLVE_FAILED,
+                f"cannot resolve '{target}': {exc}",
+                target=target,
+            ))
             await ws.close()
             return
 
@@ -151,9 +161,13 @@ async def port_scan_ws(ws: WebSocket) -> None:
             )
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("port_scan_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during port scan",
+            ))
         except Exception:
             pass
     finally:

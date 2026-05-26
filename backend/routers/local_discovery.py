@@ -17,11 +17,12 @@ import struct
 import time
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify
+from lib.auth import require_local_auth
 
-router = APIRouter(tags=["local-discovery"])
+router = APIRouter(tags=["local-discovery"], dependencies=[Depends(require_local_auth)])
 
 
 # ── SSDP ──────────────────────────────────────────────────────────────────────

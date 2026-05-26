@@ -35,7 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from lib.auth import require_local_auth
 from lib.platform_util import require_unix
 
-router = APIRouter(tags=["tcpdump"])
+router = APIRouter(tags=["tcpdump"], dependencies=[Depends(require_local_auth)])
 
 _TCPDUMP_HINT = ("tcpdump wraps the libpcap-based tcpdump binary on macOS/Linux. "
                  "Windows would need npcap + windump (separate install) — "
@@ -110,7 +110,7 @@ def interfaces() -> dict[str, list[str]]:
     return {"interfaces": keep}
 
 
-@router.post("/tcpdump/install", dependencies=[Depends(require_local_auth)])
+@router.post("/tcpdump/install")
 def install_sudoers() -> dict[str, Any]:
     """Drop a `<user> ALL=(root) NOPASSWD: <tcpdump>` entry.
 

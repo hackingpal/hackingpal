@@ -13,6 +13,37 @@ const BACKEND_URL =
 
 export { BACKEND_URL };
 
+/** Default per-request timeout in ms. Pages can override via api({ timeoutMs }). */
+export const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Thrown by `api()` whenever the backend returns a non-2xx response.
+ * Carries the human-readable `.message`, the backend-emitted `.code`
+ * (e.g. `"INVALID_HOSTNAME"`, `"NEED_CONFIRM"`, `"TIMEOUT"`), the HTTP
+ * status, and the parsed body so pages can read extras (e.g. `target`,
+ * `need_confirm`, `fields`).
+ */
+export class ApiError extends Error {
+  readonly code: string;
+  readonly status: number;
+  readonly body: any;
+  constructor(message: string, opts: { code: string; status: number; body: any }) {
+    super(message);
+    this.name = "ApiError";
+    this.code = opts.code;
+    this.status = opts.status;
+    this.body = opts.body;
+  }
+}
+
+/** True if `e` is an `ApiError` with the given code (handles cross-realm). */
+export function isApiError(e: unknown, code?: string): e is ApiError {
+  if (!(e instanceof Error)) return false;
+  const ae = e as Partial<ApiError>;
+  if (ae.name !== "ApiError" || typeof ae.code !== "string") return false;
+  return code ? ae.code === code : true;
+}
+
 /**
  * Normalize a FastAPI `detail` field into a human-readable string.
  *
@@ -47,14 +78,96 @@ export function formatDetail(d: unknown): string {
   return String(d);
 }
 
-/** Pull a useful error message from a non-ok Response. Never throws. */
-export async function parseError(res: Response): Promise<string> {
+/**
+ * Extract `{message, code}` from a non-ok Response.
+ *
+ * Supports two envelopes:
+ *
+ *   - new: `{"error": "msg", "code": "ERROR_CODE", ...}`
+ *   - legacy: `{"detail": "..."}` or `{"detail": [...]}` (FastAPI default)
+ *
+ * Never throws. Falls back to `HTTP <status>` if the body is empty or
+ * non-JSON.
+ */
+export async function parseErrorBody(
+  res: Response,
+): Promise<{ message: string; code: string; body: any }> {
+  let body: any = null;
   try {
-    const body = await res.json();
-    const msg = formatDetail((body as any)?.detail);
-    return msg || `HTTP ${res.status}`;
+    body = await res.json();
   } catch {
-    return `HTTP ${res.status}`;
+    /* non-JSON or empty */
+  }
+  if (body && typeof body === "object") {
+    // New envelope wins if both fields are present.
+    if (typeof body.error === "string" && body.error) {
+      return {
+        message: body.error,
+        code: typeof body.code === "string" ? body.code : defaultCode(res.status),
+        body,
+      };
+    }
+    if ("detail" in body) {
+      const message = formatDetail(body.detail) || defaultMessage(res.status);
+      // Some legacy 409 confirm flows ship `code` inside `detail`.
+      const detailObj =
+        body.detail && typeof body.detail === "object" && !Array.isArray(body.detail)
+          ? (body.detail as Record<string, unknown>)
+          : null;
+      const code =
+        (detailObj && typeof detailObj.code === "string" && detailObj.code) ||
+        defaultCode(res.status);
+      return { message, code, body };
+    }
+  }
+  return { message: defaultMessage(res.status), code: defaultCode(res.status), body };
+}
+
+/** Back-compat: returns just the message string. Existing call sites still work. */
+export async function parseError(res: Response): Promise<string> {
+  return (await parseErrorBody(res)).message;
+}
+
+function defaultCode(status: number): string {
+  if (status === 400) return "BAD_REQUEST";
+  if (status === 401) return "UNAUTHORIZED";
+  if (status === 403) return "FORBIDDEN";
+  if (status === 404) return "NOT_FOUND";
+  if (status === 409) return "CONFLICT";
+  if (status === 422) return "VALIDATION_ERROR";
+  if (status === 429) return "RATE_LIMITED";
+  if (status === 504) return "TIMEOUT";
+  if (status >= 500) return "INTERNAL";
+  return "BAD_REQUEST";
+}
+
+function defaultMessage(status: number): string {
+  return `HTTP ${status}`;
+}
+
+/**
+ * Wrap a fetch promise with a hard timeout. Resolves with the response, or
+ * rejects with an `ApiError` whose code is `"TIMEOUT"` if the deadline
+ * passes. Used internally by `api()` and exported for pages that build
+ * their own fetches.
+ */
+export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new ApiError(`Request timed out after ${Math.round(ms / 1000)}s`, {
+          code: "TIMEOUT",
+          status: 504,
+          body: null,
+        }),
+      );
+    }, ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer != null) clearTimeout(timer);
   }
 }
 
@@ -67,22 +180,32 @@ const LOG_SKIP = [
 // Per-launch auth token. The backend issues this on GET /auth/token (loopback
 // only, no header required). We fetch it lazily on first api() call and reuse
 // the same promise so concurrent calls don't trigger duplicate fetches.
-// Privileged endpoints (terminal/exec, *_install, vpn/{start,stop}) require it
-// via the X-MHP-Token header; harmless endpoints just ignore it.
+// HTTP requests send it via the X-MHP-Token header; WebSocket upgrades can't
+// set custom headers, so openWs() appends it as a ?token=<t> query param.
 let authTokenPromise: Promise<string | null> | null = null;
+let cachedAuthToken: string | null = null;
 
 function fetchAuthToken(): Promise<string | null> {
   if (authTokenPromise) return authTokenPromise;
   authTokenPromise = fetch(`${BACKEND_URL}/auth/token`)
     .then((r) => (r.ok ? r.json() : null))
-    .then((b) => (b && typeof b.token === "string" ? b.token : null))
+    .then((b) => {
+      const t = b && typeof b.token === "string" ? b.token : null;
+      cachedAuthToken = t;
+      return t;
+    })
     .catch(() => null);
   return authTokenPromise;
 }
 
+// Eager prefetch so openWs() (which is synchronous) has the token ready by
+// the time any page mounts.
+void fetchAuthToken();
+
 /** Clears the cached token. Call if the backend is restarted mid-session. */
 export function resetAuthToken(): void {
   authTokenPromise = null;
+  cachedAuthToken = null;
 }
 
 async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
@@ -93,13 +216,43 @@ async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
   return { ...(init ?? {}), headers };
 }
 
-export async function api<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiInit extends RequestInit {
+  /** Override the per-request timeout. Defaults to DEFAULT_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+export async function api<T>(path: string, init?: ApiInit): Promise<T> {
   // Skip the auth fetch when we're already fetching /auth/token, otherwise
   // we'd recurse forever.
-  const finalInit = path === "/auth/token" ? init : await withAuthHeader(init);
-  const res = await fetch(`${BACKEND_URL}${path}`, finalInit);
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...fetchInit } = init ?? {};
+  const finalInit = path === "/auth/token" ? fetchInit : await withAuthHeader(fetchInit);
+  // AbortController so the underlying request actually stops on timeout
+  // (otherwise the socket would keep going and consume resources).
+  const ctl = new AbortController();
+  const merged: RequestInit = { ...finalInit, signal: finalInit.signal ?? ctl.signal };
+  const fetchPromise = fetch(`${BACKEND_URL}${path}`, merged).catch((e: unknown) => {
+    if (e instanceof Error && e.name === "AbortError") {
+      throw new ApiError("Request aborted", {
+        code: "TIMEOUT",
+        status: 504,
+        body: null,
+      });
+    }
+    throw e;
+  });
+  let res: Response;
+  try {
+    res = await withTimeout(fetchPromise, timeoutMs);
+  } catch (e) {
+    // On timeout, abort the in-flight request so we don't leak the socket.
+    if (isApiError(e, "TIMEOUT")) {
+      try { ctl.abort(); } catch { /* ignore */ }
+    }
+    throw e;
+  }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   const body = (await res.json()) as T;
   if (!LOG_SKIP.some((re) => re.test(path))) {
@@ -210,12 +363,11 @@ export async function fetchDnsRecon(
   const url = `/dns/recon/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
   const res = await fetch(`${BACKEND_URL}${url}`);
   if (res.status === 409) {
-    const body = await res.json();
-    const d = body.detail ?? {};
-    return { needConfirm: true, reason: d.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<DnsReport>;
 }
@@ -412,11 +564,11 @@ export async function fetchCtSearch(
   const url = `/ct/search/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
   const res = await fetch(`${BACKEND_URL}${url}`);
   if (res.status === 409) {
-    const body = await res.json();
-    return { needConfirm: true, reason: body.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<CtReport>;
 }
@@ -445,11 +597,11 @@ export async function fetchEmailAudit(
   const url = `/email/audit/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
   const res = await fetch(`${BACKEND_URL}${url}`);
   if (res.status === 409) {
-    const body = await res.json();
-    return { needConfirm: true, reason: body.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<EmailReport>;
 }
@@ -474,11 +626,11 @@ export async function fetchTakeoverCheck(
   const url = `/takeover/check/${encodeURIComponent(fqdn)}${confirm ? "?confirm=true" : ""}`;
   const res = await fetch(`${BACKEND_URL}${url}`);
   if (res.status === 409) {
-    const body = await res.json();
-    return { needConfirm: true, reason: body.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<TakeoverResult>;
 }
@@ -511,11 +663,11 @@ export async function fetchReverseIp(
   const url = `/reverse-ip/${encodeURIComponent(target)}${confirm ? "?confirm=true" : ""}`;
   const res = await fetch(`${BACKEND_URL}${url}`);
   if (res.status === 409) {
-    const body = await res.json();
-    return { needConfirm: true, reason: body.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<ReverseIpReport>;
 }
@@ -525,7 +677,102 @@ export async function fetchReverseIp(
 const WS_URL = BACKEND_URL.replace(/^http/, "ws");
 
 export function openWs(path: string): WebSocket {
-  return new WebSocket(`${WS_URL}${path}`);
+  // WS upgrades can't set custom headers, so we append the auth token as a
+  // query param. The eager prefetch above means the token is almost always
+  // ready by the time any page opens a socket; if not, the backend rejects
+  // with a 1008 close frame and the caller will surface the error.
+  let url = `${WS_URL}${path}`;
+  if (cachedAuthToken) {
+    url += (path.includes("?") ? "&" : "?") + `token=${encodeURIComponent(cachedAuthToken)}`;
+  }
+  return new WebSocket(url);
+}
+
+/**
+ * Watch a WebSocket for liveness. Pages can use this to surface a distinct
+ * "timeout" state when the backend stops sending frames for too long.
+ *
+ *   const watch = watchWsLiveness(ws, {
+ *     connectMs: 5_000,
+ *     idleMs:    30_000,
+ *     onTimeout: (phase) => setTimedOut(phase),
+ *   });
+ *   ws.onmessage = (e) => { watch.touch(); ... };
+ *   ws.onclose = () => watch.stop();
+ *
+ * Returns an object with `touch()` (reset the idle timer — call on every
+ * inbound frame) and `stop()` (cancel timers on close).
+ */
+export function watchWsLiveness(
+  ws: WebSocket,
+  opts: {
+    connectMs?: number;
+    idleMs?: number;
+    onTimeout: (phase: "connect" | "idle") => void;
+  },
+): { touch: () => void; stop: () => void } {
+  const connectMs = opts.connectMs ?? 10_000;
+  const idleMs = opts.idleMs ?? 60_000;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let connectTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+
+  function clearIdle() {
+    if (idleTimer != null) { clearTimeout(idleTimer); idleTimer = null; }
+  }
+  function clearConnect() {
+    if (connectTimer != null) { clearTimeout(connectTimer); connectTimer = null; }
+  }
+  function armIdle() {
+    clearIdle();
+    if (stopped) return;
+    idleTimer = setTimeout(() => {
+      if (!stopped) opts.onTimeout("idle");
+    }, idleMs);
+  }
+
+  // Arm the connect timer immediately; it gets cleared on first onopen.
+  connectTimer = setTimeout(() => {
+    if (!stopped && ws.readyState !== WebSocket.OPEN) opts.onTimeout("connect");
+  }, connectMs);
+
+  // Hook onopen non-destructively so we don't stomp whatever the page sets.
+  const origOpen = ws.onopen;
+  ws.onopen = (e) => {
+    clearConnect();
+    armIdle();
+    if (origOpen) origOpen.call(ws, e);
+  };
+
+  return {
+    touch: armIdle,
+    stop: () => {
+      stopped = true;
+      clearConnect();
+      clearIdle();
+    },
+  };
+}
+
+/**
+ * Helper for the legacy 409 confirm flow. Backend emits either
+ * `{detail: {reason, target, need_confirm}}` (old) or
+ * `{error, code: "NEED_CONFIRM", target, need_confirm}` (new).
+ * Returns the reason string regardless of shape.
+ */
+export async function parseNeedConfirm(
+  res: Response,
+): Promise<{ needConfirm: true; reason: string; target?: string }> {
+  const { message, body } = await parseErrorBody(res);
+  const target =
+    body && typeof body === "object"
+      ? (typeof body.target === "string"
+          ? body.target
+          : typeof body.detail?.target === "string"
+            ? body.detail.target
+            : undefined)
+      : undefined;
+  return { needConfirm: true, reason: message || "confirmation required", target };
 }
 
 // ── Port scanner event types ──────────────────────────────────────────────────
@@ -1005,11 +1252,11 @@ export async function fetchCms(
   const qs = new URLSearchParams({ url, ...(confirm ? { confirm: "true" } : {}) });
   const res = await fetch(`${BACKEND_URL}/cms/fingerprint?${qs}`);
   if (res.status === 409) {
-    const b = await res.json();
-    return { needConfirm: true, reason: b.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<CmsReport>;
 }
@@ -1289,11 +1536,11 @@ export async function fetchGraphql(
   const qs = new URLSearchParams({ url, ...(confirm ? { confirm: "true" } : {}) });
   const res = await fetch(`${BACKEND_URL}/graphql/introspect?${qs}`);
   if (res.status === 409) {
-    const b = await res.json();
-    return { needConfirm: true, reason: b.detail?.reason ?? "confirmation required" };
+    return parseNeedConfirm(res);
   }
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json() as Promise<GraphqlReport>;
 }
@@ -1372,7 +1619,8 @@ export const fetchStegoCapacity = async (file: File): Promise<StegoCapacity> => 
   const res = await fetch(`${BACKEND_URL}/stego/capacity`,
                           { method: "POST", body: fd });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json();
 };
@@ -1405,7 +1653,8 @@ export const embedStego = async (opts: StegoEmbedOptions): Promise<StegoEmbedRes
   const res = await fetch(`${BACKEND_URL}/stego/embed`,
                           { method: "POST", body: fd });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") ?? "";
@@ -1435,7 +1684,8 @@ export const extractStego = async (file: File, password?: string): Promise<Stego
   const res = await fetch(`${BACKEND_URL}/stego/extract`,
                           { method: "POST", body: fd });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json();
 };
@@ -1467,7 +1717,8 @@ export const analyzeStego = async (file: File): Promise<StegoAnalyzeResp> => {
   const res = await fetch(`${BACKEND_URL}/stego/analyze`,
                           { method: "POST", body: fd });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   return res.json();
 };
@@ -1478,7 +1729,8 @@ export const stripStegoMetadata = async (file: File): Promise<{ blob: Blob; file
   const res = await fetch(`${BACKEND_URL}/stego/strip-metadata`,
                           { method: "POST", body: fd });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    const { message, code, body } = await parseErrorBody(res);
+    throw new ApiError(message, { code, status: res.status, body });
   }
   const blob = await res.blob();
   const cd = res.headers.get("Content-Disposition") ?? "";

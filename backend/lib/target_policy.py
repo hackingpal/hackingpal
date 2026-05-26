@@ -134,10 +134,22 @@ def require_target(target: str, confirm: bool = False) -> str:
 
     verdict, reason = check_target(target)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "reason": f"target denied: {reason}",
+                "code": "TARGET_DENIED",
+                "target": target,
+            },
+        )
     if verdict == "warn" and not confirm:
         raise HTTPException(
             status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": target},
+            detail={
+                "reason": reason,
+                "code": "NEED_CONFIRM",
+                "need_confirm": True,
+                "target": target,
+            },
         )
     return reason
