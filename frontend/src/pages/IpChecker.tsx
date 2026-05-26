@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   fetchIpReport,
   fetchIpBulk,
+  isApiError,
   type IpReport,
   type IpBulkResult,
 } from "../api";
@@ -48,6 +49,7 @@ export default function IpChecker() {
   const [bulkText, setBulkText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
   const [report, setReport] = useState<IpReport | null>(null);
   const [bulkResults, setBulkResults] = useState<IpBulkResult[] | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
@@ -60,6 +62,7 @@ export default function IpChecker() {
     if (t) setTarget(value);
     setBusy(true);
     setError(null);
+    setTimedOut(false);
     setReport(null);
     setBulkResults(null);
     try {
@@ -67,7 +70,8 @@ export default function IpChecker() {
       setReport(r);
       setHistory((h) => pushHistory(h, { target: value, severity: r.verdict_severity, ts: Date.now() }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setTimedOut(true);
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -81,6 +85,7 @@ export default function IpChecker() {
     if (targets.length === 0) return;
     setBusy(true);
     setError(null);
+    setTimedOut(false);
     setReport(null);
     setBulkResults(null);
     try {
@@ -96,7 +101,8 @@ export default function IpChecker() {
         return next;
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setTimedOut(true);
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -173,7 +179,27 @@ export default function IpChecker() {
             <BulkInput value={bulkText} onChange={setBulkText} disabled={busy} />
           )}
 
-          {error && (
+          {timedOut && (
+            <div className="border border-amber/40 bg-amber/10 text-amber
+                            rounded px-3 py-2 text-sm font-mono flex items-center gap-3">
+              <span>⏱</span>
+              <div className="flex-1">
+                <div className="font-bold">Lookup timed out</div>
+                <div className="text-[11px] text-ink-muted">
+                  The server didn't respond in time. Retry, or check connectivity.
+                </div>
+              </div>
+              <button
+                onClick={() => (mode === "single" ? void lookup() : void lookupBulk())}
+                className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                           border-amber/40 text-amber hover:bg-amber/10 transition"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {error && !timedOut && (
             <div className="border border-danger/40 bg-danger/10 text-danger
                             rounded px-3 py-2 text-sm font-mono">
               Error — {error}
@@ -184,7 +210,7 @@ export default function IpChecker() {
 
           {bulkResults && <BulkResults results={bulkResults} onPick={(t) => { setMode("single"); void lookup(t); }} />}
 
-          {!report && !bulkResults && !error && !busy && mode === "single" && (
+          {!report && !bulkResults && !error && !timedOut && !busy && mode === "single" && (
             <EmptyState onPick={(t) => void lookup(t)} />
           )}
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchWhois, type WhoisReport } from "../api";
+import { fetchWhois, isApiError, type WhoisReport } from "../api";
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -11,6 +11,7 @@ export default function Whois() {
   const [target, setTarget] = useState("anthropic.com");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
   const [report, setReport] = useState<WhoisReport | null>(null);
   const [showRaw, setShowRaw] = useState(false);
 
@@ -19,12 +20,17 @@ export default function Whois() {
     if (!t) return;
     setBusy(true);
     setError(null);
+    setTimedOut(false);
     setReport(null);
     setShowRaw(false);
     try {
       setReport(await fetchWhois(t));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) {
+        setTimedOut(true);
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -75,14 +81,34 @@ export default function Whois() {
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
-        {error && (
+        {timedOut && (
+          <div className="border border-amber/40 bg-amber/10 text-amber
+                          rounded px-3 py-2 text-sm font-mono flex items-center gap-3">
+            <span>⏱</span>
+            <div className="flex-1">
+              <div className="font-bold">WHOIS lookup timed out</div>
+              <div className="text-[11px] text-ink-muted">
+                The server didn't respond in time. Retry, or check connectivity.
+              </div>
+            </div>
+            <button
+              onClick={run}
+              className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                         border-amber/40 text-amber hover:bg-amber/10 transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !timedOut && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">
             Error — {error}
           </div>
         )}
 
-        {!report && !error && !busy && <EmptyState />}
+        {!report && !error && !timedOut && !busy && <EmptyState />}
 
         {report && (
           <>

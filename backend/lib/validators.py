@@ -198,6 +198,16 @@ def validate_url(
                 f"{field} has an invalid host",
                 code=ErrorCode.INVALID_URL,
             ) from None
+    # urlparse defers port parsing until `.port` is accessed — force it
+    # here so a malformed port (e.g. "https://x:alert(1)") fails validation
+    # rather than blowing up downstream.
+    try:
+        _ = parsed.port
+    except ValueError:
+        raise MhpError(
+            f"{field} has a malformed port",
+            code=ErrorCode.INVALID_URL,
+        ) from None
     return s
 
 

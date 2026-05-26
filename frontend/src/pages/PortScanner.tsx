@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { openWs, type ScanEvent, type ScanInit } from "../api";
+import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
 
 type OpenRow = { port: number; service: string; banner: string };
 
@@ -22,6 +22,7 @@ export default function PortScanner() {
   const [scanning, setScanning] = useState(false);
   const [stopped,  setStopped]  = useState(false);
   const [error,    setError]    = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState<null | "connect" | "idle">(null);
   const [meta,     setMeta]     = useState<{ target: string; ip: string; total: number } | null>(null);
   const [done,     setDone]     = useState(0);
   const [total,    setTotal]    = useState(0);
@@ -29,14 +30,28 @@ export default function PortScanner() {
   const [rows,     setRows]     = useState<OpenRow[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
 
   function start() {
     if (scanning) return;
-    setScanning(true); setStopped(false); setError(null);
+    setScanning(true); setStopped(false); setError(null); setTimedOut(null);
     setMeta(null); setDone(0); setTotal(0); setElapsed(null); setRows([]);
 
     const ws = openWs("/ws/port-scan");
     wsRef.current = ws;
+
+    // Liveness watch: surface a distinct "timed out" state if the WS never
+    // opens (connect) or stops sending frames (idle). 60s idle is generous
+    // for a long port scan; the page already throttles progress to ~30/s.
+    watchRef.current = watchWsLiveness(ws, {
+      connectMs: 5_000,
+      idleMs:    60_000,
+      onTimeout: (phase) => {
+        setTimedOut(phase);
+        setScanning(false);
+        try { ws.close(); } catch { /* ignore */ }
+      },
+    });
 
     ws.onopen = () => {
       const init: ScanInit = { target, ports, timeout, threads };
@@ -44,6 +59,7 @@ export default function PortScanner() {
     };
 
     ws.onmessage = (e) => {
+      watchRef.current?.touch();
       const ev = JSON.parse(e.data) as ScanEvent;
       switch (ev.type) {
         case "started":
@@ -61,11 +77,13 @@ export default function PortScanner() {
           setElapsed(ev.elapsed);
           setStopped(ev.stopped);
           setScanning(false);
+          watchRef.current?.stop();
           ws.close();
           break;
         case "error":
           setError(ev.detail);
           setScanning(false);
+          watchRef.current?.stop();
           ws.close();
           break;
       }
@@ -74,8 +92,10 @@ export default function PortScanner() {
     ws.onerror = () => {
       setError("WebSocket error — is the backend running?");
       setScanning(false);
+      watchRef.current?.stop();
     };
     ws.onclose = () => {
+      watchRef.current?.stop();
       if (scanning) setScanning(false);
     };
   }
@@ -228,14 +248,38 @@ export default function PortScanner() {
       </header>
 
       <div className="flex-1 overflow-auto p-6">
-        {error && (
+        {timedOut && (
+          <div className="border border-amber/40 bg-amber/10 text-amber
+                          rounded px-3 py-2 text-sm font-mono mb-4 flex items-center gap-3">
+            <span>⏱</span>
+            <div className="flex-1">
+              <div className="font-bold">
+                {timedOut === "connect" ? "Backend not responding" : "Scan stalled"}
+              </div>
+              <div className="text-[11px] text-ink-muted">
+                {timedOut === "connect"
+                  ? "WebSocket failed to open within 5 seconds — is the sidecar running?"
+                  : "No progress for 60 seconds. The scan was stopped."}
+              </div>
+            </div>
+            <button
+              onClick={start}
+              className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                         border-amber/40 text-amber hover:bg-amber/10 transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !timedOut && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono mb-4">
             Error — {error}
           </div>
         )}
 
-        {!error && rows.length === 0 && !scanning && elapsed === null && <EmptyState />}
+        {!error && !timedOut && rows.length === 0 && !scanning && elapsed === null && <EmptyState />}
 
         {(rows.length > 0 || scanning) && (
           <>
