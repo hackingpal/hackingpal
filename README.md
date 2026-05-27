@@ -360,11 +360,11 @@ Two processes, one per terminal.
 
 ```sh
 # Terminal 1 — backend (FastAPI on 8765, auto-reload)
-cd ~/network_tools/backend
+cd backend
 python3 -m uvicorn main:app --reload --port 8765
 
 # Terminal 2 — frontend (Vite on 5173, then Electron)
-cd ~/network_tools/frontend
+cd frontend
 npm install            # one-time
 npm run dev:all        # vite + electron
 # or just vite:
