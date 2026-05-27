@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import logging
 import shlex
 import shutil
 import subprocess
@@ -38,6 +39,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 
 from lib import hids_notify, nmap_runner, target_policy
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import MAX_TARGET_LEN, validate_target
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["nmap"], dependencies=[Depends(require_local_auth)])
 
@@ -47,7 +52,11 @@ SUDOERS_PATH = "/etc/sudoers.d/network-tools-nmap"
 def _resolved_binary() -> str:
     b = nmap_runner.find_nmap()
     if not b:
-        raise HTTPException(status_code=503, detail="nmap binary not found")
+        raise MhpError(
+            "nmap binary not found",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+        )
     return b
 
 
@@ -215,8 +224,10 @@ async def nmap_ws(ws: WebSocket) -> None:
 
         binary = nmap_runner.find_nmap()
         if not binary:
-            await ws.send_json({"type": "error",
-                                "detail": "nmap binary not found on this system"})
+            await ws.send_json(ws_error(
+                ErrorCode.TOOL_MISSING,
+                "nmap binary not found on this system",
+            ))
             await ws.close(); return
 
         # Build options object (defaults are sensible)
@@ -270,11 +281,52 @@ async def nmap_ws(ws: WebSocket) -> None:
                 extra_args=str(raw_opts.get("extra_args", "") or ""),
             )
         except (TypeError, ValueError) as e:
-            await ws.send_json({"type": "error", "detail": f"invalid options: {e}"})
+            await ws.send_json(ws_error(
+                ErrorCode.VALIDATION_ERROR,
+                f"invalid options: {e}",
+            ))
             await ws.close(); return
 
         if not opts.targets:
-            await ws.send_json({"type": "error", "detail": "at least one target is required"})
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_TARGET,
+                "at least one target is required",
+            ))
+            await ws.close(); return
+
+        # Per-target format validation. Accept CIDR + plain host/IP — the
+        # CIDR/range expansion is handled in `nmap_runner`, so we only need
+        # to ensure each entry strips cleanly and isn't pathologically long.
+        normalised: list[str] = []
+        for t in opts.targets[:256]:  # hard cap on target count
+            if not isinstance(t, str):
+                continue
+            s = t.strip()
+            if not s:
+                continue
+            if len(s) > MAX_TARGET_LEN:
+                await ws.send_json(ws_error(
+                    ErrorCode.INVALID_TARGET,
+                    f"target too long (max {MAX_TARGET_LEN} chars)",
+                ))
+                await ws.close(); return
+            # Accept CIDR (e.g. 10.0.0.0/24) and ranges (e.g. 10.0.0.1-50)
+            # without per-character validation — nmap_runner handles those.
+            # Bare hosts get full validation.
+            if "/" in s or "-" in s or "," in s:
+                normalised.append(s)
+            else:
+                try:
+                    normalised.append(validate_target(s, field="target"))
+                except MhpError as exc:
+                    await ws.send_json(ws_error(exc.code, exc.message))
+                    await ws.close(); return
+        opts.targets = normalised
+        if not opts.targets:
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_TARGET,
+                "no valid targets after normalisation",
+            ))
             await ws.close(); return
 
         # Target policy gate — collect verdicts, deny outright, warn-without-confirm errs
@@ -285,26 +337,32 @@ async def nmap_ws(ws: WebSocket) -> None:
             verdicts.append({"target": t, "verdict": v, "reason": r})
             if v == "deny":
                 await ws.send_json({"type": "policy", "verdicts": verdicts})
-                await ws.send_json({"type": "error",
-                                    "detail": f"target denied: {t} ({r})"})
+                await ws.send_json(ws_error(
+                    ErrorCode.TARGET_DENIED,
+                    f"target denied: {t} ({r})",
+                    target=t,
+                ))
                 await ws.close(); return
             if v == "warn":
                 any_warn = True
         await ws.send_json({"type": "policy", "verdicts": verdicts})
         if any_warn and not confirm:
-            await ws.send_json({"type": "error", "need_confirm": True,
-                                "detail": "one or more targets require confirmation"})
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "one or more targets require confirmation",
+                need_confirm=True,
+            ))
             await ws.close(); return
 
         # Privileged scan check
         if nmap_runner.needs_privileged(opts):
             opts.use_sudo = True
             if not _is_passwordless(binary):
-                await ws.send_json({
-                    "type": "error",
-                    "detail": "this scan type needs root (SYN/UDP/OS/stealth). "
-                              "Install passwordless sudo first.",
-                })
+                await ws.send_json(ws_error(
+                    ErrorCode.FORBIDDEN,
+                    "this scan type needs root (SYN/UDP/OS/stealth). "
+                    "Install passwordless sudo first.",
+                ))
                 await ws.close(); return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -343,9 +401,13 @@ async def nmap_ws(ws: WebSocket) -> None:
 
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("nmap_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during nmap scan",
+            ))
         except Exception:
             pass
     finally:

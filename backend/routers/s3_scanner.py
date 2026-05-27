@@ -25,11 +25,16 @@ WS  /ws/s3-scan
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from lib.errors import ErrorCode, ws_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["s3-scanner"])
 
@@ -139,12 +144,26 @@ async def s3_ws(ws: WebSocket) -> None:
     try:
         init = await ws.receive_json()
         target = str(init.get("target", "")).strip().lower()
-        extra = list(init.get("extra_keywords") or [])
-        rate = max(1, min(int(init.get("rate_per_sec", 10)), 30))
+        # Cap target + each extra keyword length so a runaway payload can't
+        # produce a 100k-permutation queue.
+        if len(target) > 63:
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_TARGET,
+                "target must be 3-63 chars (S3 bucket-name limit)",
+            ))
+            await ws.close(); return
+        extra_raw = list(init.get("extra_keywords") or [])[:20]
+        extra = [str(k).strip().lower()[:32] for k in extra_raw if k]
+        try:
+            rate = max(1, min(int(init.get("rate_per_sec", 10)), 30))
+        except (TypeError, ValueError):
+            rate = 10
 
         if not target or not _valid_bucket_name(target.replace("_", "-")):
-            await ws.send_json({"type": "error", "detail":
-                "target must look like a bucket-name fragment (3-63 chars, lowercase letters/digits/hyphens)"})
+            await ws.send_json(ws_error(
+                ErrorCode.INVALID_TARGET,
+                "target must look like a bucket-name fragment (3-63 chars, lowercase letters/digits/hyphens)",
+            ))
             await ws.close(); return
 
         names = generate_names(target, extra)
@@ -196,9 +215,13 @@ async def s3_ws(ws: WebSocket) -> None:
                             "stopped": stop.is_set()})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("s3_scan_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during S3 scan",
+            ))
         except Exception:
             pass
     finally:

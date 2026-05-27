@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import socket
 import time
 from typing import Any
@@ -31,6 +32,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import audit, hids_notify, lan
+from lib.errors import ErrorCode, ws_error
+from lib.validators import MAX_TARGET_LEN
+
+logger = logging.getLogger(__name__)
 
 _HIDS_RISK_SEVERITY = {"high": "warning", "critical": "critical"}
 
@@ -58,13 +63,26 @@ async def audit_ws(ws: WebSocket) -> None:
     try:
         init: dict[str, Any] = await ws.receive_json()
         my_ip = lan.local_ip()
-        if init.get("network"):
+        raw_net = init.get("network")
+        if raw_net:
+            # Strip + length cap before letting ipaddress parse: the network
+            # spec is user input and ipaddress will happily parse a 10 MB
+            # string before failing.
+            raw_net = str(raw_net).strip()
+            if len(raw_net) > MAX_TARGET_LEN:
+                await ws.send_json(ws_error(
+                    ErrorCode.INVALID_TARGET,
+                    f"network spec too long (max {MAX_TARGET_LEN} chars)",
+                ))
+                await ws.close(); return
             try:
-                net = ipaddress.IPv4Network(init["network"], strict=False)
+                net = ipaddress.IPv4Network(raw_net, strict=False)
                 base, prefix = str(net.network_address), net.prefixlen
             except ValueError as exc:
-                await ws.send_json({"type": "error",
-                                    "detail": f"bad network spec: {exc}"})
+                await ws.send_json(ws_error(
+                    ErrorCode.INVALID_TARGET,
+                    f"bad network spec: {exc}",
+                ))
                 await ws.close(); return
         else:
             base, prefix = lan.subnet_info(my_ip)
@@ -202,9 +220,13 @@ async def audit_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("audit_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during network audit",
+            ))
         except Exception:
             pass
     finally:

@@ -23,12 +23,17 @@ WS  /ws/evil-twin
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from lib.errors import ErrorCode, ws_error
+
 from .wifi_scan import scan_networks
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["evil-twin"])
 
@@ -49,9 +54,20 @@ async def evil_twin_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
-        rounds = max(1, min(int(init.get("scans", 3)), 10))
-        interval = max(0.5, min(float(init.get("interval_sec", 2.0)), 30.0))
-        target = (init.get("target_ssid") or "").strip() or None
+        try:
+            rounds = max(1, min(int(init.get("scans", 3)), 10))
+        except (TypeError, ValueError):
+            rounds = 3
+        try:
+            interval = max(0.5, min(float(init.get("interval_sec", 2.0)), 30.0))
+        except (TypeError, ValueError):
+            interval = 2.0
+        target_raw = init.get("target_ssid") or ""
+        if not isinstance(target_raw, str):
+            target_raw = ""
+        # SSIDs are capped at 32 bytes by 802.11 — clamp aggressively to stop
+        # pathological input from being kept around in the observation map.
+        target = (target_raw.strip()[:64]) or None
 
         # First scan also serves as a health check — surface scanner errors
         # before we start the round loop so the UI can show a usable message.
@@ -59,10 +75,14 @@ async def evil_twin_ws(ws: WebSocket) -> None:
         try:
             first = await loop.run_in_executor(None, scan_networks)
         except HTTPException as e:
-            await ws.send_json({"type": "error", "detail": str(e.detail)})
+            await ws.send_json(ws_error(
+                ErrorCode.TOOL_FAILED, str(e.detail),
+            ))
             await ws.close(); return
         if not first.get("interface"):
-            await ws.send_json({"type": "error", "detail": "no WiFi interface"})
+            await ws.send_json(ws_error(
+                ErrorCode.TOOL_MISSING, "no WiFi interface",
+            ))
             await ws.close(); return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -82,7 +102,9 @@ async def evil_twin_ws(ws: WebSocket) -> None:
                     snap = await loop.run_in_executor(None, scan_networks)
                     rows = snap.get("networks", [])
                 except HTTPException as e:
-                    await ws.send_json({"type": "error", "detail": str(e.detail)})
+                    await ws.send_json(ws_error(
+                        ErrorCode.TOOL_FAILED, str(e.detail),
+                    ))
                     rows = []
 
             for r in rows:
@@ -182,9 +204,13 @@ async def evil_twin_ws(ws: WebSocket) -> None:
         })
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("evil_twin_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during evil twin scan",
+            ))
         except Exception:
             pass
     finally:

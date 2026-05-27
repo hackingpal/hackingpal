@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { openWs, type HttpProbeEvent, type HttpProbeFinding } from "../api";
+import { openWs, watchWsLiveness, type HttpProbeEvent, type HttpProbeFinding } from "../api";
 
 type Hit = { path: string; status: number; length: number; location: string };
 
@@ -23,6 +23,7 @@ export default function HttpProbe() {
   const [wordlist, setWordlist] = useState<"small" | "medium">("small");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState<null | "connect" | "idle">(null);
   const [confirmReason, setConfirmReason] = useState<string | null>(null);
 
   const [started, setStarted] = useState<{
@@ -35,20 +36,32 @@ export default function HttpProbe() {
   const [elapsed, setElapsed] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
 
   function start(confirm = false) {
     const u = url.trim();
     if (!u) return;
     setRunning(true);
     setError(null);
+    setTimedOut(null);
     setConfirmReason(null);
     setStarted(null); setFindings([]); setHits([]);
     setProgress({ done: 0, total: 0 }); setElapsed(null);
 
     const ws = openWs("/ws/http-probe");
     wsRef.current = ws;
+    watchRef.current = watchWsLiveness(ws, {
+      connectMs: 5_000,
+      idleMs:    45_000,
+      onTimeout: (phase) => {
+        setTimedOut(phase);
+        setRunning(false);
+        try { ws.close(); } catch { /* ignore */ }
+      },
+    });
     ws.onopen = () => ws.send(JSON.stringify({ url: u, wordlist, confirm }));
     ws.onmessage = (msg) => {
+      watchRef.current?.touch();
       const ev = JSON.parse(msg.data) as HttpProbeEvent;
       if (ev.type === "started") {
         setStarted({
@@ -65,15 +78,15 @@ export default function HttpProbe() {
       } else if (ev.type === "progress") {
         setProgress({ done: ev.done, total: ev.total });
       } else if (ev.type === "done") {
-        setElapsed(ev.elapsed); setRunning(false);
+        setElapsed(ev.elapsed); setRunning(false); watchRef.current?.stop();
       } else if (ev.type === "error") {
         if (ev.need_confirm) setConfirmReason(ev.detail.replace("need_confirm: ", ""));
         else setError(ev.detail);
-        setRunning(false);
+        setRunning(false); watchRef.current?.stop();
       }
     };
-    ws.onerror = () => { setError("WebSocket error"); setRunning(false); };
-    ws.onclose  = () => { setRunning(false); };
+    ws.onerror = () => { setError("WebSocket error"); setRunning(false); watchRef.current?.stop(); };
+    ws.onclose  = () => { setRunning(false); watchRef.current?.stop(); };
   }
 
   function stop() {
@@ -159,14 +172,38 @@ export default function HttpProbe() {
           />
         )}
 
-        {error && (
+        {timedOut && (
+          <div className="border border-amber/40 bg-amber/10 text-amber
+                          rounded px-3 py-2 text-sm font-mono flex items-center gap-3">
+            <span>⏱</span>
+            <div className="flex-1">
+              <div className="font-bold">
+                {timedOut === "connect" ? "Backend not responding" : "Probe stalled"}
+              </div>
+              <div className="text-[11px] text-ink-muted">
+                {timedOut === "connect"
+                  ? "WebSocket failed to open within 5 seconds."
+                  : "No progress for 45 seconds. The probe was stopped."}
+              </div>
+            </div>
+            <button
+              onClick={() => start(false)}
+              className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                         border-amber/40 text-amber hover:bg-amber/10 transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !timedOut && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">
             Error — {error}
           </div>
         )}
 
-        {!started && !error && !confirmReason && !running && <EmptyState />}
+        {!started && !error && !timedOut && !confirmReason && !running && <EmptyState />}
 
         {started && (
           <>

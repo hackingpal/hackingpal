@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import logging
 import re
 import shlex
 import subprocess
@@ -33,9 +34,16 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError, ws_error
 from lib.platform_util import require_unix
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["tcpdump"], dependencies=[Depends(require_local_auth)])
+
+# Interface names: alnum + underscore + dot + colon + hyphen, max 32 chars.
+# Covers en0/wlan0/eth0.1/veth-foo and "any"; rejects anything with shell-meta.
+_IFACE_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,32}$")
 
 _TCPDUMP_HINT = ("tcpdump wraps the libpcap-based tcpdump binary on macOS/Linux. "
                  "Windows would need npcap + windump (separate install) — "
@@ -135,8 +143,13 @@ def install_sudoers() -> dict[str, Any]:
         try:
             r = subprocess.run(["osascript", "-e", script],
                                capture_output=True, text=True, timeout=120)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("tcpdump sudoers install via osascript failed")
+            raise MhpError(
+                "sudoers install failed",
+                code=ErrorCode.INTERNAL,
+                status_code=500,
+            )
         if r.returncode != 0:
             err = (r.stderr or "").strip()
             if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
@@ -169,8 +182,13 @@ def install_sudoers() -> dict[str, Any]:
                 [pkexec, "/bin/sh", "-c", install_cmd],
                 capture_output=True, text=True, timeout=120,
             )
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("tcpdump sudoers install via pkexec failed")
+            raise MhpError(
+                "sudoers install failed",
+                code=ErrorCode.INTERNAL,
+                status_code=500,
+            )
         if r.returncode != 0:
             err = ((r.stdout or "") + (r.stderr or "")).strip()
             # pkexec: 126 = auth failed / dismissed, 127 = no agent
@@ -209,6 +227,13 @@ async def tcpdump_ws(ws: WebSocket) -> None:
         verbose   = bool(init.get("verbose", False))
         resolve   = bool(init.get("resolve", False))
 
+        if not _IFACE_RE.match(iface):
+            await ws.send_json(ws_error(
+                ErrorCode.VALIDATION_ERROR,
+                "invalid interface name",
+            ))
+            await ws.close(); return
+
         count = 0
         if count_raw not in (None, ""):
             try:
@@ -217,11 +242,11 @@ async def tcpdump_ws(ws: WebSocket) -> None:
                 count = 0
 
         if not _is_passwordless():
-            await ws.send_json({
-                "type": "error",
-                "detail": "passwordless sudo for tcpdump is not configured. "
-                          "Use the Install Permission button first.",
-            })
+            await ws.send_json(ws_error(
+                ErrorCode.FORBIDDEN,
+                "passwordless sudo for tcpdump is not configured. "
+                "Use the Install Permission button first.",
+            ))
             await ws.close(); return
 
         flags: list[str] = ["-l"]
@@ -232,8 +257,10 @@ async def tcpdump_ws(ws: WebSocket) -> None:
         # Disallow shell-meta in filter — should be a BPF expression
         if bpf:
             if any(c in bpf for c in ("`", "$", "&", "|", ";", "\n")):
-                await ws.send_json({"type": "error",
-                                    "detail": "filter contains forbidden characters"})
+                await ws.send_json(ws_error(
+                    ErrorCode.VALIDATION_ERROR,
+                    "filter contains forbidden characters",
+                ))
                 await ws.close(); return
             flags += shlex.split(bpf)
 
@@ -247,8 +274,12 @@ async def tcpdump_ws(ws: WebSocket) -> None:
                 *cmd, stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-        except Exception as exc:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+        except Exception:
+            logger.exception("tcpdump subprocess spawn failed")
+            await ws.send_json(ws_error(
+                ErrorCode.TOOL_FAILED,
+                "failed to start tcpdump",
+            ))
             return
 
         captured = 0
@@ -280,9 +311,13 @@ async def tcpdump_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "stopped", "captured": captured})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("tcpdump_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during capture",
+            ))
         except Exception:
             pass
     finally:

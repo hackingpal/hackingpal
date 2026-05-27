@@ -10,13 +10,18 @@ Auth:
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+from lib.errors import ErrorCode, MhpError
 from pydantic import BaseModel, Field
 
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/shodan-censys", tags=["shodan-censys"])
 
@@ -50,7 +55,11 @@ async def query(body: QueryBody) -> dict[str, Any]:
 async def _shodan(q: str, limit: int, page: int) -> dict[str, Any]:
     key = keychain_get_named("shodan_api_key")
     if not key:
-        raise HTTPException(401, "shodan_api_key not configured")
+        raise MhpError(
+            "shodan_api_key not configured",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     async with httpx.AsyncClient(
         timeout=20.0, headers={"User-Agent": UA},
     ) as client:
@@ -59,13 +68,21 @@ async def _shodan(q: str, limit: int, page: int) -> dict[str, Any]:
             params={"key": key, "query": q, "limit": limit, "page": page},
         )
     if r.status_code == 401:
-        raise HTTPException(401, "Shodan rejected the API key")
+        raise MhpError(
+            "Shodan rejected the API key",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     if not r.ok:
         try:
             detail = r.json().get("error", r.text[:200])
         except Exception:
             detail = r.text[:200]
-        raise HTTPException(r.status_code, f"Shodan {r.status_code}: {detail}")
+        raise MhpError(
+            f"Shodan {r.status_code}: {detail}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=r.status_code if 400 <= r.status_code < 600 else 502,
+        )
 
     data = r.json()
     rows: list[dict[str, Any]] = []
@@ -90,7 +107,11 @@ async def _censys(q: str, limit: int, page: int) -> dict[str, Any]:
     api_id = keychain_get_named("censys_api_id")
     secret = keychain_get_named("censys_api_secret")
     if not (api_id and secret):
-        raise HTTPException(401, "censys_api_id + censys_api_secret not configured")
+        raise MhpError(
+            "censys_api_id + censys_api_secret not configured",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
 
     # Censys uses cursor-based pagination, not pages — we'll just fetch the
     # first page (most useful). `limit` maps to per_page.
@@ -103,13 +124,21 @@ async def _censys(q: str, limit: int, page: int) -> dict[str, Any]:
             json={"q": q, "per_page": min(limit, 100)},
         )
     if r.status_code == 401:
-        raise HTTPException(401, "Censys rejected the API id/secret")
+        raise MhpError(
+            "Censys rejected the API id/secret",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     if not r.ok:
         try:
             detail = r.json().get("error", r.text[:200])
         except Exception:
             detail = r.text[:200]
-        raise HTTPException(r.status_code, f"Censys {r.status_code}: {detail}")
+        raise MhpError(
+            f"Censys {r.status_code}: {detail}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=r.status_code if 400 <= r.status_code < 600 else 502,
+        )
 
     data = r.json().get("result", {})
     rows: list[dict[str, Any]] = []

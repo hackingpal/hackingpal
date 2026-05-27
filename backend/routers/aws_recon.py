@@ -10,9 +10,14 @@ error string.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/aws", tags=["aws-recon"])
 
@@ -31,10 +36,12 @@ def _import_boto():
         from botocore.exceptions import ClientError, NoCredentialsError, BotoCoreError
         return boto3, ClientError, NoCredentialsError, BotoCoreError
     except ImportError as e:
-        raise HTTPException(
-            503,
-            f"boto3 is not available in this build ({e}). "
+        raise MhpError(
+            "boto3 is not available in this build. "
             "Run `pip install boto3` if developing locally.",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+            extra={"import_error": str(e)},
         )
 
 
@@ -302,7 +309,12 @@ def recon(services: str = "iam,s3,ec2,lambda,rds") -> dict[str, Any]:
     try:
         ident = boto3.client("sts").get_caller_identity()
     except (NoCredentialsError, ClientError, BotoCoreError) as e:
-        raise HTTPException(401, f"AWS credentials not usable: {e}")
+        logger.info("aws recon credentials unusable: %s", e)
+        raise MhpError(
+            "AWS credentials not usable (run `aws configure` or check env vars)",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
 
     picked = {s.strip() for s in services.split(",") if s.strip()}
     out: dict[str, Any] = {

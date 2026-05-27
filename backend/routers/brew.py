@@ -12,6 +12,7 @@ Read-only ops (search, list installed) don't escalate.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import sys
 from typing import Any
@@ -19,6 +20,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, ws_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["packages"], dependencies=[Depends(require_local_auth)])
 
@@ -250,7 +254,10 @@ async def brew_exec(ws: WebSocket) -> None:
     try:
         mgr, path = _detect_manager()
         if not path:
-            await ws.send_json({"type": "error", "detail": "no package manager available"})
+            await ws.send_json(ws_error(
+                ErrorCode.TOOL_MISSING,
+                "no package manager available",
+            ))
             await ws.close(); return
 
         init = await ws.receive_json()
@@ -258,10 +265,16 @@ async def brew_exec(ws: WebSocket) -> None:
         name   = str(init.get("name", "")).strip()
         cask   = bool(init.get("cask", False))
         if action not in ("install", "uninstall", "upgrade"):
-            await ws.send_json({"type": "error", "detail": "bad action"})
+            await ws.send_json(ws_error(
+                ErrorCode.BAD_REQUEST,
+                "action must be install, uninstall, or upgrade",
+            ))
             await ws.close(); return
         if not name or len(name) > 64 or any(c in name for c in " ;|&`$\n"):
-            await ws.send_json({"type": "error", "detail": "bad package name"})
+            await ws.send_json(ws_error(
+                ErrorCode.BAD_REQUEST,
+                "package name is invalid",
+            ))
             await ws.close(); return
 
         if mgr == "brew":
@@ -306,9 +319,13 @@ async def brew_exec(ws: WebSocket) -> None:
         await ws.send_json({"type": "done", "rc": rc, "stopped": stop.is_set()})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("brew_exec unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during package operation",
+            ))
         except Exception:
             pass
     finally:

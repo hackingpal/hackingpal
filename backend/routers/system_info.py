@@ -7,6 +7,7 @@ Used by the renderer to hide platform-locked tools from the sidebar.
 """
 from __future__ import annotations
 
+import logging
 import platform
 import socket
 import sys
@@ -14,12 +15,21 @@ from typing import Any
 
 from fastapi import APIRouter
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["system"])
 
 
 @router.get("/system/info")
 def info() -> dict[str, Any]:
     plat = sys.platform   # "darwin" | "linux" | "win32"
+    try:
+        hostname = socket.gethostname()
+    except Exception:
+        # Hostname lookup can fail on weird container setups — fall back to
+        # empty rather than leaking the raw exception to the client.
+        logger.exception("system_info hostname lookup failed")
+        hostname = ""
     return {
         "platform": plat,
         "is_mac":     plat == "darwin",
@@ -28,6 +38,6 @@ def info() -> dict[str, Any]:
         "arch":           platform.machine(),
         "release":        platform.release(),
         "system":         platform.system(),
-        "hostname":       socket.gethostname(),
+        "hostname":       hostname,
         "python_version": sys.version.split()[0],
     }

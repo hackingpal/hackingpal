@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
+import logging
 import os
 import re
 import sys
@@ -28,7 +29,20 @@ from typing import Any, Callable, Iterator
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from lib.errors import ErrorCode, ws_error
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["hash"])
+
+# Hashes/plaintexts/wordlist items are bounded so a runaway client can't push
+# multi-megabyte strings through pydantic. Hashes max out at ~256 chars even
+# for the largest schemes (argon2 ~96, sha512 hex = 128).
+MAX_HASH_LEN = 512
+MAX_PLAINTEXT_LEN = 4096
+MAX_WORDLIST_ITEM_LEN = 1024
+MAX_WORDLIST_ITEMS = 200_000
+MAX_ALGORITHM_LEN = 64
 
 
 # ── External wordlists ────────────────────────────────────────────────────────
@@ -387,21 +401,21 @@ COMMON_PASSWORDS = list(dict.fromkeys(COMMON_PASSWORDS))
 # ── REST endpoints ────────────────────────────────────────────────────────────
 
 class IdentifyRequest(BaseModel):
-    hash: str
+    hash: str = Field(..., max_length=MAX_HASH_LEN)
 
 
 class ComputeRequest(BaseModel):
-    plaintext: str
-    algorithm: str
+    plaintext: str = Field(..., max_length=MAX_PLAINTEXT_LEN)
+    algorithm: str = Field(..., max_length=MAX_ALGORITHM_LEN)
 
 
 class CrackRequest(BaseModel):
-    hash: str
-    algorithm: str = "auto"   # "auto" → try every identified candidate
-    wordlist: list[str] = Field(default_factory=list)
+    hash: str = Field(..., max_length=MAX_HASH_LEN)
+    algorithm: str = Field("auto", max_length=MAX_ALGORITHM_LEN)
+    wordlist: list[str] = Field(default_factory=list, max_length=MAX_WORDLIST_ITEMS)
     use_builtin: bool = True
     use_rockyou: bool = False
-    max_candidates: int = 100000
+    max_candidates: int = Field(100000, ge=1, le=200_000_000)
 
 
 @router.get("/hash/algorithms")
@@ -558,14 +572,32 @@ async def hash_crack_ws(ws: WebSocket) -> None:
     try:
         init = await ws.receive_json()
         h = str(init.get("hash", "")).strip()
-        algorithm = str(init.get("algorithm", "auto")).lower()
+        algorithm = str(init.get("algorithm", "auto")).lower()[:MAX_ALGORITHM_LEN]
         use_builtin = bool(init.get("use_builtin", True))
         use_rockyou = bool(init.get("use_rockyou", False))
-        wordlist = list(init.get("wordlist", []))
-        max_candidates = int(init.get("max_candidates", 50_000_000))
+        wordlist_raw = init.get("wordlist", []) or []
+        if not isinstance(wordlist_raw, list):
+            wordlist_raw = []
+        # Cap wordlist size + per-item length so a hostile client can't OOM us.
+        wordlist = [
+            str(w)[:MAX_WORDLIST_ITEM_LEN]
+            for w in wordlist_raw[:MAX_WORDLIST_ITEMS]
+            if isinstance(w, (str, int, float))
+        ]
+        try:
+            max_candidates = int(init.get("max_candidates", 50_000_000))
+        except (TypeError, ValueError):
+            max_candidates = 50_000_000
+        max_candidates = max(1, min(max_candidates, 200_000_000))
 
         if not h:
-            await ws.send_json({"type": "error", "detail": "hash is required"})
+            await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, "hash is required"))
+            await ws.close(); return
+        if len(h) > MAX_HASH_LEN:
+            await ws.send_json(ws_error(
+                ErrorCode.PAYLOAD_TOO_LARGE,
+                f"hash is too long (max {MAX_HASH_LEN} chars)",
+            ))
             await ws.close(); return
 
         try:
@@ -576,7 +608,7 @@ async def hash_crack_ws(ws: WebSocket) -> None:
                     raise HTTPException(status_code=400,
                                         detail=f"rockyou.txt.gz not found at {ROCKYOU_PATH}")
         except HTTPException as exc:
-            await ws.send_json({"type": "error", "detail": str(exc.detail)})
+            await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, str(exc.detail)))
             await ws.close(); return
 
         small_candidates: list[str] = []
@@ -679,8 +711,12 @@ async def hash_crack_ws(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         stop.set()
     except Exception as exc:
+        logger.exception("hash crack ws failed")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                f"Hash crack failed ({type(exc).__name__})",
+            ))
         except Exception:
             pass
     finally:

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchTlsAudit, type TlsReport } from "../api";
+import { fetchTlsAudit, isApiError, type TlsReport } from "../api";
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -20,6 +20,7 @@ export default function TlsAudit() {
   const [port, setPort] = useState(443);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
   const [report, setReport] = useState<TlsReport | null>(null);
 
   async function run() {
@@ -27,11 +28,13 @@ export default function TlsAudit() {
     if (!h) return;
     setBusy(true);
     setError(null);
+    setTimedOut(false);
     setReport(null);
     try {
       setReport(await fetchTlsAudit(h, port));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setTimedOut(true);
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -92,14 +95,34 @@ export default function TlsAudit() {
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-4">
-        {error && (
+        {timedOut && (
+          <div className="border border-amber/40 bg-amber/10 text-amber
+                          rounded px-3 py-2 text-sm font-mono flex items-center gap-3">
+            <span>⏱</span>
+            <div className="flex-1">
+              <div className="font-bold">TLS audit timed out</div>
+              <div className="text-[11px] text-ink-muted">
+                The server didn't respond in time. Retry, or check connectivity.
+              </div>
+            </div>
+            <button
+              onClick={run}
+              className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                         border-amber/40 text-amber hover:bg-amber/10 transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !timedOut && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">
             Error — {error}
           </div>
         )}
 
-        {!report && !error && !busy && <EmptyState />}
+        {!report && !error && !timedOut && !busy && <EmptyState />}
 
         {report && (
           <>

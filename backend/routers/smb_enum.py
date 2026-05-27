@@ -13,12 +13,17 @@ defaults to `dc_host`.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from lib.ad_auth import CredsModel, open_smb
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_hostname
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/smb", tags=["smb-enum"])
 
@@ -44,11 +49,18 @@ def _add(out: list[dict[str, Any]], severity: str, title: str,
 
 @router.post("/enum")
 def enum(body: EnumBody) -> dict[str, Any]:
+    body.creds.dc_host = validate_hostname(body.creds.dc_host, field="dc_host")
     target = body.target or body.creds.dc_host
+    target = validate_hostname(target, field="target")
     try:
         conn = open_smb(body.creds, target=target)
-    except Exception as e:
-        raise HTTPException(401, f"SMB login failed: {e}")
+    except Exception:
+        logger.exception("smb_enum SMB login failed")
+        raise MhpError(
+            "SMB login failed",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        ) from None
 
     findings: list[dict[str, Any]] = []
     try:

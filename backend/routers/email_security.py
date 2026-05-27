@@ -8,7 +8,7 @@ configured — only that no common selector worked.
 """
 from __future__ import annotations
 
-import ipaddress
+import logging
 import re
 import secrets
 import socket
@@ -16,11 +16,15 @@ import subprocess
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from lib import hids_notify
 from lib.auth import require_local_auth
-from lib.target_policy import check_target
+from lib.errors import ErrorCode, MhpError
+from lib.target_policy import require_target
+from lib.validators import validate_domain
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["email-security"], dependencies=[Depends(require_local_auth)])
 
@@ -150,26 +154,10 @@ def _find_dkim(domain: str) -> dict[str, Any]:
 
 @router.get("/email/audit/{domain}")
 async def email_audit(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
-    domain = domain.strip().lower().rstrip(".")
-    if not domain or "/" in domain or " " in domain:
-        raise HTTPException(status_code=400, detail="invalid domain")
-
-    # Reject IP literals — email security is a domain concept.
-    try:
-        ipaddress.ip_address(domain)
-        raise HTTPException(status_code=400,
-                            detail="email audit takes a domain, not an IP")
-    except ValueError:
-        pass
-
-    verdict, reason = check_target(domain)
-    if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
-    if verdict == "warn" and not confirm:
-        raise HTTPException(
-            status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": domain},
-        )
+    # `validate_domain` strips whitespace, enforces length, rejects IP
+    # literals (no dots-only labels), and requires at least one dot.
+    domain = validate_domain(domain, field="domain")
+    require_target(domain, confirm=confirm)
 
     # Resolve check — bail early on NXDOMAIN so we don't emit spurious findings.
     try:

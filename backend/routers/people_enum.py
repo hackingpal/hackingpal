@@ -24,10 +24,16 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from lib.validators import validate_domain
+
+import logging
+
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/people", tags=["people-enum"])
 
@@ -58,9 +64,9 @@ def status() -> dict[str, Any]:
 
 @router.post("/enum")
 async def enum(body: EnumBody) -> dict[str, Any]:
-    target = body.target.strip().lower().lstrip(".")
-    if "." not in target:
-        raise HTTPException(400, "target must be a domain (e.g. example.com)")
+    # `validate_domain` strips whitespace, enforces length (RFC 1035 cap),
+    # rejects IP literals, and requires at least one dot.
+    target = validate_domain(body.target, field="target")
 
     findings: dict[str, list[str]] = {
         "duckduckgo": [], "crtsh": [], "hackertarget": [], "hunter": [],

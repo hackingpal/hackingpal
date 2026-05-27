@@ -11,12 +11,16 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from lib import preset_engine
+from lib.errors import ErrorCode, ws_error
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["presets"])
 
@@ -103,16 +107,16 @@ async def preset_run_ws(ws: WebSocket) -> None:
         authorized = bool(init.get("authorized", False))
 
         if not preset_id:
-            await ws.send_json({"type": "error", "detail": "preset id required"})
+            await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, "preset id required"))
             return
         if not target:
-            await ws.send_json({"type": "error", "detail": "target required"})
+            await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, "target required"))
             return
         if not authorized:
-            await ws.send_json({
-                "type": "error",
-                "detail": "authorization checkbox required: pass `authorized: true`",
-            })
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "authorization checkbox required: pass `authorized: true`",
+            ))
             return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -128,9 +132,12 @@ async def preset_run_ws(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         stop.set()
     except Exception as exc:
+        logger.exception("preset run failed")
         try:
-            await ws.send_json({"type": "error",
-                                "detail": f"{type(exc).__name__}: {exc}"[:300]})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                f"Preset run failed ({type(exc).__name__})",
+            ))
         except Exception:
             pass
     finally:

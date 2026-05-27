@@ -5,6 +5,7 @@ stays encrypted at rest under the user's login keychain.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 
@@ -12,6 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_local_auth)])
 
@@ -109,8 +113,13 @@ def api_key_set(body: ApiKeyBody) -> ApiKeyStatus:
         raise HTTPException(400, "Key must start with 'sk-ant-'")
     try:
         keychain_set(key)
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
+    except RuntimeError:
+        logger.exception("keychain_set failed for anthropic_api_key")
+        raise MhpError(
+            "keychain write failed",
+            code=ErrorCode.INTERNAL,
+            status_code=500,
+        )
     return ApiKeyStatus(present=True, last4=key[-4:])
 
 
@@ -151,8 +160,13 @@ def set_named_key(name: str, body: NamedKeyBody) -> NamedKeyStatus:
         raise HTTPException(404, f"Unknown key name: {name}")
     try:
         keychain_set_named(name, body.value.strip())
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
+    except RuntimeError:
+        logger.exception("keychain_set_named failed name=%s", name)
+        raise MhpError(
+            "keychain write failed",
+            code=ErrorCode.INTERNAL,
+            status_code=500,
+        )
     return NamedKeyStatus(name=name, label=NAMED_KEYS[name],
                           present=True, last4=body.value.strip()[-4:])
 

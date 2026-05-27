@@ -23,6 +23,7 @@ which is what the evil-twin RSSI-gap heuristic actually depends on.
 """
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
@@ -32,7 +33,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/wifi-scan", tags=["wifi-scan"], dependencies=[Depends(require_local_auth)])
 
@@ -178,12 +182,18 @@ def _scan_linux() -> dict[str, Any]:
                  "device", "wifi", "list", "--rescan", "yes"],
                 capture_output=True, text=True, timeout=15,
             )
-        except Exception as e:
-            raise HTTPException(500, f"nmcli scan failed: {e}")
+        except subprocess.TimeoutExpired:
+            raise MhpError("nmcli scan timed out",
+                           code=ErrorCode.TIMEOUT, status_code=504) from None
+        except Exception:
+            logger.exception("nmcli scan failed")
+            raise MhpError("nmcli scan failed",
+                           code=ErrorCode.TOOL_FAILED, status_code=500) from None
         if r.returncode != 0:
-            raise HTTPException(500,
-                f"nmcli scan failed (rc={r.returncode}): "
-                f"{(r.stderr or r.stdout or '').strip()}")
+            logger.warning("nmcli scan rc=%s stderr=%s",
+                           r.returncode, (r.stderr or "")[:200])
+            raise MhpError(f"nmcli scan failed (rc={r.returncode})",
+                           code=ErrorCode.TOOL_FAILED, status_code=500)
 
         for line in r.stdout.splitlines():
             parts = _nmcli_split(line)
@@ -249,12 +259,19 @@ def _scan_iw(iface: str) -> tuple[list[dict[str, Any]], str | None, str | None]:
     """Run `iw dev <iface> scan` (needs CAP_NET_ADMIN — typically root). Parse
     the verbose output. Used only when nmcli isn't installed."""
     iw = shutil.which("iw") or "iw"
-    r = subprocess.run([iw, "dev", iface, "scan"],
-                       capture_output=True, text=True, timeout=20)
+    try:
+        r = subprocess.run([iw, "dev", iface, "scan"],
+                           capture_output=True, text=True, timeout=20)
+    except subprocess.TimeoutExpired:
+        raise MhpError("iw scan timed out",
+                       code=ErrorCode.TIMEOUT, status_code=504) from None
     if r.returncode != 0:
-        raise HTTPException(500,
-            f"iw scan failed (rc={r.returncode}): "
-            f"{(r.stderr or '').strip()} — `iw scan` usually requires root.")
+        logger.warning("iw scan rc=%s stderr=%s",
+                       r.returncode, (r.stderr or "")[:200])
+        raise MhpError(
+            f"iw scan failed (rc={r.returncode}) — `iw scan` usually requires root.",
+            code=ErrorCode.TOOL_FAILED, status_code=500,
+        )
 
     rows: list[dict[str, Any]] = []
     cur: dict[str, Any] = {}

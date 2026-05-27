@@ -13,16 +13,26 @@ Two endpoints:
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
+
+from lib.errors import ErrorCode, MhpError
 
 from .settings import keychain_get_named
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/breach", tags=["breach"])
+
+# Reasonable cap so a runaway password value can't blow through hashing
+# memory. Anything past 1024 chars is almost certainly junk.
+_MAX_PASSWORD_LEN = 1024
+_MAX_EMAIL_LEN = 254  # RFC 5321 max local+domain
 
 HIBP_BASE = "https://haveibeenpwned.com/api/v3"
 PWND_PWD_BASE = "https://api.pwnedpasswords.com"
@@ -30,7 +40,7 @@ UA = "MyHackingPal/0.1 breach-lookup"
 
 
 class PasswordCheck(BaseModel):
-    password: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=1, max_length=_MAX_PASSWORD_LEN)
 
 
 @router.post("/password")
@@ -48,7 +58,12 @@ async def password_check(body: PasswordCheck) -> dict[str, Any]:
             r = await client.get(f"{PWND_PWD_BASE}/range/{prefix}")
         r.raise_for_status()
     except httpx.HTTPError as e:
-        raise HTTPException(502, f"Pwned Passwords request failed: {e}")
+        logger.warning("pwned passwords request failed: %s", e)
+        raise MhpError(
+            "Pwned Passwords request failed",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        ) from None
 
     count = 0
     for line in r.text.splitlines():
@@ -72,12 +87,31 @@ async def password_check(body: PasswordCheck) -> dict[str, Any]:
 
 @router.get("/email/{email}")
 async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
+    # Strip + cap before passing into the HIBP URL. We don't run a full
+    # RFC 5322 validator here because HIBP itself is the authoritative
+    # validator — but rejecting obviously-malformed input early keeps
+    # noisy 4xx traffic off their API.
+    email = (email or "").strip()
+    if not email or "@" not in email:
+        raise MhpError(
+            "email must contain an '@'",
+            code=ErrorCode.VALIDATION_ERROR,
+            status_code=400,
+        )
+    if len(email) > _MAX_EMAIL_LEN:
+        raise MhpError(
+            f"email too long (max {_MAX_EMAIL_LEN} chars)",
+            code=ErrorCode.VALIDATION_ERROR,
+            status_code=400,
+        )
+
     key = keychain_get_named("hibp_api_key")
     if not key:
-        raise HTTPException(
-            401,
+        raise MhpError(
             "HIBP API key not set. Add one via "
             "`POST /settings/keys/hibp_api_key` (paid, $3.95/month).",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
         )
     headers = {
         "hibp-api-key": key,
@@ -89,18 +123,36 @@ async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
             r = await client.get(url)
     except httpx.HTTPError as e:
-        raise HTTPException(502, f"HIBP request failed: {e}")
+        logger.warning("HIBP request failed: %s", e)
+        raise MhpError(
+            "HIBP request failed",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        ) from None
 
     # HIBP returns 404 when the account isn't in any breach (intentional design)
     if r.status_code == 404:
         return {"email": email, "breaches": [], "count": 0}
     if r.status_code == 401:
-        raise HTTPException(401, "HIBP rejected the API key.")
+        raise MhpError(
+            "HIBP rejected the API key.",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     if r.status_code == 429:
         retry = r.headers.get("retry-after", "")
-        raise HTTPException(429, f"HIBP rate-limited; retry after {retry}s")
+        raise MhpError(
+            f"HIBP rate-limited; retry after {retry}s",
+            code=ErrorCode.RATE_LIMITED,
+            status_code=429,
+            extra={"retry_after": retry},
+        )
     if not r.ok:
-        raise HTTPException(r.status_code, f"HIBP returned {r.status_code}")
+        raise MhpError(
+            f"HIBP returned {r.status_code}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=r.status_code,
+        )
 
     data = r.json()
     return {"email": email, "breaches": data, "count": len(data)}

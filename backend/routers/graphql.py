@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import ssl
 import time
 from typing import Any
@@ -18,7 +19,11 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, Query
 
 from lib import hids_notify
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import validate_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["graphql"])
 
@@ -94,29 +99,43 @@ async def graphql_introspect(
     url: str = Query(...),
     confirm: bool = Query(default=False),
 ) -> dict[str, Any]:
-    url = url.strip()
-    if not url:
-        raise HTTPException(status_code=400, detail="url is required")
-    u = urlparse(url if "://" in url else "https://" + url)
+    raw = url.strip()
+    if raw and "://" not in raw:
+        raw = "https://" + raw
+    url = validate_url(raw, field="url")
+    u = urlparse(url)
     host = u.hostname or ""
     if not host:
-        raise HTTPException(status_code=400, detail="could not parse host")
+        raise MhpError("could not parse host", code=ErrorCode.INVALID_URL)
 
     verdict, reason = check_target(host)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": host},
+        )
     if verdict == "warn" and not confirm:
-        raise HTTPException(
+        raise MhpError(
+            reason,
+            code=ErrorCode.NEED_CONFIRM,
             status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": host},
+            extra={"need_confirm": True, "target": host},
         )
 
     body = json.dumps({"query": INTROSPECTION_QUERY}).encode("utf-8")
     t0 = time.monotonic()
     try:
         status, headers, data, host_used = await asyncio.to_thread(_post, url, body)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"fetch failed: {exc}")
+    except Exception:
+        logger.exception("graphql introspect fetch failed host=%s", host)
+        raise MhpError(
+            "GraphQL endpoint fetch failed",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+            extra={"target": host},
+        )
 
     elapsed = round(time.monotonic() - t0, 2)
     try:

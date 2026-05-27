@@ -7,11 +7,16 @@ service won't take down the rest.
 """
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gcp", tags=["gcp-recon"])
 
@@ -34,10 +39,12 @@ def _import_gcp():
         from google.auth.exceptions import DefaultCredentialsError
         return gauth_default, DefaultCredentialsError
     except ImportError as e:
-        raise HTTPException(
-            503,
-            f"google-auth not available ({e}). pip install google-cloud-resource-manager "
+        raise MhpError(
+            "google-auth not available. pip install google-cloud-resource-manager "
             "google-cloud-storage google-cloud-compute",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+            extra={"import_error": str(e)},
         )
 
 
@@ -57,7 +64,8 @@ def status() -> dict[str, Any]:
     except DefaultCredentialsError as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        logger.exception("gcp status: unexpected error")
+        return {"ok": False, "error": f"{type(e).__name__}"}
 
 
 def _add(out: list[dict[str, Any]], severity: str, service: str,
@@ -240,17 +248,30 @@ def recon(project: str | None = None,
     try:
         cred, default_project = gauth_default()
     except DefaultCredentialsError as e:
-        raise HTTPException(401, f"no GCP credentials: {e}")
+        logger.info("gcp recon: no credentials: %s", e)
+        raise MhpError(
+            "No GCP credentials (run `gcloud auth application-default login`)",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
 
     target_project = project or default_project
     if not target_project:
         try:
             projs = _list_projects(cred)
-        except Exception as e:
-            raise HTTPException(401,
-                f"no default project; could not list projects either: {e}")
+        except Exception:
+            logger.exception("gcp recon: could not list projects")
+            raise MhpError(
+                "No default project; could not list projects either",
+                code=ErrorCode.UNAUTHORIZED,
+                status_code=401,
+            )
         if not projs:
-            raise HTTPException(401, "no projects visible to this credential")
+            raise MhpError(
+                "No projects visible to this credential",
+                code=ErrorCode.UNAUTHORIZED,
+                status_code=401,
+            )
         target_project = projs[0]["id"]
     else:
         try:

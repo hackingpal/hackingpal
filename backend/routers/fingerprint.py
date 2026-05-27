@@ -22,6 +22,7 @@ Response shape:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import socket
 import ssl
@@ -29,10 +30,14 @@ import struct
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import validate_port, validate_target
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["fingerprint"])
 
@@ -343,11 +348,16 @@ def _fingerprint_one(host: str, port: int, timeout: float = 3.0) -> dict[str, An
 
 @router.get("/fingerprint/{host}/{port}")
 async def fingerprint_one(host: str, port: int) -> dict[str, Any]:
-    if not (1 <= port <= 65535):
-        raise HTTPException(status_code=400, detail="port out of range")
+    host = validate_target(host, field="host")
+    port = validate_port(port)
     verdict, reason = check_target(host)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": host},
+        )
     result = await asyncio.to_thread(_fingerprint_one, host, port)
     result["policy"] = {"verdict": verdict, "reason": reason}
     return result
@@ -355,30 +365,33 @@ async def fingerprint_one(host: str, port: int) -> dict[str, Any]:
 
 class BulkRequest(BaseModel):
     host: str
-    ports: list[int]
+    ports: list[int] = Field(..., max_length=100)
 
 
 @router.post("/fingerprint/bulk")
 async def fingerprint_bulk(req: BulkRequest) -> dict[str, Any]:
-    if not req.host.strip():
-        raise HTTPException(status_code=400, detail="empty host")
+    host = validate_target(req.host, field="host")
     if len(req.ports) == 0:
-        raise HTTPException(status_code=400, detail="ports empty")
-    if len(req.ports) > 100:
-        raise HTTPException(status_code=400, detail="max 100 ports per request")
-    verdict, reason = check_target(req.host)
+        raise MhpError("ports is required", code=ErrorCode.VALIDATION_ERROR)
+    ports = [validate_port(p) for p in req.ports]
+    verdict, reason = check_target(host)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": host},
+        )
 
     sem = asyncio.Semaphore(16)
 
     async def run_one(p: int) -> dict[str, Any]:
         async with sem:
-            return await asyncio.to_thread(_fingerprint_one, req.host, p)
+            return await asyncio.to_thread(_fingerprint_one, host, p)
 
-    results = await asyncio.gather(*(run_one(p) for p in req.ports))
+    results = await asyncio.gather(*(run_one(p) for p in ports))
     return {
-        "host": req.host,
+        "host": host,
         "results": results,
         "policy": {"verdict": verdict, "reason": reason},
     }

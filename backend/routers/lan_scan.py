@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import logging
 import socket
 import time
 from typing import Any
@@ -30,8 +31,38 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify, lan
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import MAX_TARGET_LEN
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["lan-scan"])
+
+
+def _validate_network_spec(value: str) -> tuple[str, int]:
+    """Validate a CIDR network spec. Returns (base, prefix).
+
+    LAN scanning takes IPv4 CIDR. We accept any host-bit form (strict=False)
+    because users often paste "192.168.1.10/24" rather than the network
+    address. Keeps the validation local rather than reaching for the generic
+    target validator — CIDR isn't a hostname.
+    """
+    s = (value or "").strip()
+    if not s:
+        raise MhpError("network is required", code=ErrorCode.INVALID_RANGE)
+    if len(s) > MAX_TARGET_LEN:
+        raise MhpError(
+            f"network is too long (max {MAX_TARGET_LEN} chars)",
+            code=ErrorCode.INVALID_RANGE,
+        )
+    try:
+        net = ipaddress.IPv4Network(s, strict=False)
+    except ValueError:
+        raise MhpError(
+            "network is not a valid IPv4 CIDR (e.g. 192.168.1.0/24)",
+            code=ErrorCode.INVALID_RANGE,
+        ) from None
+    return str(net.network_address), net.prefixlen
 
 
 @router.get("/lan/info")
@@ -39,8 +70,13 @@ def lan_info() -> dict[str, Any]:
     try:
         ip = lan.local_ip()
         base, prefix = lan.subnet_info(ip)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    except Exception:
+        logger.exception("lan_info subnet detection failed")
+        raise MhpError(
+            "could not determine local subnet",
+            code=ErrorCode.INTERNAL,
+            status_code=500,
+        ) from None
     net = ipaddress.IPv4Network(f"{base}/{prefix}", strict=False)
     return {
         "local_ip":      ip,
@@ -75,11 +111,9 @@ async def lan_scan_ws(ws: WebSocket) -> None:
 
         if init.get("network"):
             try:
-                net = ipaddress.IPv4Network(init["network"], strict=False)
-                base, prefix = str(net.network_address), net.prefixlen
-            except ValueError as exc:
-                await ws.send_json({"type": "error",
-                                    "detail": f"bad network spec: {exc}"})
+                base, prefix = _validate_network_spec(str(init["network"]))
+            except MhpError as exc:
+                await ws.send_json(ws_error(exc.code, exc.message))
                 await ws.close(); return
         else:
             base, prefix = lan.subnet_info(my_ip)
@@ -175,9 +209,13 @@ async def lan_scan_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("lan_scan_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during LAN scan",
+            ))
         except Exception:
             pass
     finally:

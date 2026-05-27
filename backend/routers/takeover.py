@@ -28,6 +28,7 @@ Verdicts per host:
 from __future__ import annotations
 
 import asyncio
+import logging
 import socket
 import ssl
 import subprocess
@@ -38,7 +39,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 
 from lib import hids_notify
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError, ws_error
 from lib.target_policy import check_target
+from lib.validators import validate_hostname
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["takeover"], dependencies=[Depends(require_local_auth)])
 
@@ -189,9 +194,7 @@ def _check_host(fqdn: str) -> dict[str, Any]:
 
 @router.get("/takeover/check/{fqdn}")
 async def takeover_check(fqdn: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
-    fqdn = fqdn.strip().lower().rstrip(".")
-    if not fqdn or "/" in fqdn or " " in fqdn:
-        raise HTTPException(status_code=400, detail="invalid fqdn")
+    fqdn = validate_hostname(fqdn, field="fqdn", allow_ip=False)
     verdict, reason = check_target(fqdn)
     if verdict == "deny":
         raise HTTPException(status_code=403, detail=f"target denied: {reason}")
@@ -240,22 +243,39 @@ async def takeover_ws(ws: WebSocket) -> None:
         confirm = bool(init.get("confirm", False))
 
         if not isinstance(subs, list) or not subs:
-            await ws.send_json({"type": "error", "detail": "subdomains list is required"})
+            await ws.send_json(ws_error(
+                ErrorCode.VALIDATION_ERROR,
+                "subdomains list is required",
+            ))
             await ws.close(); return
         if len(subs) > 500:
-            await ws.send_json({"type": "error", "detail": "max 500 subdomains per scan"})
+            await ws.send_json(ws_error(
+                ErrorCode.PAYLOAD_TOO_LARGE,
+                "max 500 subdomains per scan",
+            ))
             await ws.close(); return
 
         # Policy check on the first sub's apex domain — assume all share an apex
-        sample = str(subs[0]).strip().lower()
+        try:
+            sample = validate_hostname(str(subs[0]), field="subdomains[0]", allow_ip=False)
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
+            await ws.close(); return
         verdict, reason = check_target(sample)
         if verdict == "deny":
-            await ws.send_json({"type": "error", "detail": f"target denied: {reason}"})
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"target denied: {reason}",
+                target=sample,
+            ))
             await ws.close(); return
         if verdict == "warn" and not confirm:
-            await ws.send_json({"type": "error",
-                                "detail": f"need_confirm: {reason}",
-                                "need_confirm": True})
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                reason,
+                target=sample,
+                need_confirm=True,
+            ))
             await ws.close(); return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -311,9 +331,13 @@ async def takeover_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("takeover_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during takeover scan",
+            ))
         except Exception:
             pass
     finally:

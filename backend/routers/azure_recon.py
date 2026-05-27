@@ -11,9 +11,14 @@ prevent Network from running.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/azure", tags=["azure-recon"])
 
@@ -26,11 +31,13 @@ def _import_az():
         )
         return DefaultAzureCredential, ClientAuthenticationError, HttpResponseError
     except ImportError as e:
-        raise HTTPException(
-            503,
-            f"azure-identity not available ({e}). pip install azure-identity "
+        raise MhpError(
+            "azure-identity not available. pip install azure-identity "
             "azure-mgmt-resource azure-mgmt-storage azure-mgmt-compute "
             "azure-mgmt-network azure-mgmt-keyvault",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+            extra={"import_error": str(e)},
         )
 
 
@@ -40,7 +47,12 @@ def status() -> dict[str, Any]:
     try:
         from azure.mgmt.resource.subscriptions import SubscriptionClient
     except ImportError as e:
-        raise HTTPException(503, f"azure-mgmt-resource-subscriptions missing ({e})")
+        raise MhpError(
+            "azure-mgmt-resource-subscriptions missing",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+            extra={"import_error": str(e)},
+        )
     cred = DefaultAzureCredential()
     try:
         client = SubscriptionClient(cred)
@@ -51,7 +63,8 @@ def status() -> dict[str, Any]:
     except (AuthErr, HttpErr) as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        logger.exception("azure status: unexpected error")
+        return {"ok": False, "error": f"{type(e).__name__}"}
 
 
 def _add(out: list[dict[str, Any]], severity: str, service: str,
@@ -190,10 +203,19 @@ def recon(subscription_id: str | None = None,
         sub_client = SubscriptionClient(cred)
         subs = [{"id": s.subscription_id, "name": s.display_name}
                 for s in sub_client.subscriptions.list()]
-    except Exception as e:
-        raise HTTPException(401, f"could not list subscriptions: {e}")
+    except Exception:
+        logger.exception("azure recon: could not list subscriptions")
+        raise MhpError(
+            "Could not list Azure subscriptions (run `az login` first)",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     if not subs:
-        raise HTTPException(401, "no subscriptions visible — run `az login` first")
+        raise MhpError(
+            "no subscriptions visible — run `az login` first",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
     sub_id = subscription_id or subs[0]["id"]
     sub_name = next((s["name"] for s in subs if s["id"] == sub_id), sub_id)
 

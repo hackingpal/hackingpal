@@ -22,7 +22,7 @@ export default function Ssrf() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [doneText, setDoneText] = useState("");
 
-  const { status, error, start, stop } = useAttackWS<SsrfEvent>(
+  const { status, error, timedOut, start, stop } = useAttackWS<SsrfEvent>(
     "/ws/ssrf",
     (ev) => {
       if (ev.type === "started") {
@@ -86,7 +86,12 @@ export default function Ssrf() {
               Stop
             </button>
           )}
-          {error && <span className="text-[11px] text-danger">⚠ {error}</span>}
+          {timedOut && (
+            <span className="text-[11px] text-amber">
+              ⏱ {timedOut === "connect" ? "Backend not responding" : "Scan stalled"} — retry
+            </span>
+          )}
+          {error && !timedOut && <span className="text-[11px] text-danger">⚠ {error}</span>}
         </div>
       </div>
 

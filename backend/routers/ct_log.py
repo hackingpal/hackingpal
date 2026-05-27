@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -34,7 +35,11 @@ from urllib.error import HTTPError, URLError
 from fastapi import APIRouter, HTTPException, Query
 
 from lib import hids_notify
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import validate_domain
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ct-log"])
 
@@ -99,17 +104,22 @@ def _parse_dt(s: str) -> datetime | None:
 
 @router.get("/ct/search/{domain}")
 async def ct_search(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
-    domain = domain.strip().lower().rstrip(".")
-    if not domain or "/" in domain or " " in domain:
-        raise HTTPException(status_code=400, detail="invalid domain")
+    domain = validate_domain(domain)
 
     verdict, reason = check_target(domain)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": domain},
+        )
     if verdict == "warn" and not confirm:
-        raise HTTPException(
+        raise MhpError(
+            reason,
+            code=ErrorCode.NEED_CONFIRM,
             status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": domain},
+            extra={"need_confirm": True, "target": domain},
         )
 
     t0 = time.monotonic()
@@ -117,14 +127,30 @@ async def ct_search(domain: str, confirm: bool = Query(default=False)) -> dict[s
     try:
         records, throttled = await asyncio.to_thread(_fetch_crtsh, domain)
     except HTTPError as exc:
-        raise HTTPException(status_code=502,
-                            detail=f"crt.sh HTTP {exc.code}: {exc.reason}")
+        raise MhpError(
+            f"crt.sh HTTP {exc.code}: {exc.reason}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        )
     except URLError as exc:
-        raise HTTPException(status_code=502, detail=f"crt.sh unreachable: {exc.reason}")
+        raise MhpError(
+            f"crt.sh unreachable: {exc.reason}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        )
     except json.JSONDecodeError:
-        raise HTTPException(status_code=502, detail="crt.sh returned non-JSON")
-    except (TimeoutError, OSError) as exc:
-        raise HTTPException(status_code=504, detail=f"crt.sh timed out: {exc}")
+        raise MhpError(
+            "crt.sh returned non-JSON",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        )
+    except (TimeoutError, OSError):
+        logger.exception("crt.sh fetch failed domain=%r", domain)
+        raise MhpError(
+            "crt.sh timed out",
+            code=ErrorCode.TIMEOUT,
+            status_code=504,
+        )
 
     # Flatten name_value (may contain multiple names separated by newline)
     subs: set[str] = set()

@@ -10,11 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import web_fuzz
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import validate_url
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["lfi"])
 
@@ -103,8 +108,10 @@ async def lfi_ws(ws: WebSocket) -> None:
     try:
         init = await ws.receive_json()
         url = str(init.get("url", "")).strip()
-        if not url:
-            await ws.send_json({"type": "error", "detail": "url is required"})
+        try:
+            url = validate_url(url, field="url")
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close(); return
         tmpl = web_fuzz.FuzzTemplate(
             url=url,
@@ -114,18 +121,22 @@ async def lfi_ws(ws: WebSocket) -> None:
             cookies=dict(init.get("cookies") or {}),
         )
         if not tmpl.has_marker():
-            await ws.send_json({"type": "error",
-                "detail": f"Place '{web_fuzz.DEFAULT_MARKER}' where payloads go"})
+            await ws.send_json(ws_error(
+                ErrorCode.BAD_REQUEST,
+                f"Place '{web_fuzz.DEFAULT_MARKER}' where payloads go",
+            ))
             await ws.close(); return
         if not bool(init.get("confirm_auth", False)):
-            await ws.send_json({"type": "error",
-                "detail": "Confirm you have authorization to test this target"})
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Confirm you have authorization to test this target",
+            ))
             await ws.close(); return
 
         allow_private = bool(init.get("allow_private", False))
         ok, reason = web_fuzz.check_scope(url, allow_private)
         if not ok:
-            await ws.send_json({"type": "error", "detail": reason})
+            await ws.send_json(ws_error(ErrorCode.TARGET_DENIED, reason))
             await ws.close(); return
 
         rate = max(1, min(int(init.get("rate_per_sec", 5)), 20))
@@ -191,9 +202,13 @@ async def lfi_ws(ws: WebSocket) -> None:
                             "findings": findings, "stopped": stop.is_set()})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("lfi_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during LFI scan",
+            ))
         except Exception:
             pass
     finally:

@@ -24,6 +24,7 @@ TLS 1.0/1.1 in modern OpenSSL builds).
 """
 from __future__ import annotations
 
+import logging
 import socket
 import ssl
 import subprocess
@@ -33,11 +34,15 @@ from typing import Any
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from lib import hids_notify
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import validate_hostname, validate_port
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tls"], dependencies=[Depends(require_local_auth)])
 
@@ -232,20 +237,27 @@ def _check_hsts_and_redirect(host: str, port: int, timeout: float = 5.0) -> tupl
 
 @router.get("/tls/audit/{host}")
 async def tls_audit(host: str, port: int = 443) -> dict[str, Any]:
-    host = host.strip().lower()
-    if not host:
-        raise HTTPException(status_code=400, detail="empty host")
-    if not (1 <= port <= 65535):
-        raise HTTPException(status_code=400, detail="port out of range")
+    host = validate_hostname(host, field="host")
+    port = validate_port(port, field="port")
 
     verdict, reason = check_target(host)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": host},
+        )
     # passive — proceed even on warn
 
     ip = _resolve(host)
     if not ip:
-        raise HTTPException(status_code=400, detail=f"cannot resolve {host!r}")
+        raise MhpError(
+            f"cannot resolve {host!r}",
+            code=ErrorCode.RESOLVE_FAILED,
+            status_code=404,
+            extra={"target": host},
+        )
 
     der, cipher, conn_err = _connect_get_cert(host, port)
     cert: dict[str, Any] = {}

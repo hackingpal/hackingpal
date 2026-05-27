@@ -11,6 +11,7 @@ DC are unfriendly to defenders and rarely useful.
 from __future__ import annotations
 
 import io
+import logging
 import os
 import shutil
 import tempfile
@@ -24,6 +25,9 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from lib.ad_auth import CredsModel
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bloodhound", tags=["bloodhound"])
 
@@ -140,9 +144,10 @@ def _run_collection(job: Job, body: IngestBody) -> None:
             job.line(f"ZIP: {os.path.basename(zpath)}")
 
         job.state = "done"
-    except Exception as e:
+    except Exception:
+        logger.exception("bloodhound collection failed job=%s", job.id)
         job.state = "error"
-        job.error = f"{type(e).__name__}: {e}"
+        job.error = "BloodHound collection failed — see server log for details."
         job.line(f"FAILED: {job.error}")
     finally:
         job.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

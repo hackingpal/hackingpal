@@ -28,13 +28,16 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
 import stat
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cred-harvest", tags=["cred-harvest"])
 

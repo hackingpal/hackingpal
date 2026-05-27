@@ -15,6 +15,7 @@ import configparser
 import csv
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -29,6 +30,8 @@ from pydantic import BaseModel
 from lib import forensics
 from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, IS_LINUX, IS_WINDOWS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["forensics"], dependencies=[Depends(require_local_auth)])
 

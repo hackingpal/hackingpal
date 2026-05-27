@@ -13,6 +13,7 @@ There's no sudoers shortcut here because wg-quick varies by environment.
 """
 from __future__ import annotations
 
+import logging
 import shlex
 import shutil
 import subprocess
@@ -25,7 +26,10 @@ from pydantic import BaseModel
 
 from lib import hids_notify
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.platform_util import IS_DARWIN, require_unix
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["vpn"], dependencies=[Depends(require_local_auth)])
 
@@ -119,7 +123,7 @@ def status() -> VpnStatus:
         return VpnStatus(available=False, running=False,
                          config_path=str(SERVER_CFG), missing=missing)
 
-    show = subprocess.run([wg, "show", "wg0"], capture_output=True, text=True)
+    show = subprocess.run([wg, "show", "wg0"], capture_output=True, text=True, timeout=10)
     is_up = show.returncode == 0
     clients: list[VpnClient] = []
     if CLIENTS_DIR.exists():
@@ -151,7 +155,12 @@ def _toggle(direction: str) -> dict[str, Any]:
         low = out.lower()
         if "-128" in out or "canceled" in low or "cancelled" in low or "dismissed" in low:
             raise HTTPException(status_code=400, detail="cancelled by user")
-        raise HTTPException(status_code=500, detail=out.strip() or "command failed")
+        logger.warning("vpn _toggle direction=%s rc=%s out=%s", direction, rc, out[:300])
+        raise MhpError(
+            "wg-quick command failed",
+            code=ErrorCode.TOOL_FAILED,
+            status_code=500,
+        )
     sev = "info" if direction == "up" else "warning"
     title = "WireGuard wg0 started" if direction == "up" else "WireGuard wg0 stopped"
     hids_notify.notify_threadsafe(sev, "vpn", title, {"direction": direction})

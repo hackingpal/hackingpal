@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import {
-  fetchDnsRecon, openWs,
+  fetchDnsRecon, isApiError, openWs, watchWsLiveness,
   type DnsReport, type DnsReconEvent,
 } from "../api";
 
@@ -20,6 +20,7 @@ export default function DnsRecon() {
   const [wordlist, setWordlist] = useState<"small" | "medium">("small");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timedOut, setTimedOut] = useState<null | "connect" | "idle" | "http">(null);
   const [confirmReason, setConfirmReason] = useState<string | null>(null);
 
   const [report, setReport] = useState<DnsReport | null>(null);
@@ -33,12 +34,14 @@ export default function DnsRecon() {
   }>({ running: false, started: null, hits: [], done: 0, total: 0 });
 
   const wsRef = useRef<WebSocket | null>(null);
+  const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
 
   async function runQuick(confirm = false) {
     const t = domain.trim();
     if (!t) return;
     setBusy(true);
     setError(null);
+    setTimedOut(null);
     setConfirmReason(null);
     setReport(null);
     try {
@@ -49,7 +52,8 @@ export default function DnsRecon() {
         setReport(r);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setTimedOut("http");
+      else setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -60,15 +64,27 @@ export default function DnsRecon() {
     if (!t) return;
     setBusy(true);
     setError(null);
+    setTimedOut(null);
     setConfirmReason(null);
     setEnumState({ running: true, started: null, hits: [], done: 0, total: 0 });
 
     const ws = openWs("/ws/dns-recon");
     wsRef.current = ws;
+    watchRef.current = watchWsLiveness(ws, {
+      connectMs: 5_000,
+      idleMs:    45_000,
+      onTimeout: (phase) => {
+        setTimedOut(phase);
+        setBusy(false);
+        setEnumState((s) => ({ ...s, running: false }));
+        try { ws.close(); } catch { /* ignore */ }
+      },
+    });
     ws.onopen = () => {
       ws.send(JSON.stringify({ domain: t, wordlist, confirm }));
     };
     ws.onmessage = (msg) => {
+      watchRef.current?.touch();
       const ev = JSON.parse(msg.data) as DnsReconEvent;
       if (ev.type === "started") {
         setEnumState((s) => ({
@@ -83,24 +99,30 @@ export default function DnsRecon() {
       } else if (ev.type === "done") {
         setEnumState((s) => ({ ...s, running: false, elapsed: ev.elapsed }));
         setBusy(false);
+        watchRef.current?.stop();
       } else if (ev.type === "error") {
         if (ev.need_confirm) {
+          // Server sends a clean reason now; the legacy "need_confirm: " prefix
+          // is no longer present but the .replace is harmless on bare strings.
           setConfirmReason(ev.detail.replace("need_confirm: ", ""));
         } else {
           setError(ev.detail);
         }
         setEnumState((s) => ({ ...s, running: false }));
         setBusy(false);
+        watchRef.current?.stop();
       }
     };
     ws.onerror = () => {
       setError("WebSocket error");
       setEnumState((s) => ({ ...s, running: false }));
       setBusy(false);
+      watchRef.current?.stop();
     };
     ws.onclose = () => {
       setEnumState((s) => ({ ...s, running: false }));
       setBusy(false);
+      watchRef.current?.stop();
     };
   }
 
@@ -191,7 +213,33 @@ export default function DnsRecon() {
           />
         )}
 
-        {error && (
+        {timedOut && (
+          <div className="border border-amber/40 bg-amber/10 text-amber
+                          rounded px-3 py-2 text-sm font-mono flex items-center gap-3">
+            <span>⏱</span>
+            <div className="flex-1">
+              <div className="font-bold">
+                {timedOut === "connect" ? "Backend not responding" :
+                 timedOut === "idle"    ? "Enumeration stalled" :
+                                          "Request timed out"}
+              </div>
+              <div className="text-[11px] text-ink-muted">
+                {timedOut === "connect" ? "WebSocket failed to open within 5 seconds." :
+                 timedOut === "idle"    ? "No progress for 45 seconds. The run was stopped." :
+                                          "The DNS lookup didn't complete in time."}
+              </div>
+            </div>
+            <button
+              onClick={onSearch}
+              className="text-[10px] uppercase tracking-widest px-2 py-1 rounded border
+                         border-amber/40 text-amber hover:bg-amber/10 transition"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {error && !timedOut && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">
             Error — {error}
@@ -204,7 +252,7 @@ export default function DnsRecon() {
           <EnumPanel state={enumState} />
         )}
 
-        {!confirmReason && !error && !report && !enumState.started && !busy && <EmptyState />}
+        {!confirmReason && !error && !timedOut && !report && !enumState.started && !busy && <EmptyState />}
       </div>
     </div>
   );

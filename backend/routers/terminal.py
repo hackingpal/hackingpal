@@ -13,6 +13,7 @@ Real PTY support (xterm.js + ptyprocess) is a follow-up.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shlex
 import subprocess
@@ -23,7 +24,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.platform_util import IS_WINDOWS
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/terminal", tags=["terminal"], dependencies=[Depends(require_local_auth)])
 
@@ -80,10 +84,17 @@ def exec_cmd(req: ExecRequest) -> ExecResponse:
         r = subprocess.run(parts, capture_output=True, text=True,
                            cwd=cwd, timeout=20)
     except FileNotFoundError:
-        raise HTTPException(status_code=404,
-                            detail=f"command not found: {parts[0]}")
+        raise MhpError(
+            f"command not found: {parts[0]}",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=404,
+        )
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="command timed out (20s)")
+        raise MhpError(
+            "command timed out (20s)",
+            code=ErrorCode.TIMEOUT,
+            status_code=504,
+        )
 
     out, err = r.stdout, r.stderr
     truncated = False

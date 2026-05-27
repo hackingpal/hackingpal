@@ -9,6 +9,7 @@ sectioned severity-tagged rows the React side renders unchanged.
 """
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import socket
@@ -22,6 +23,8 @@ from pydantic import BaseModel
 from lib import hids_notify
 from lib.auth import require_local_auth
 from lib.platform_util import IS_DARWIN, require_unix
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["wifi"], dependencies=[Depends(require_local_auth)])
 

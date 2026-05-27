@@ -50,3 +50,6 @@ backend/config.json
 backend/wordlists/rockyou.txt
 backend/wordlists/rockyou.txt.gz
 backend/wordlists/*.txt.gz
+
+# --- Standalone CLI scan output (scripts/ writes here) ---
+scans/

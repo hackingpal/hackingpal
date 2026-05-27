@@ -7,6 +7,7 @@ frontend's session log so Claude can answer "what does this scan mean".
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Literal
 
 import anthropic
@@ -15,6 +16,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from .settings import keychain_get
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -280,9 +283,12 @@ def chat_stream(req: ChatRequest) -> StreamingResponse:
             yield sse_event({"type": "error",
                              "detail": "Rate limited by Anthropic. Retry shortly."})
         except anthropic.APIError as e:
+            logger.warning("anthropic api error type=%s", type(e).__name__)
             yield sse_event({"type": "error",
-                             "detail": f"Anthropic API error: {e}"})
+                             "detail": "Anthropic API error — check the logs"})
         except Exception as e:
-            yield sse_event({"type": "error", "detail": f"{type(e).__name__}: {e}"})
+            logger.exception("chat stream failed")
+            yield sse_event({"type": "error",
+                             "detail": f"Chat stream failed ({type(e).__name__})"})
 
     return StreamingResponse(gen(), media_type="text/event-stream")

@@ -26,7 +26,7 @@ export default function Cmdi() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [doneText, setDoneText] = useState("");
 
-  const { status, error, start, stop } = useAttackWS<CmdiEvent>(
+  const { status, error, timedOut, start, stop } = useAttackWS<CmdiEvent>(
     "/ws/cmdi",
     (ev) => {
       if (ev.type === "started") {
@@ -104,7 +104,12 @@ export default function Cmdi() {
               Stop
             </button>
           )}
-          {error && <span className="text-[11px] text-danger">⚠ {error}</span>}
+          {timedOut && (
+            <span className="text-[11px] text-amber">
+              ⏱ {timedOut === "connect" ? "Backend not responding" : "Scan stalled"} — retry
+            </span>
+          )}
+          {error && !timedOut && <span className="text-[11px] text-danger">⚠ {error}</span>}
         </div>
       </div>
 

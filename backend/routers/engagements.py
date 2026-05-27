@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import logging
 from typing import Any, Literal
 
 import httpx
@@ -17,6 +18,8 @@ from pydantic import BaseModel, Field
 
 from lib import engagements
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/engagements", tags=["engagements"])
 
@@ -290,7 +293,9 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
                         "detail": r.text[:200],
                     })
             except Exception as e:
-                failed.append({"finding_id": f["id"], "detail": str(e)[:200]})
+                logger.exception("github issue export failed finding_id=%s", f.get("id"))
+                failed.append({"finding_id": f["id"],
+                               "detail": f"{type(e).__name__}: request failed"})
 
     return {"created": created, "failed": failed,
             "total_findings": len(findings)}

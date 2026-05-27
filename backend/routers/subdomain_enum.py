@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import time
 from typing import Any
@@ -27,7 +28,12 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import validate_domain
+
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["subdomain-enum"])
 
@@ -184,12 +190,14 @@ async def subdom_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
-        domain = str(init.get("domain", "")).strip().lower().lstrip(".")
+        raw_domain = str(init.get("domain", "")).strip().lower().lstrip(".")
         sources = list(init.get("sources") or ALL_SOURCES)
         do_resolve = bool(init.get("resolve", True))
 
-        if not domain or "." not in domain:
-            await ws.send_json({"type": "error", "detail": "Provide a registrable domain (e.g. example.com)"})
+        try:
+            domain = validate_domain(raw_domain, field="domain")
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close(); return
 
         sources = [s for s in sources if s in SOURCE_CONFIG]
@@ -252,9 +260,13 @@ async def subdom_ws(ws: WebSocket) -> None:
         })
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("subdom_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": f"{type(exc).__name__}: {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during subdomain enumeration",
+            ))
         except Exception:
             pass
     finally:

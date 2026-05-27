@@ -7,6 +7,7 @@ REST: GET  /processes/list       → list of processes with codesign + listeners
 from __future__ import annotations
 
 import getpass
+import logging
 import os
 import shlex
 import shutil
@@ -23,7 +24,10 @@ from pydantic import BaseModel, Field
 
 from lib import forensics, hids_notify, ids as ids_lib   # reuse the lsof snapshot
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.platform_util import IS_DARWIN, IS_LINUX
+
+logger = logging.getLogger(__name__)
 
 
 def _sign_check(path: str) -> dict[str, str]:
@@ -162,17 +166,20 @@ def list_processes(unsigned_only: bool = False) -> dict[str, Any]:
 
 # ── Kill / signal endpoints ───────────────────────────────────────────────────
 
+_KILL_BULK_MAX = 50
+
+
 class KillRequest(BaseModel):
-    pid: int
-    signal: str = Field(default="TERM",
+    pid: int = Field(..., ge=0, le=2**31 - 1)
+    signal: str = Field(default="TERM", max_length=16,
                         description="TERM | KILL | STOP | CONT | HUP")
     admin: bool = False
     confirm: bool = False
 
 
 class KillBulkRequest(BaseModel):
-    pids: list[int]
-    signal: str = "TERM"
+    pids: list[int] = Field(..., max_length=_KILL_BULK_MAX)
+    signal: str = Field(default="TERM", max_length=16)
     admin: bool = False
     confirm: bool = False
 
@@ -324,9 +331,15 @@ async def kill_process(req: KillRequest) -> dict[str, Any]:
 @router.post("/processes/kill_bulk")
 async def kill_bulk(req: KillBulkRequest) -> dict[str, Any]:
     if not req.pids:
-        raise HTTPException(status_code=400, detail="pids list is empty")
-    if len(req.pids) > 50:
-        raise HTTPException(status_code=400, detail="max 50 pids per request")
+        raise MhpError("pids list is empty", code=ErrorCode.BAD_REQUEST)
+    # Length cap is enforced by Field(max_length=...) above; reject any negative
+    # PIDs that slipped past pydantic (Field ge=0 covers it but be defensive).
+    for pid in req.pids:
+        if pid < 0:
+            raise MhpError(
+                f"pid must be non-negative (got {pid})",
+                code=ErrorCode.BAD_REQUEST,
+            )
 
     results: list[dict[str, Any]] = []
     for pid in req.pids:

@@ -25,14 +25,23 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from collections import defaultdict, deque
 from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from lib.errors import ErrorCode, MhpError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lateral", tags=["lateral"])
+
+# Cap upload size at 200 MB — large BloodHound dumps are still well below this.
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+MAX_NAME_LEN = 512
 
 
 # In-memory graph state — one "loaded dataset" per process.
@@ -179,7 +188,7 @@ async def load_zip(file: UploadFile = File(...)) -> dict[str, Any]:
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty upload")
-    if len(data) > 200 * 1024 * 1024:
+    if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "file too large (max 200 MB)")
 
     new_graph = Graph()
@@ -188,8 +197,9 @@ async def load_zip(file: UploadFile = File(...)) -> dict[str, Any]:
     if file.filename and file.filename.lower().endswith(".json"):
         try:
             obj = json.loads(data)
-        except Exception as e:
-            raise HTTPException(400, f"not valid JSON: {e}")
+        except Exception:
+            logger.info("lateral load: invalid JSON upload filename=%r", file.filename)
+            raise HTTPException(400, "upload is not valid JSON")
         kind = _classify_file(file.filename)
         if not kind:
             raise HTTPException(400,
@@ -200,8 +210,9 @@ async def load_zip(file: UploadFile = File(...)) -> dict[str, Any]:
         # Treat as ZIP
         try:
             zf = zipfile.ZipFile(io.BytesIO(data))
-        except Exception as e:
-            raise HTTPException(400, f"not a valid ZIP or JSON: {e}")
+        except Exception:
+            logger.info("lateral load: not a valid ZIP or JSON filename=%r", file.filename)
+            raise HTTPException(400, "upload is not a valid ZIP or JSON")
         for member in zf.namelist():
             if not member.endswith(".json"):
                 continue
@@ -237,9 +248,11 @@ def clear() -> dict[str, bool]:
 # ── Path queries ──────────────────────────────────────────────────────────
 
 class PathBody(BaseModel):
-    source: str  # principal name (e.g. "ALICE@CORP.LOCAL") or objectid
-    target: str = ""  # if empty, computes "to any Domain Admin"
-    max_hops: int = 6
+    # principal name (e.g. "ALICE@CORP.LOCAL") or objectid; cap stops a
+    # giant input string from being hashed through name_index.
+    source: str = Field(..., min_length=1, max_length=MAX_NAME_LEN)
+    target: str = Field("", max_length=MAX_NAME_LEN)  # empty = "any Domain Admin"
+    max_hops: int = Field(6, ge=1, le=20)
 
 
 def _resolve(g: Graph, key: str) -> str | None:

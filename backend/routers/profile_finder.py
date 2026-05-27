@@ -16,6 +16,7 @@ is configured — so the user can fall back to manual browsing.
 """
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 from urllib.parse import quote_plus
@@ -24,7 +25,11 @@ import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from lib.errors import MhpError
+from lib.validators import validate_domain
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/profile-finder", tags=["profile-finder"])
 
@@ -78,9 +83,9 @@ LINKEDIN_TITLE_RE = re.compile(
 
 
 class FindBody(BaseModel):
-    company: str = Field(..., min_length=1)
-    domain: str = ""
-    sources: list[str] = Field(default_factory=lambda: [s["id"] for s in SOURCES])
+    company: str = Field(..., min_length=1, max_length=200)
+    domain: str = Field(default="", max_length=253)
+    sources: list[str] = Field(default_factory=lambda: [s["id"] for s in SOURCES], max_length=32)
     execute: bool = False
 
 
@@ -167,7 +172,11 @@ def _guess_email(name: str, domain: str, pattern: str | None) -> str | None:
 @router.post("/find")
 async def find(body: FindBody) -> dict[str, Any]:
     company = body.company.strip()
-    domain = body.domain.strip().lower().lstrip("@")
+    raw_domain = body.domain.strip().lower().lstrip("@")
+    if raw_domain:
+        domain = validate_domain(raw_domain, field="domain")
+    else:
+        domain = ""
     picked = set(body.sources)
     dorks = _build_dorks(company, domain, picked)
 
@@ -185,7 +194,8 @@ async def find(body: FindBody) -> dict[str, Any]:
                         params={"key": cse_key, "cx": cse_id, "q": d["query"], "num": 10},
                     )
                 except Exception as e:
-                    d["error"] = str(e)[:200]
+                    logger.info("profile_finder CSE request failed: %s", type(e).__name__)
+                    d["error"] = f"CSE request failed: {type(e).__name__}"
                     continue
                 if r.status_code in (403, 429):
                     d["error"] = f"CSE quota: {r.status_code}"

@@ -11,13 +11,18 @@ etc.). The frontend can also supply ad-hoc queries.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from lib.errors import ErrorCode, MhpError
+
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/github-leak", tags=["github-leak"])
 
@@ -44,9 +49,9 @@ LEAK_PATTERNS: list[tuple[str, str]] = [
 
 
 class ScanBody(BaseModel):
-    target: str = Field(..., min_length=1)
+    target: str = Field(..., min_length=1, max_length=253)
     patterns: list[str] | None = None  # subset of pattern labels, or None for all
-    custom_queries: list[str] = Field(default_factory=list)
+    custom_queries: list[str] = Field(default_factory=list, max_length=20)
     per_query: int = Field(default=10, ge=1, le=30)
 
 
@@ -79,7 +84,18 @@ def _build_headers() -> dict[str, str]:
 async def search(body: ScanBody) -> dict[str, Any]:
     t = body.target.strip()
     if not t:
-        raise HTTPException(400, "target is required")
+        raise MhpError("target is required", code=ErrorCode.INVALID_TARGET)
+    if len(t) > 253:
+        raise MhpError(
+            "target is too long (max 253 chars)",
+            code=ErrorCode.INVALID_TARGET,
+        )
+    # Reject newlines/control chars to prevent header injection into the upstream query
+    if any(c in t for c in "\r\n\x00"):
+        raise MhpError(
+            "target contains invalid characters",
+            code=ErrorCode.INVALID_TARGET,
+        )
 
     chosen = body.patterns
     queries: list[tuple[str, str]] = []

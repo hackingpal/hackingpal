@@ -14,6 +14,7 @@ hurts the user's real Google session.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -21,7 +22,12 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_domain
+
 from .settings import keychain_get_named
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dorking", tags=["dorking"])
 
@@ -127,7 +133,8 @@ def _dorks_for(target: str, picked: list[str]) -> list[dict[str, str]]:
 
 @router.post("/generate")
 async def generate(body: GenerateBody) -> dict[str, Any]:
-    dorks = _dorks_for(body.target, body.categories)
+    target = validate_domain(body.target, field="target")
+    dorks = _dorks_for(target, body.categories)
     if not body.execute:
         return {"dorks": dorks, "executed": False}
 
@@ -169,7 +176,8 @@ async def generate(body: GenerateBody) -> dict[str, Any]:
                     for it in data.get("items", [])
                 ]
                 results.append({**d, "items": items})
-            except Exception as e:
-                results.append({**d, "items": [], "error": str(e)})
+            except Exception:
+                logger.exception("dorking CSE call failed query=%r", d.get("query", ""))
+                results.append({**d, "items": [], "error": "request failed"})
 
     return {"dorks": results, "executed": True}

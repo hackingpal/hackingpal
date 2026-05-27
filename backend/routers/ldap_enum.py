@@ -20,6 +20,7 @@ Findings surfaced for the user (severity/title/detail/evidence):
 from __future__ import annotations
 
 import datetime
+import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -29,6 +30,10 @@ from lib.ad_auth import (
     CredsModel, decode_uac, domain_to_base_dn, open_ldap,
     UAC_DONT_REQUIRE_PREAUTH, UAC_PASSWD_NOTREQD,
 )
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_domain, validate_hostname
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ldap", tags=["ldap-enum"])
 
@@ -249,10 +254,18 @@ def _admins(conn, base_dn: str, findings: list[dict[str, Any]]) -> list[dict[str
 
 @router.post("/enum")
 def enum(body: EnumBody) -> dict[str, Any]:
+    body.creds.dc_host = validate_hostname(body.creds.dc_host, field="dc_host")
+    if body.creds.domain:
+        body.creds.domain = validate_domain(body.creds.domain, field="domain")
     try:
         conn = open_ldap(body.creds)
-    except Exception as e:
-        raise HTTPException(401, f"LDAP bind failed: {e}")
+    except Exception:
+        logger.exception("ldap_enum LDAP bind failed")
+        raise MhpError(
+            "LDAP bind failed",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        ) from None
     try:
         base_dn = domain_to_base_dn(body.creds.domain)
         if not base_dn:

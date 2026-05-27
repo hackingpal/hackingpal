@@ -4,13 +4,14 @@
  * receive a stream of typed events, optionally send `{action:"stop"}`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BACKEND_URL } from "../../api";
+import { BACKEND_URL, watchWsLiveness } from "../../api";
 import { record } from "../../lib/sessionLog";
 import { recordResultIfActive } from "../../lib/engagement";
 
 const WS_URL = BACKEND_URL.replace(/^http/, "ws");
 
 export type WSStatus = "idle" | "connecting" | "running" | "done" | "error";
+export type WSTimeoutPhase = "connect" | "idle";
 
 type EventHandler<E> = (event: E) => void;
 
@@ -21,12 +22,15 @@ export function useAttackWS<E>(
 ): {
   status: WSStatus;
   error: string;
+  timedOut: WSTimeoutPhase | null;
   start: (init: unknown) => void;
   stop: () => void;
 } {
   const [status, setStatus] = useState<WSStatus>("idle");
   const [error, setError] = useState("");
+  const [timedOut, setTimedOut] = useState<WSTimeoutPhase | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
   const handlerRef = useRef(onEvent);
   handlerRef.current = onEvent;
 
@@ -46,7 +50,9 @@ export function useAttackWS<E>(
     if (wsRef.current) {
       try { wsRef.current.close(); } catch { /* ignore */ }
     }
+    watchRef.current?.stop();
     setError("");
+    setTimedOut(null);
     setStatus("connecting");
     summaryRef.current = { findings: 0, done: 0, total: 0 };
     initRef.current = init;
@@ -54,11 +60,24 @@ export function useAttackWS<E>(
     const ws = new WebSocket(`${WS_URL}${wsPath}`);
     wsRef.current = ws;
 
+    // Liveness watch: surface a distinct "timed out" phase if the WS never
+    // opens (connect) or stops sending frames mid-scan (idle).
+    watchRef.current = watchWsLiveness(ws, {
+      connectMs: 5_000,
+      idleMs: 60_000,
+      onTimeout: (phase) => {
+        setTimedOut(phase);
+        setStatus("error");
+        try { ws.close(); } catch { /* ignore */ }
+      },
+    });
+
     ws.onopen = () => {
       setStatus("running");
       ws.send(JSON.stringify(init));
     };
     ws.onmessage = (m) => {
+      watchRef.current?.touch();
       try {
         const evt = JSON.parse(m.data) as E & { type?: string; findings?: number; done?: number; total?: number };
         if (evt.type === "finding" && typeof evt.findings !== "number") {
@@ -70,9 +89,11 @@ export function useAttackWS<E>(
         if (evt.type === "error" && (evt as any).detail) {
           setError(String((evt as any).detail));
           setStatus("error");
+          watchRef.current?.stop();
         }
         if (evt.type === "done") {
           setStatus("done");
+          watchRef.current?.stop();
           const summary = {
             findings: summaryRef.current.findings,
             done: summaryRef.current.done,
@@ -92,14 +113,17 @@ export function useAttackWS<E>(
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setStatus("error");
+        watchRef.current?.stop();
       }
     };
     ws.onerror = () => {
       setError("WebSocket error — backend reachable?");
       setStatus("error");
+      watchRef.current?.stop();
     };
     ws.onclose = () => {
       setStatus((s) => (s === "running" ? "done" : s));
+      watchRef.current?.stop();
       wsRef.current = null;
     };
   }, [wsPath, sessionLogCategory]);
@@ -110,5 +134,5 @@ export function useAttackWS<E>(
     try { ws.send(JSON.stringify({ action: "stop" })); } catch { /* ignore */ }
   }, []);
 
-  return { status, error, start, stop };
+  return { status, error, timedOut, start, stop };
 }

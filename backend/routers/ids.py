@@ -15,6 +15,7 @@ Events:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime
 from typing import Any
@@ -23,6 +24,9 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify, ids
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, ws_error
+
+logger = logging.getLogger(__name__)
 
 _HIDS_SEVERITY = {"warn": "warning", "high": "critical"}
 
@@ -157,9 +161,13 @@ async def ids_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "stopped"})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("ids_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during IDS run",
+            ))
         except Exception:
             pass
     finally:

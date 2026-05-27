@@ -19,6 +19,7 @@ Response:
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import time
 from typing import Any
@@ -28,7 +29,11 @@ from urllib.error import URLError
 from fastapi import APIRouter, HTTPException, Query
 
 from lib import hids_notify
+from lib.errors import ErrorCode, MhpError
 from lib.target_policy import check_target
+from lib.validators import validate_target
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reverse-ip"])
 
@@ -60,28 +65,39 @@ def _resolve(target: str) -> str | None:
 
 @router.get("/reverse-ip/{target}")
 async def reverse_ip(target: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
-    target = target.strip().lower().rstrip(".")
-    if not target or "/" in target or " " in target:
-        raise HTTPException(status_code=400, detail="invalid target")
+    target = validate_target(target)
 
     verdict, reason = check_target(target)
     if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
+        raise MhpError(
+            f"target denied: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": target},
+        )
     if verdict == "warn" and not confirm:
-        raise HTTPException(
+        raise MhpError(
+            reason,
+            code=ErrorCode.NEED_CONFIRM,
             status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": target},
+            extra={"need_confirm": True, "target": target},
         )
 
     ip = _resolve(target)
     if not ip:
-        raise HTTPException(status_code=400, detail=f"cannot resolve {target!r}")
+        raise MhpError(
+            f"cannot resolve {target!r}",
+            code=ErrorCode.RESOLVE_FAILED,
+            status_code=400,
+            extra={"target": target},
+        )
     # HackerTarget's reverse-IP API doesn't accept v6 addresses.
     try:
         if isinstance(ipaddress.ip_address(ip), ipaddress.IPv6Address):
-            raise HTTPException(
+            raise MhpError(
+                "reverse-IP service does not accept IPv6 addresses",
+                code=ErrorCode.UNSUPPORTED,
                 status_code=400,
-                detail="reverse-IP service does not accept IPv6 addresses",
             )
     except ValueError:
         pass
@@ -90,7 +106,13 @@ async def reverse_ip(target: str, confirm: bool = Query(default=False)) -> dict[
     try:
         body, status = _fetch(ip)
     except URLError as exc:
-        raise HTTPException(status_code=502, detail=f"hackertarget unreachable: {exc.reason}")
+        logger.info("reverse-ip upstream unreachable target=%s err=%s", target, exc)
+        raise MhpError(
+            "hackertarget upstream unreachable",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+            extra={"target": target},
+        )
 
     body_lower = body.lower()
     rate_limited = "api count exceeded" in body_lower or "increase quota" in body_lower

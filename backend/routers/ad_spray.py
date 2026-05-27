@@ -26,12 +26,17 @@ WS  /ws/ad-spray
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
+from lib.errors import ErrorCode, ws_error
+from lib.validators import validate_hostname
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ad-spray"])
 
@@ -107,9 +112,21 @@ async def spray_ws(ws: WebSocket) -> None:
         delay = float(init.get("delay_sec", 0.5))
         max_lockouts = int(init.get("max_lockouts", 0))
 
+        # Reject obviously malformed dc_host before we try to bind.
+        try:
+            creds.dc_host = validate_hostname(creds.dc_host, field="dc_host")
+        except Exception as exc:
+            await ws.send_json(ws_error(
+                getattr(exc, "code", ErrorCode.INVALID_HOSTNAME),
+                getattr(exc, "message", str(exc)) or "dc_host is required",
+            ))
+            await ws.close(); return
+
         if not users or not passwords:
-            await ws.send_json({"type": "error",
-                "detail": "users[] and passwords[] both required"})
+            await ws.send_json(ws_error(
+                ErrorCode.VALIDATION_ERROR,
+                "users[] and passwords[] both required",
+            ))
             await ws.close(); return
 
         # We need an authenticated bind to read the policy — caller must
@@ -194,10 +211,13 @@ async def spray_ws(ws: WebSocket) -> None:
         })
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("ad_spray_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error",
-                                "detail": f"{type(exc).__name__}: {exc}"})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during password spray",
+            ))
         except Exception:
             pass
     finally:

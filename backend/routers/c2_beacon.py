@@ -22,12 +22,19 @@ external traffic in (ngrok / Cloudflare tunnel etc).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
+import logging
 import secrets
 import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
+from lib.errors import ErrorCode, MhpError
+from lib.validators import validate_ip
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/c2", tags=["c2-beacon"])
 
@@ -168,22 +175,28 @@ class StartBody(BaseModel):
 
 @router.post("/listener")
 async def start_listener(body: StartBody) -> dict[str, Any]:
+    # Validate the bind IP early — accepts 0.0.0.0 / 127.0.0.1 / any IP literal.
+    # Reject anything that isn't a parseable IP so we don't pass garbage to
+    # asyncio.start_server (which would surface a less actionable OSError).
+    host = validate_ip(body.host, field="host")
+
     if any(l.port == body.port for l in _LISTENERS.values()):
         raise HTTPException(409, f"port {body.port} already in use by another listener")
 
     lid = secrets.token_hex(4)
     token = secrets.token_urlsafe(12)
-    listener = Listener(id=lid, port=body.port, host=body.host,
+    listener = Listener(id=lid, port=body.port, host=host,
                         mode=body.mode, token=token)
 
     handler = _serve_http if body.mode == "http" else _serve_tcp
     try:
         server = await asyncio.start_server(
             lambda r, w: handler(listener, r, w),
-            host=body.host, port=body.port,
+            host=host, port=body.port,
         )
-    except OSError as e:
-        raise HTTPException(400, f"could not bind {body.host}:{body.port} — {e}")
+    except OSError as exc:
+        logger.info("c2 bind failed host=%s port=%s err=%s", host, body.port, exc)
+        raise HTTPException(400, f"could not bind {host}:{body.port}")
     listener.server = server
     _LISTENERS[lid] = listener
 

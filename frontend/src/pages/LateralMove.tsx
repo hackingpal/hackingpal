@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, BACKEND_URL, isApiError } from "../api";
 
 type Stats = { nodes: number; edges: number; by_kind: Record<string, number> };
 
@@ -27,6 +27,8 @@ export default function LateralMove() {
   const [maxHops, setMaxHops] = useState(6);
   const [pathResult, setPathResult] = useState<PathResp | null>(null);
   const [pathError, setPathError] = useState("");
+  const [uploadTimedOut, setUploadTimedOut] = useState(false);
+  const [pathTimedOut, setPathTimedOut] = useState(false);
 
   const [techniques, setTechniques] = useState<Technique[]>([]);
 
@@ -44,30 +46,30 @@ export default function LateralMove() {
   }, []);
 
   async function upload(file: File) {
-    setUploading(true); setError("");
+    setUploading(true); setError(""); setUploadTimedOut(false);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      const r = await fetch(`${BACKEND_URL}/lateral/load`, { method: "POST", body: fd });
-      if (!r.ok) throw new Error(await parseError(r));
+      await api("/lateral/load", { method: "POST", body: fd });
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setUploadTimedOut(true);
+      else setError(e instanceof Error ? e.message : String(e));
     } finally { setUploading(false); }
   }
 
   async function findPath() {
-    setLoading(true); setPathError(""); setPathResult(null);
+    setLoading(true); setPathError(""); setPathTimedOut(false); setPathResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/lateral/path`, {
+      const result = await api<PathResp>("/lateral/path", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ source, target, max_hops: maxHops }),
       });
-      if (!r.ok) throw new Error(await parseError(r));
-      setPathResult(await r.json());
+      setPathResult(result);
     } catch (e) {
-      setPathError(e instanceof Error ? e.message : String(e));
+      if (isApiError(e, "TIMEOUT")) setPathTimedOut(true);
+      else setPathError(e instanceof Error ? e.message : String(e));
     } finally { setLoading(false); }
   }
 
@@ -122,7 +124,12 @@ export default function LateralMove() {
                           file:bg-bg-base file:text-accent file:rounded
                           file:cursor-pointer" />
         {uploading && <div className="text-[11px] text-ink-dim mt-1">Uploading…</div>}
-        {error && <div className="text-[11px] text-danger mt-1">⚠ {error}</div>}
+        {uploadTimedOut && (
+          <div className="text-[11px] text-amber mt-1">
+            ⏱ Upload timed out — retry, or check connectivity.
+          </div>
+        )}
+        {error && !uploadTimedOut && <div className="text-[11px] text-danger mt-1">⚠ {error}</div>}
         <p className="text-[10px] text-ink-dim mt-1">
           Accepts the ZIP produced by the BloodHound Ingestor, or individual
           <code className="text-amber"> *_users.json</code> / <code className="text-amber">*_groups.json</code> / etc.
@@ -163,7 +170,10 @@ export default function LateralMove() {
                              disabled:opacity-40 disabled:cursor-not-allowed">
             {loading ? "Searching…" : "Find Path"}
           </button>
-          {pathError && <span className="text-[11px] text-danger ml-2">⚠ {pathError}</span>}
+          {pathTimedOut && (
+            <span className="text-[11px] text-amber ml-2">⏱ Search timed out — retry.</span>
+          )}
+          {pathError && !pathTimedOut && <span className="text-[11px] text-danger ml-2">⚠ {pathError}</span>}
         </div>
       )}
 

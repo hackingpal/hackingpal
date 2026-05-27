@@ -14,12 +14,17 @@ Protocol:
 from __future__ import annotations
 
 import asyncio
+import logging
 import shlex
 from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import validate_target
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ping"], dependencies=[Depends(require_local_auth)])
 
@@ -54,15 +59,19 @@ async def ping_ws(ws: WebSocket) -> None:
     try:
         init: dict[str, Any] = await ws.receive_json()
         target  = str(init.get("target", "")).strip()
-        if not target or "\n" in target or "\r" in target:
-            await ws.send_json({"type": "error", "detail": "invalid target"})
+        try:
+            target = validate_target(target, field="target")
+        except MhpError as exc:
+            await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close(); return
         try:
             count    = int(init.get("count", 0))
             interval = float(init.get("interval", 1.0))
         except (TypeError, ValueError):
-            await ws.send_json({"type": "error",
-                                "detail": "count/interval must be numeric"})
+            await ws.send_json(ws_error(
+                ErrorCode.VALIDATION_ERROR,
+                "count/interval must be numeric",
+            ))
             await ws.close(); return
 
         listener = asyncio.create_task(listen_for_stop())
@@ -75,7 +84,7 @@ async def ping_ws(ws: WebSocket) -> None:
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError:
-            await ws.send_json({"type": "error", "detail": "ping not found"})
+            await ws.send_json(ws_error(ErrorCode.TOOL_MISSING, "ping not found"))
             return
 
         try:
@@ -101,9 +110,13 @@ async def ping_ws(ws: WebSocket) -> None:
         await ws.send_json({"type": "done", "stopped": stop.is_set()})
     except WebSocketDisconnect:
         stop.set()
-    except Exception as exc:
+    except Exception:
+        logger.exception("ping_ws unhandled exception")
         try:
-            await ws.send_json({"type": "error", "detail": str(exc)})
+            await ws.send_json(ws_error(
+                ErrorCode.INTERNAL,
+                "internal error during ping",
+            ))
         except Exception:
             pass
     finally:

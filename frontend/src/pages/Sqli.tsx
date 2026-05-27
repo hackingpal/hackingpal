@@ -26,7 +26,7 @@ export default function Sqli() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [doneText, setDoneText] = useState("");
 
-  const { status, error, start, stop } = useAttackWS<SqliEvent>(
+  const { status, error, timedOut, start, stop } = useAttackWS<SqliEvent>(
     "/ws/sqli",
     (ev) => {
       if (ev.type === "started") {
@@ -109,7 +109,12 @@ export default function Sqli() {
               Stop
             </button>
           )}
-          {error && <span className="text-[11px] text-danger">⚠ {error}</span>}
+          {timedOut && (
+            <span className="text-[11px] text-amber">
+              ⏱ {timedOut === "connect" ? "Backend not responding" : "Scan stalled"} — retry
+            </span>
+          )}
+          {error && !timedOut && <span className="text-[11px] text-danger">⚠ {error}</span>}
         </div>
       </div>
 
