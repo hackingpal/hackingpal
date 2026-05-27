@@ -133,17 +133,28 @@ jobs:
             exit 1
           fi
 
+          # Fetch the per-launch auth token. /auth/token is loopback-only and
+          # requires no header; everything privileged needs X-MHP-Token after.
+          TOKEN=$(curl -fsS http://127.0.0.1:8765/auth/token | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+          if [ -z "$TOKEN" ]; then
+            echo "::error::failed to fetch auth token from /auth/token"
+            exit 1
+          fi
+          echo "::notice::fetched auth token (len=${#TOKEN})"
+
           # Helper: probe an endpoint and assert HTTP status. `want` may be
           # one status (e.g. "501") or a "|"-separated set ("200|503") for
           # endpoints whose acceptable response depends on the runner's
           # environment (e.g. /wifi-scan/scan: 200 on a real Windows host
           # with WiFi, 503 on a headless CI VM with no wlansvc).
           # Usage: probe <label> <url> <expected_status[|alt[|alt]]>
+          # X-MHP-Token is sent on every probe; harmless on public endpoints,
+          # required on the rest (see backend/lib/auth.py).
           fail=0
           probe() {
             local label="$1" url="$2" want="$3"
             local got
-            got=$(curl -s -o "$RUNNER_TEMP/body.txt" -w "%{http_code}" --max-time 15 "$url" || echo 000)
+            got=$(curl -s -o "$RUNNER_TEMP/body.txt" -w "%{http_code}" --max-time 15 -H "X-MHP-Token: $TOKEN" "$url" || echo 000)
             local body
             body=$(head -c 200 "$RUNNER_TEMP/body.txt" | tr '\n' ' ')
             local match=0
@@ -185,7 +196,7 @@ jobs:
           # Verify the sidecar correctly self-identifies as Windows.
           if ! grep -q '"is_windows":true' "$RUNNER_TEMP/health.json" 2>/dev/null; then
             # health endpoint doesn't return this; use /system/info instead
-            curl -fsS http://127.0.0.1:8765/system/info > "$RUNNER_TEMP/sys.json"
+            curl -fsS -H "X-MHP-Token: $TOKEN" http://127.0.0.1:8765/system/info > "$RUNNER_TEMP/sys.json"
             cat "$RUNNER_TEMP/sys.json"; echo
             if ! grep -q '"is_windows":true' "$RUNNER_TEMP/sys.json"; then
               echo "::error::sidecar did not self-report as Windows"
@@ -284,10 +295,18 @@ jobs:
 
       - name: Probe key endpoints
         run: |
+          # Fetch the per-launch token. Loopback-only, no header required.
+          TOKEN=$(curl -fsS http://127.0.0.1:8765/auth/token | jq -r .token)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::failed to fetch auth token from /auth/token"
+            exit 1
+          fi
+          echo "::notice::fetched auth token (len=${#TOKEN})"
+
           probe() {
             local label="$1" url="$2"
             echo "::group::$label  $url"
-            if curl -fsS --max-time 10 "$url" | jq . ; then
+            if curl -fsS --max-time 10 -H "X-MHP-Token: $TOKEN" "$url" | jq . ; then
               echo "::endgroup::"
             else
               echo "::endgroup::"
@@ -306,7 +325,7 @@ jobs:
           probe "/processes/list"              "http://127.0.0.1:8765/processes/list" || true
           # mac-only — should return 501 with a hint, NOT crash
           echo "::group::/macos/posture (expect 501)"
-          curl -sS -o /tmp/posture.json -w "HTTP %{http_code}\n" http://127.0.0.1:8765/macos/posture || true
+          curl -sS -o /tmp/posture.json -w "HTTP %{http_code}\n" -H "X-MHP-Token: $TOKEN" http://127.0.0.1:8765/macos/posture || true
           cat /tmp/posture.json | jq . 2>/dev/null || cat /tmp/posture.json
           echo "::endgroup::"
 
