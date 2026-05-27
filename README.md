@@ -2,6 +2,8 @@
 
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Docker-blue)
 
+> 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
+
 A cross-platform desktop security toolkit. Hybrid **Electron + React + TypeScript**
 frontend with a bundled **FastAPI + Python** sidecar that owns all the
 network/forensics/exploitation logic. ~40 tools organized into nine sidebar
@@ -9,7 +11,7 @@ categories, plus a Claude-powered chat assistant that watches your session
 log and explains what your scans found.
 
 ```
-~/network_tools/
+myhackingpal/
 ├── backend/        FastAPI server — one router per tool
 │   ├── lib/        shared libs: target_policy, web_fuzz, hids_notify, …
 │   ├── routers/    ~40 routers, one per page
@@ -304,7 +306,7 @@ security add-generic-password -a anthropic_api_key -s MyHackingPal -w 'sk-ant-�
 
 ### Paid subdomain-enum APIs (optional)
 
-No in-app UI yet — set via curl after launch:
+A settings UI is coming in v0.2.0. Until then, configure via curl after launch:
 
 ```sh
 curl -X POST http://127.0.0.1:8765/settings/keys/securitytrails_api_key \
@@ -415,17 +417,53 @@ helpers).
 
 ---
 
+## Contributing
+
+Contributions are welcome. The easiest way to contribute right now is:
+
+- **Bug reports** — open an issue with steps to reproduce
+- **Preset files** — submit a .mhp playbook for a new attack scenario (see CONTRIBUTING.md)
+- **New tools** — follow the 3-step pattern in Adding a new tool above
+- **Platform testing** — help verify Windows and Linux builds
+
+Please read CONTRIBUTING.md and DISCLAIMER.md before submitting a PR.
+
+---
+
 ## Roadmap
 
-- [x] macOS build (Apple Silicon `.app`)
-- [x] Windows build (NSIS installer + portable `.exe`, x64) — verified end-to-end on CI
-- [x] Linux build (`.AppImage` + `.deb`, x64 + arm64)
-- [x] Docker image (backend API server, 2026-05-22)
-- [x] Cross-platform forensics: persistence audit, security posture, WiFi scan all native on mac/linux/windows
-- [ ] Code signing / notarization (macOS + Windows)
-- [ ] Auto-update channel via electron-updater
-- [ ] Windows tcpdump (via npcap) + Windows WireGuard wrapper
-- [ ] Authenticode signature check for Windows persistence entries
+### v0.1.0-beta — macOS (current)
+- [x] 40+ tools across 9 categories
+- [x] Claude-powered AI assistant with session context
+- [x] Attack playbook / preset system
+- [x] WebSocket streaming for all active tools
+- [x] Authorization gates on all exploit tools
+- [x] Scope guard + rate limiting
+- [x] macOS Keychain for all credentials
+- [x] Command palette (⌘K) + sidebar (⌘B)
+- [x] Dark / light / system theme
+
+### v0.2.0 — Stability
+- [ ] Full error handling pass across all 40+ tools
+- [ ] Input validation on every endpoint
+- [ ] Test suite (pytest backend + Vitest frontend)
+- [ ] First-launch wizard
+- [ ] Settings page with in-app API key management
+- [ ] Engagement / session management with findings tracker
+- [ ] PDF/markdown report export
+
+### v0.3.0 — Cross-platform
+- [ ] Windows build (.exe installer)
+- [ ] Linux build (.AppImage / .deb)
+- [ ] Docker image (backend only, browser frontend)
+- [ ] Code signing + notarization (macOS + Windows)
+- [ ] Auto-update via electron-updater
+
+### v1.0.0 — Community
+- [ ] Community preset library (.mhp files)
+- [ ] NGFW integration (pfSense, OPNsense, Palo Alto)
+- [ ] iOS companion app (Swift)
+- [ ] Plugin / custom tool API
 
 ---
 
