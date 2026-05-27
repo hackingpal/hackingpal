@@ -1,6 +1,7 @@
 # MyHackingPal
 
 ![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Docker-blue)
+[![Release](https://img.shields.io/github/v/release/myhackingpal/myhackingpal?include_prereleases&label=release)](https://github.com/myhackingpal/myhackingpal/releases/latest)
 
 > 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
 
