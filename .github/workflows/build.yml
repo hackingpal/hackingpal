@@ -324,3 +324,89 @@ jobs:
             kill $(cat /tmp/sidecar.pid) 2>/dev/null || true
           fi
           pkill -f network-tools-backend 2>/dev/null || true
+
+  release:
+    # Attaches the matrix artifacts to a GitHub Release on tag pushes
+    # (vX.Y.Z or vX.Y.Z-suffix). Reuses the build job's outputs rather than
+    # rebuilding so tag-push CI stays the same length as a normal main push.
+    name: Publish release assets
+    needs: [build, smoke-linux]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MyHackingPal-macos-latest
+          path: artifacts/macos/
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MyHackingPal-windows-latest
+          path: artifacts/windows/
+
+      - name: Download Linux x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: MyHackingPal-ubuntu-latest
+          path: artifacts/linux/
+
+      - name: Stage release assets
+        # electron-builder filenames embed the version, so normalize them
+        # to the stable names the README + release notes link to.
+        # macOS target is "dir" (unsigned .app folder), so zip it here.
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          echo "::group::macOS — zip .app bundle"
+          MAC_APP=$(find artifacts/macos -maxdepth 4 -type d -name "*.app" | head -1)
+          if [ -z "$MAC_APP" ]; then
+            echo "::error::macOS .app not found"
+            find artifacts/macos -maxdepth 4
+            exit 1
+          fi
+          echo "found: $MAC_APP"
+          MAC_PARENT=$(dirname "$MAC_APP")
+          MAC_NAME=$(basename "$MAC_APP")
+          (cd "$MAC_PARENT" && zip -ry "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip" "$MAC_NAME")
+          echo "::endgroup::"
+
+          echo "::group::Windows — NSIS installer"
+          WIN_EXE=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe" | head -1)
+          if [ -z "$WIN_EXE" ]; then
+            echo "::error::Windows NSIS installer not found"
+            find artifacts/windows -maxdepth 2
+            exit 1
+          fi
+          echo "found: $WIN_EXE"
+          cp "$WIN_EXE" release-assets/MyHackingPal-windows-x64.exe
+          echo "::endgroup::"
+
+          echo "::group::Linux — AppImage (x86_64)"
+          # The arm64 AppImage lives in MyHackingPal-ubuntu-24.04-arm and is
+          # deliberately not attached to releases yet — release notes only
+          # promise x86_64.
+          LINUX_APPIMAGE=$(find artifacts/linux -maxdepth 2 -type f -name "*.AppImage" | head -1)
+          if [ -z "$LINUX_APPIMAGE" ]; then
+            echo "::error::Linux AppImage not found"
+            find artifacts/linux -maxdepth 2
+            exit 1
+          fi
+          echo "found: $LINUX_APPIMAGE"
+          cp "$LINUX_APPIMAGE" release-assets/MyHackingPal-linux-x86_64.AppImage
+          echo "::endgroup::"
+
+          ls -lh release-assets/
+
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          files: release-assets/*
+          fail_on_unmatched_files: true

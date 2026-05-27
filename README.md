@@ -78,18 +78,15 @@ to the macOS Keychain when running the desktop app natively).
 
 ### Option 1 — Download (recommended)
 
-Latest builds are produced by CI on every push to `main` — pick the artifact
-that matches your OS from the [Actions tab](https://github.com/myhackingpal/myhackingpal/actions/workflows/build.yml)
-(latest green run → "Artifacts"). All builds are currently unsigned, so first
-launch shows a Gatekeeper / SmartScreen warning that you'll need to click past.
+| Platform | Download | Notes |
+|---|---|---|
+| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.zip](https://github.com/myhackingpal/myhackingpal/releases/latest) | Right-click → Open on first launch |
+| Windows (x64) | [MyHackingPal-windows-x64.exe](https://github.com/myhackingpal/myhackingpal/releases/latest) | Click "More info" → "Run anyway" |
+| Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest) | `chmod +x` then run |
 
-- macOS (Apple Silicon): `MyHackingPal-macos-latest` → `.app` bundle
-- Windows (x64): `MyHackingPal-windows-latest` → `MyHackingPal Setup 0.1.0.exe`
-  (NSIS installer, ~145 MB) **or** `MyHackingPal 0.1.0.exe` (portable, no install)
-- Linux (x64 / arm64): `MyHackingPal-ubuntu-latest` (x86_64 `.AppImage` + `.deb`)
-  or `MyHackingPal-ubuntu-24.04-arm` (arm64 `.AppImage`)
-
-A signed-release flow with GitHub Releases + electron-updater is on the roadmap.
+All builds are unsigned. See per-platform guides in `docs/` for first-launch
+instructions. Per-commit CI artifacts (including Linux arm64 and `.deb`)
+remain available on the [Actions tab](https://github.com/myhackingpal/myhackingpal/actions/workflows/build.yml).
 
 ### Option 2 — Docker (backend API only)
 
