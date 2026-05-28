@@ -9,7 +9,7 @@
 // only stores which one is currently focused.
 
 import { useEffect, useState } from "react";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, BACKEND_URL, parseError } from "../api";
 
 export type EngagementStatus = "active" | "completed" | "archived";
 
@@ -97,7 +97,7 @@ export async function recordResultIfActive(
   if (!eid) return;
   if (RECORD_SKIP.some((re) => re.test(toolPath))) return;
   try {
-    await fetch(`${BACKEND_URL}/engagements/${eid}/results`, {
+    await authFetch(`/engagements/${eid}/results`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -115,9 +115,7 @@ export async function recordResultIfActive(
 // ── CRUD helpers (light wrappers — pages use these directly) ────────────────
 
 export async function listEngagements(includeArchived = false): Promise<Engagement[]> {
-  const r = await fetch(
-    `${BACKEND_URL}/engagements?include_archived=${includeArchived}`,
-  );
+  const r = await authFetch(`/engagements?include_archived=${includeArchived}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const body = (await r.json()) as { engagements: Engagement[] };
   return body.engagements;
@@ -126,7 +124,7 @@ export async function listEngagements(includeArchived = false): Promise<Engageme
 export async function createEngagement(payload: {
   name: string; scope: string[]; exclusions: string[]; notes: string;
 }): Promise<Engagement> {
-  const r = await fetch(`${BACKEND_URL}/engagements`, {
+  const r = await authFetch(`/engagements`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -138,7 +136,7 @@ export async function createEngagement(payload: {
 export async function updateEngagement(
   id: string, patch: Partial<Engagement>,
 ): Promise<Engagement> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${id}`, {
+  const r = await authFetch(`/engagements/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -148,12 +146,12 @@ export async function updateEngagement(
 }
 
 export async function deleteEngagement(id: string): Promise<void> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${id}`, { method: "DELETE" });
+  const r = await authFetch(`/engagements/${id}`, { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
 export async function listFindings(eid: string): Promise<Finding[]> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${eid}/findings`);
+  const r = await authFetch(`/engagements/${eid}/findings`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const body = (await r.json()) as { findings: Finding[] };
   return body.findings;
@@ -163,7 +161,7 @@ export async function createFinding(eid: string, payload: {
   title: string; severity: Finding["severity"]; description?: string;
   evidence?: string; cvss?: number | null; linked_result_id?: string | null;
 }): Promise<Finding> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${eid}/findings`, {
+  const r = await authFetch(`/engagements/${eid}/findings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -175,7 +173,7 @@ export async function createFinding(eid: string, payload: {
 export async function updateFinding(
   eid: string, fid: string, patch: Partial<Finding>,
 ): Promise<Finding> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${eid}/findings/${fid}`, {
+  const r = await authFetch(`/engagements/${eid}/findings/${fid}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
@@ -185,14 +183,14 @@ export async function updateFinding(
 }
 
 export async function deleteFinding(eid: string, fid: string): Promise<void> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${eid}/findings/${fid}`, {
+  const r = await authFetch(`/engagements/${eid}/findings/${fid}`, {
     method: "DELETE",
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
 
 export async function listResults(eid: string, limit = 200): Promise<ScanResult[]> {
-  const r = await fetch(`${BACKEND_URL}/engagements/${eid}/results?limit=${limit}`);
+  const r = await authFetch(`/engagements/${eid}/results?limit=${limit}`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const body = (await r.json()) as { results: ScanResult[] };
   return body.results;
@@ -201,7 +199,7 @@ export async function listResults(eid: string, limit = 200): Promise<ScanResult[
 export async function fetchSuggestions(): Promise<
   { category: string; label: string; description: string }[]
 > {
-  const r = await fetch(`${BACKEND_URL}/engagements/_catalog/suggestions`);
+  const r = await authFetch(`/engagements/_catalog/suggestions`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const body = (await r.json()) as { suggestions: { category: string; label: string; description: string }[] };
   return body.suggestions;

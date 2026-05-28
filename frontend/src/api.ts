@@ -216,6 +216,20 @@ async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
   return { ...(init ?? {}), headers };
 }
 
+/**
+ * Thin fetch wrapper that adds the X-MHP-Token header. Use for endpoints
+ * where you want manual control over the response (e.g. binary downloads,
+ * 409 confirm flows) but still need the auth token attached.
+ *
+ * `path` may be either an absolute URL or a backend-relative path starting
+ * with "/" — relative paths are joined onto BACKEND_URL.
+ */
+export async function authFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = path.startsWith("http") ? path : `${BACKEND_URL}${path}`;
+  const finalInit = await withAuthHeader(init);
+  return fetch(url, finalInit);
+}
+
 export interface ApiInit extends RequestInit {
   /** Override the per-request timeout. Defaults to DEFAULT_TIMEOUT_MS. */
   timeoutMs?: number;
