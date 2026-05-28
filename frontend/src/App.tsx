@@ -79,6 +79,7 @@ import ChatBubble from "./components/ChatBubble";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import EngagementPill from "./components/EngagementPill";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { useTheme } from "./lib/theme";
 import { isPlannedId } from "./lib/plannedTools";
 import { api } from "./api";
@@ -257,6 +258,7 @@ export default function App() {
         </div>
 
         <main className="flex-1 overflow-hidden">
+         <ErrorBoundary resetKey={String(active)}>
           {active === "engagements" ? <Engagements /> :
            active === "findings"    ? <Findings /> :
            active === "playbooks"   ? <Presets /> :
@@ -335,6 +337,7 @@ export default function App() {
                                           onAfterRemove={() => setActive("ip")}
                                         /> :
                                       <Placeholder name={active} />}
+         </ErrorBoundary>
         </main>
       </div>
       <ChatBubble activePage={active} />
