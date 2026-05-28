@@ -80,12 +80,17 @@ to the macOS Keychain when running the desktop app natively).
 
 | Platform | Download | Notes |
 |---|---|---|
-| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.zip](https://github.com/myhackingpal/myhackingpal/releases/latest) | Right-click → Open on first launch |
+| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.dmg](https://github.com/myhackingpal/myhackingpal/releases/latest) | Mount, drag to /Applications. Right-click → Open on first launch. Or grab the `.zip` if your tooling can't mount DMGs. |
 | Windows (x64) | [MyHackingPal-windows-x64.exe](https://github.com/myhackingpal/myhackingpal/releases/latest) | Click "More info" → "Run anyway" |
 | Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest) | `chmod +x` then run |
 
 All builds are unsigned. See per-platform guides in `docs/` for first-launch
-instructions. Per-commit CI artifacts (including Linux arm64 and `.deb`)
+instructions, and [docs/SIGNING.md](docs/SIGNING.md) for what code-signing
+would actually take. Installed apps auto-check for updates via
+[electron-updater](https://www.electron.build/auto-update) — on Windows
+and Linux this also auto-installs; on Mac the OS rejects the unsigned
+replacement, so updates are detected but require re-downloading the DMG.
+Per-commit CI artifacts (including Linux arm64 AppImage and `.deb`)
 remain available on the [Actions tab](https://github.com/myhackingpal/myhackingpal/actions/workflows/build.yml).
 
 ### Option 2 — Docker (backend API only)

@@ -10,14 +10,16 @@ configuration, safety model, and dev loop, see the [root README](../README.md).
 
 ## Install
 
-Download `MyHackingPal-mac-arm64.zip` from [Releases](https://github.com/myhackingpal/myhackingpal/releases),
-unzip, and drag `MyHackingPal.app` to `/Applications` (or keep it on
-`~/Desktop`).
+Download `MyHackingPal-macos-arm64.dmg` from [Releases](https://github.com/myhackingpal/myhackingpal/releases),
+double-click to mount, and drag `MyHackingPal.app` to `/Applications`.
+A `.zip` of the bare `.app` is also published in the same release for
+tooling that can't mount DMGs.
 
 ```sh
 # Or from source:
 cd frontend
-npm run dist:dir
+npm run dist:mac     # produces both the .app bundle and a .dmg
+# (npm run dist:dir is the faster local-only path — .app only, no DMG)
 cp -R dist-electron/mac-arm64/MyHackingPal.app /Applications/
 ```
 
@@ -72,6 +74,18 @@ These pages are available on macOS only and auto-hide on other platforms:
 - **Brew** — Homebrew search/install
 - **macOS Posture** — SIP / Gatekeeper / FileVault / XProtect
 - **Persistence** — LaunchAgents / LaunchDaemons audit
+
+---
+
+## Auto-updates
+
+The app uses `electron-updater` against GitHub Releases. On Mac, because
+the bundle is unsigned, the updater **detects** new releases (you'll see
+log lines like `update available: 0.2.0`) but can't replace the running
+app — macOS rejects the unsigned bundle swap. Re-download the DMG from
+the [Releases page](https://github.com/myhackingpal/myhackingpal/releases/latest)
+to upgrade. See [SIGNING.md](SIGNING.md) for the path to actual signed
+auto-updates.
 
 ---
 
