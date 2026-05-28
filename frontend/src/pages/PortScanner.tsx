@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
 
 type OpenRow = { port: number; service: string; banner: string };
@@ -31,6 +31,14 @@ export default function PortScanner() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
+
+  // If the user navigates away mid-scan, close the socket so the backend
+  // stops pumping packets at a phantom listener.
+  useEffect(() => () => {
+    watchRef.current?.stop();
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   function start() {
     if (scanning) return;

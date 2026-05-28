@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openWs, type LocalDiscoveryEvent } from "../api";
 
 type Finding = LocalDiscoveryEvent extends infer T
@@ -20,6 +20,11 @@ export default function LocalDiscovery() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [elapsed, setElapsed] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   function toggleProto(p: "mdns"|"ssdp"|"llmnr") {
     setProtocols((cur) => cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]);

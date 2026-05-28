@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchDnsRecon, isApiError, openWs, watchWsLiveness,
   type DnsReport, type DnsReconEvent,
@@ -35,6 +35,12 @@ export default function DnsRecon() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
+
+  useEffect(() => () => {
+    watchRef.current?.stop();
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   async function runQuick(confirm = false) {
     const t = domain.trim();

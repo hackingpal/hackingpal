@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   fetchTakeoverCheck, openWs,
   type TakeoverEvent, type TakeoverResult, type TakeoverVerdict,
@@ -41,6 +41,11 @@ export default function Takeover() {
   }>({ running: false, started: null, results: [], done: 0, total: 0 });
 
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   async function runSingle(confirm = false) {
     const f = fqdn.trim();

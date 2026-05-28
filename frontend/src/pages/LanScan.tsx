@@ -22,6 +22,11 @@ export default function LanScan() {
     fetchLanInfo().then(setInfo).catch(() => setInfo(null));
   }, []);
 
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   function start() {
     if (scanning) return;
     setScanning(true); setStopped(false); setError(null);

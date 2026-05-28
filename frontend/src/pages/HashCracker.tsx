@@ -44,6 +44,11 @@ export default function HashCracker() {
     fetchHashAlgorithms().then(setAlgs).catch(() => {});
   }, []);
 
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   // Identify on each keystroke for instant feedback (with debounce)
   useEffect(() => {
     if (mode !== "identify") return;

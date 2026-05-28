@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openWs, type IdsEvent, type IdsRecord, type IdsSeverity, type IdsSource } from "../api";
 
 const SEV_TEXT: Record<IdsSeverity, string> = {
@@ -21,6 +21,12 @@ export default function IdsPage() {
   const [filter,   setFilter]   = useState<Filter>("all");
   const [baseline, setBaseline] = useState<{ total: number; unknown: number } | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Stop the live IDS stream if the user navigates away.
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   const counts = useMemo(() => {
     let info = 0, warn = 0, high = 0;

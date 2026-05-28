@@ -192,6 +192,12 @@ export default function Nmap() {
     }
   }, [rawLog, resultsTab]);
 
+  // Close any in-flight scan if the user navigates away.
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   // Parse targets on every render to keep the live argv preview honest
   const parsedTargets = useMemo(
     () => targetsText.split(/[\s,]+/).map(s => s.trim()).filter(Boolean),

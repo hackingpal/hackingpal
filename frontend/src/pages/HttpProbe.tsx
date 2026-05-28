@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type HttpProbeEvent, type HttpProbeFinding } from "../api";
 
 type Hit = { path: string; status: number; length: number; location: string };
@@ -37,6 +37,12 @@ export default function HttpProbe() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
+
+  useEffect(() => () => {
+    watchRef.current?.stop();
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   function start(confirm = false) {
     const u = url.trim();

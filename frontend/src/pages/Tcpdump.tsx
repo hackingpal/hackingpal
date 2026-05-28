@@ -33,6 +33,11 @@ export default function Tcpdump() {
 
   useEffect(() => { void refreshStatus(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   async function install() {
     setInstalling(true); setError(null);
     try {

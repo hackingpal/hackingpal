@@ -37,6 +37,11 @@ export default function Brew() {
     fetchBrewInstalled().then(setInstalled).catch(() => setInstalled(null));
   }, []);
 
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   async function runSearch() {
     if (!query.trim()) return;
     setSearching(true); setError(null);

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openWs, type AuditEvent, type AuditOpenPort, type RiskTier } from "../api";
 
 type Row = {
@@ -28,6 +28,11 @@ export default function NetworkAudit() {
   const [rows,    setRows]    = useState<Row[]>([]);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   function start() {
     if (running) return;

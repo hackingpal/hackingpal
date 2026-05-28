@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openWs, type PingEvent } from "../api";
 
 export default function Ping() {
@@ -9,6 +9,11 @@ export default function Ping() {
   const [error,    setError]    = useState<string | null>(null);
   const [lines,    setLines]    = useState<string[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
 
   function start() {
     if (running) return;
