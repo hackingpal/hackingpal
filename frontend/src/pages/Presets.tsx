@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, BACKEND_URL } from "../api";
+import { api, authFetch, openWs } from "../api";
 
 type PresetSummary = {
   id: string; name: string; description: string;
@@ -89,6 +89,12 @@ export default function Presets() {
 
   useEffect(() => { void refreshLibrary(); }, []);
 
+  // Close any in-flight preset run if the user navigates away.
+  useEffect(() => () => {
+    try { wsRef.current?.close(); } catch { /* ignore */ }
+    wsRef.current = null;
+  }, []);
+
   async function select(p: PresetSummary) {
     try {
       const full = await api<PresetFull>(`/presets/${encodeURIComponent(p.id)}`);
@@ -106,7 +112,6 @@ export default function Presets() {
 
   function start() {
     if (!selected || !target.trim() || !authorized || running) return;
-    const wsUrl = BACKEND_URL.replace(/^http/, "ws") + "/ws/preset-run";
     setWsError("");
     setRunning(true);
     setDoneSummary("");
@@ -115,7 +120,7 @@ export default function Presets() {
       id: s.id, tool: s.tool, status: "pending",
     })));
 
-    const ws = new WebSocket(wsUrl);
+    const ws = openWs("/ws/preset-run");
     wsRef.current = ws;
     ws.onopen = () => {
       ws.send(JSON.stringify({
@@ -201,7 +206,7 @@ export default function Presets() {
       return;
     }
     try {
-      const r = await fetch(`${BACKEND_URL}/presets`, {
+      const r = await authFetch(`/presets`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(parsed),
@@ -222,8 +227,8 @@ export default function Presets() {
     if (p.builtin) return;
     if (!confirm(`Delete preset "${p.name}"?`)) return;
     try {
-      const r = await fetch(`${BACKEND_URL}/presets/${encodeURIComponent(p.id)}`,
-                            { method: "DELETE" });
+      const r = await authFetch(`/presets/${encodeURIComponent(p.id)}`,
+                                { method: "DELETE" });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       if (selected?.id === p.id) setSelected(null);
       await refreshLibrary();

@@ -4,11 +4,9 @@
  * receive a stream of typed events, optionally send `{action:"stop"}`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BACKEND_URL, watchWsLiveness } from "../../api";
+import { openWs, watchWsLiveness } from "../../api";
 import { record } from "../../lib/sessionLog";
 import { recordResultIfActive } from "../../lib/engagement";
-
-const WS_URL = BACKEND_URL.replace(/^http/, "ws");
 
 export type WSStatus = "idle" | "connecting" | "running" | "done" | "error";
 export type WSTimeoutPhase = "connect" | "idle";
@@ -57,7 +55,7 @@ export function useAttackWS<E>(
     summaryRef.current = { findings: 0, done: 0, total: 0 };
     initRef.current = init;
 
-    const ws = new WebSocket(`${WS_URL}${wsPath}`);
+    const ws = openWs(wsPath);
     wsRef.current = ws;
 
     // Liveness watch: surface a distinct "timed out" phase if the WS never
