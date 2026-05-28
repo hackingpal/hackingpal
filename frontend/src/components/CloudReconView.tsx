@@ -3,7 +3,7 @@
 // GET /<cloud>/recon?services=... (findings + per-service breakdowns).
 
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 export type CloudFinding = {
   severity: "critical" | "high" | "medium" | "low" | "info";
@@ -71,7 +71,7 @@ export default function CloudReconView({
     setLoading(true); setError(""); setResult(null);
     try {
       const qs = `services=${[...picked].join(",")}`;
-      const r = await fetch(`${BACKEND_URL}${reconPath}?${qs}`);
+      const r = await authFetch(`${reconPath}?${qs}`);
       if (!r.ok) throw new Error(await parseError(r));
       setResult(await r.json());
     } catch (e) {

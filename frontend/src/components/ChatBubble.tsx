@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  BACKEND_URL,
+  authFetch,
   fetchApiKeyStatus,
   formatDetail,
   setApiKey as putApiKey,
@@ -442,7 +442,7 @@ async function streamChat(
 ): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${BACKEND_URL}/chat/stream`, {
+    res = await authFetch(`/chat/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
