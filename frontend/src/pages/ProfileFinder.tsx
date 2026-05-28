@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, parseError } from "../api";
 
 type Dork = {
   source: string; label: string; query: string; url: string;
@@ -49,7 +49,7 @@ export default function ProfileFinder() {
     if (!company.trim()) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/profile-finder/find`, {
+      const r = await authFetch(`/profile-finder/find`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

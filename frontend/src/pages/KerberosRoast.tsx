@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, parseError } from "../api";
 
 type Mode = "kerberoast" | "asrep";
 
@@ -33,7 +33,7 @@ export default function KerberosRoast() {
       const body = mode === "kerberoast"
         ? { creds, spn_filter: spnFilter }
         : { creds, users: usersText.split("\n").map((s) => s.trim()).filter(Boolean) };
-      const r = await fetch(`${BACKEND_URL}${path}`, {
+      const r = await authFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, BACKEND_URL, parseError } from "../api";
 
 type Job = {
   id: string; state: "queued" | "running" | "done" | "error";
@@ -57,7 +57,7 @@ export default function BloodHound() {
 
   async function deleteJob(id: string) {
     try {
-      await fetch(`${BACKEND_URL}/bloodhound/jobs/${id}`, { method: "DELETE" });
+      await authFetch(`/bloodhound/jobs/${id}`, { method: "DELETE" });
       if (activeJob?.id === id) setActiveJob(null);
       await refresh();
     } catch { /* ignore */ }
@@ -74,7 +74,7 @@ export default function BloodHound() {
   async function go() {
     setError("");
     try {
-      const r = await fetch(`${BACKEND_URL}/bloodhound/run`, {
+      const r = await authFetch(`/bloodhound/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

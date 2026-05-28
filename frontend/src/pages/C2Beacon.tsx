@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 type Callback = {
   ts: string; source: string; method: string; path: string;
@@ -41,7 +41,7 @@ export default function C2Beacon() {
   async function start() {
     setLoading(true); setError("");
     try {
-      const r = await fetch(`${BACKEND_URL}/c2/listener`, {
+      const r = await authFetch(`/c2/listener`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ port, host, mode }),
@@ -55,7 +55,7 @@ export default function C2Beacon() {
 
   async function stop(id: string) {
     if (!confirm("Stop this listener?")) return;
-    await fetch(`${BACKEND_URL}/c2/listener/${id}`, { method: "DELETE" });
+    await authFetch(`/c2/listener/${id}`, { method: "DELETE" });
     void refresh();
   }
 

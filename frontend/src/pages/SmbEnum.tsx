@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, parseError } from "../api";
 
 type Share = {
   name: string; type: number; comment: string;
@@ -38,7 +38,7 @@ export default function SmbEnum() {
   async function go() {
     setLoading(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/smb/enum`, {
+      const r = await authFetch(`/smb/enum`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ creds, target, list_files: true }),

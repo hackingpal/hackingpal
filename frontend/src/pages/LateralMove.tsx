@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, isApiError } from "../api";
+import { api, authFetch, isApiError } from "../api";
 
 type Stats = { nodes: number; edges: number; by_kind: Record<string, number> };
 
@@ -75,7 +75,7 @@ export default function LateralMove() {
 
   async function clearGraph() {
     if (!confirm("Clear loaded BloodHound data?")) return;
-    await fetch(`${BACKEND_URL}/lateral/clear`, { method: "POST" });
+    await authFetch(`/lateral/clear`, { method: "POST" });
     setPathResult(null);
     await refresh();
   }

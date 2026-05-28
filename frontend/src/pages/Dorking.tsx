@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 type Category = {
   id: string;
@@ -56,7 +56,7 @@ export default function Dorking() {
     if (!target.trim()) return;
     setLoading(true); setError(""); setDorks([]); setExecuted(false);
     try {
-      const r = await fetch(`${BACKEND_URL}/dorking/generate`, {
+      const r = await authFetch(`/dorking/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

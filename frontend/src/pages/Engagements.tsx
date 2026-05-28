@@ -9,7 +9,7 @@ import {
   useActiveEngagementId,
   type Engagement,
 } from "../lib/engagement";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, parseError } from "../api";
 
 export default function Engagements() {
   const [engagements, setEngagements] = useState<Engagement[]>([]);
@@ -225,7 +225,7 @@ function GithubExportModal({
   async function go() {
     setRunning(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/engagements/${engagement.id}/export/github`, {
+      const r = await authFetch(`/engagements/${engagement.id}/export/github`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

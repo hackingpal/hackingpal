@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 type Service = "shodan" | "censys";
 
@@ -56,7 +56,7 @@ export default function ShodanCensys() {
     if (!query.trim()) return;
     setLoading(true); setError(""); setResults(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/shodan-censys/query`, {
+      const r = await authFetch(`/shodan-censys/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ service, query: query.trim() }),

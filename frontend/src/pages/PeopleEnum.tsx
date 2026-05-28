@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 type SourceStatus = {
   name: string;
@@ -49,7 +49,7 @@ export default function PeopleEnum() {
     if (!target.trim()) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/people/enum`, {
+      const r = await authFetch(`/people/enum`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ target: target.trim(), sources: [...selected] }),

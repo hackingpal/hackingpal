@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 
 type Pattern = { label: string; template: string };
 
@@ -53,7 +53,7 @@ export default function GithubLeak() {
     setLoading(true); setError(""); setResults([]);
     try {
       const custom_queries = custom.split("\n").map((s) => s.trim()).filter(Boolean);
-      const r = await fetch(`${BACKEND_URL}/github-leak/search`, {
+      const r = await authFetch(`/github-leak/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

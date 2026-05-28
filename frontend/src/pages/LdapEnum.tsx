@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, parseError } from "../api";
 
 const CATEGORIES = ["users", "groups", "dcs", "policy", "gpos", "computers", "spns", "admins"];
 
@@ -44,7 +44,7 @@ export default function LdapEnum() {
   async function go() {
     setLoading(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/ldap/enum`, {
+      const r = await authFetch(`/ldap/enum`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ creds, categories: [...picked] }),

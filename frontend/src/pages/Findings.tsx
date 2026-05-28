@@ -9,7 +9,7 @@ import {
   type Finding,
   type ScanResult,
 } from "../lib/engagement";
-import { BACKEND_URL, parseError } from "../api";
+import { authFetch, BACKEND_URL, parseError } from "../api";
 
 type Severity = Finding["severity"];
 type Status = Finding["status"];
@@ -245,7 +245,7 @@ function FindingEditor({
   async function refreshScreenshots() {
     if (!initial) return;
     try {
-      const r = await fetch(`${BACKEND_URL}/engagements/${eid}/findings/${initial.id}/screenshots`);
+      const r = await authFetch(`/engagements/${eid}/findings/${initial.id}/screenshots`);
       if (r.ok) {
         const data = await r.json();
         setScreenshots(data.screenshots || []);
@@ -262,8 +262,8 @@ function FindingEditor({
       for (const file of Array.from(files)) {
         const fd = new FormData();
         fd.append("file", file);
-        const r = await fetch(
-          `${BACKEND_URL}/engagements/${eid}/findings/${initial.id}/screenshots`,
+        const r = await authFetch(
+          `/engagements/${eid}/findings/${initial.id}/screenshots`,
           { method: "POST", body: fd },
         );
         if (!r.ok) {
@@ -279,7 +279,7 @@ function FindingEditor({
   }
 
   async function deleteShot(sid: string) {
-    await fetch(`${BACKEND_URL}/engagements/${eid}/screenshots/${sid}`, { method: "DELETE" });
+    await authFetch(`/engagements/${eid}/screenshots/${sid}`, { method: "DELETE" });
     await refreshScreenshots();
   }
 

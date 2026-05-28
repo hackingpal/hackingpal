@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, BACKEND_URL, parseError } from "../api";
+import { api, authFetch, parseError } from "../api";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 type Mode = "password" | "email";
@@ -63,7 +63,7 @@ function PasswordTab() {
     if (!pwd) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const r = await fetch(`${BACKEND_URL}/breach/password`, {
+      const r = await authFetch(`/breach/password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: pwd }),

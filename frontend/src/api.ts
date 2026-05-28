@@ -375,7 +375,7 @@ export async function fetchDnsRecon(
   confirm: boolean,
 ): Promise<DnsReport | { needConfirm: true; reason: string }> {
   const url = `/dns/recon/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
-  const res = await fetch(`${BACKEND_URL}${url}`);
+  const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -576,7 +576,7 @@ export async function fetchCtSearch(
   confirm: boolean,
 ): Promise<CtReport | { needConfirm: true; reason: string }> {
   const url = `/ct/search/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
-  const res = await fetch(`${BACKEND_URL}${url}`);
+  const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -609,7 +609,7 @@ export async function fetchEmailAudit(
   domain: string, confirm: boolean,
 ): Promise<EmailReport | { needConfirm: true; reason: string }> {
   const url = `/email/audit/${encodeURIComponent(domain)}${confirm ? "?confirm=true" : ""}`;
-  const res = await fetch(`${BACKEND_URL}${url}`);
+  const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -638,7 +638,7 @@ export async function fetchTakeoverCheck(
   fqdn: string, confirm: boolean,
 ): Promise<TakeoverResult | { needConfirm: true; reason: string }> {
   const url = `/takeover/check/${encodeURIComponent(fqdn)}${confirm ? "?confirm=true" : ""}`;
-  const res = await fetch(`${BACKEND_URL}${url}`);
+  const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -675,7 +675,7 @@ export async function fetchReverseIp(
   target: string, confirm: boolean,
 ): Promise<ReverseIpReport | { needConfirm: true; reason: string }> {
   const url = `/reverse-ip/${encodeURIComponent(target)}${confirm ? "?confirm=true" : ""}`;
-  const res = await fetch(`${BACKEND_URL}${url}`);
+  const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -1264,7 +1264,7 @@ export async function fetchCms(
   url: string, confirm: boolean,
 ): Promise<CmsReport | { needConfirm: true; reason: string }> {
   const qs = new URLSearchParams({ url, ...(confirm ? { confirm: "true" } : {}) });
-  const res = await fetch(`${BACKEND_URL}/cms/fingerprint?${qs}`);
+  const res = await authFetch(`/cms/fingerprint?${qs}`);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -1548,7 +1548,7 @@ export async function fetchGraphql(
   url: string, confirm: boolean,
 ): Promise<GraphqlReport | { needConfirm: true; reason: string }> {
   const qs = new URLSearchParams({ url, ...(confirm ? { confirm: "true" } : {}) });
-  const res = await fetch(`${BACKEND_URL}/graphql/introspect?${qs}`);
+  const res = await authFetch(`/graphql/introspect?${qs}`);
   if (res.status === 409) {
     return parseNeedConfirm(res);
   }
@@ -1630,8 +1630,8 @@ export type StegoCapacity = {
 export const fetchStegoCapacity = async (file: File): Promise<StegoCapacity> => {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BACKEND_URL}/stego/capacity`,
-                          { method: "POST", body: fd });
+  const res = await authFetch(`/stego/capacity`,
+                              { method: "POST", body: fd });
   if (!res.ok) {
     const { message, code, body } = await parseErrorBody(res);
     throw new ApiError(message, { code, status: res.status, body });
@@ -1664,8 +1664,8 @@ export const embedStego = async (opts: StegoEmbedOptions): Promise<StegoEmbedRes
   fd.append("compress", String(opts.compress));
   fd.append("keep_filename", String(opts.keepFilename));
 
-  const res = await fetch(`${BACKEND_URL}/stego/embed`,
-                          { method: "POST", body: fd });
+  const res = await authFetch(`/stego/embed`,
+                              { method: "POST", body: fd });
   if (!res.ok) {
     const { message, code, body } = await parseErrorBody(res);
     throw new ApiError(message, { code, status: res.status, body });
@@ -1695,8 +1695,8 @@ export const extractStego = async (file: File, password?: string): Promise<Stego
   const fd = new FormData();
   fd.append("file", file);
   if (password) fd.append("password", password);
-  const res = await fetch(`${BACKEND_URL}/stego/extract`,
-                          { method: "POST", body: fd });
+  const res = await authFetch(`/stego/extract`,
+                              { method: "POST", body: fd });
   if (!res.ok) {
     const { message, code, body } = await parseErrorBody(res);
     throw new ApiError(message, { code, status: res.status, body });
@@ -1728,8 +1728,8 @@ export type StegoAnalyzeResp = {
 export const analyzeStego = async (file: File): Promise<StegoAnalyzeResp> => {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BACKEND_URL}/stego/analyze`,
-                          { method: "POST", body: fd });
+  const res = await authFetch(`/stego/analyze`,
+                              { method: "POST", body: fd });
   if (!res.ok) {
     const { message, code, body } = await parseErrorBody(res);
     throw new ApiError(message, { code, status: res.status, body });
@@ -1740,8 +1740,8 @@ export const analyzeStego = async (file: File): Promise<StegoAnalyzeResp> => {
 export const stripStegoMetadata = async (file: File): Promise<{ blob: Blob; filename: string }> => {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BACKEND_URL}/stego/strip-metadata`,
-                          { method: "POST", body: fd });
+  const res = await authFetch(`/stego/strip-metadata`,
+                              { method: "POST", body: fd });
   if (!res.ok) {
     const { message, code, body } = await parseErrorBody(res);
     throw new ApiError(message, { code, status: res.status, body });
