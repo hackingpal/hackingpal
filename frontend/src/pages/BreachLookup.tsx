@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, BACKEND_URL, parseError } from "../api";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 type Mode = "password" | "email";
 
@@ -204,10 +205,7 @@ function EmailTab({ status }: { status: StatusResp | null }) {
                 Breach date: {b.BreachDate} · Added to HIBP: {b.AddedDate} ·
                 Affected: {b.PwnCount.toLocaleString()}
               </div>
-              {b.Description && (
-                <div className="text-[11px] text-ink-muted mb-2"
-                     dangerouslySetInnerHTML={{ __html: b.Description }} />
-              )}
+              {b.Description && <BreachDescription html={b.Description} />}
               {b.DataClasses && b.DataClasses.length > 0 && (
                 <div className="text-[10px] text-ink-dim">
                   Compromised data: <span className="text-ink-primary">{b.DataClasses.join(", ")}</span>
@@ -218,5 +216,14 @@ function EmailTab({ status }: { status: StatusResp | null }) {
         </div>
       )}
     </div>
+  );
+}
+
+function BreachDescription({ html }: { html: string }) {
+  // HIBP descriptions are third-party HTML — sanitize before rendering.
+  const safe = useMemo(() => sanitizeHtml(html), [html]);
+  return (
+    <div className="text-[11px] text-ink-muted mb-2"
+         dangerouslySetInnerHTML={{ __html: safe }} />
   );
 }
