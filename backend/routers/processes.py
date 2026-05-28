@@ -259,7 +259,9 @@ def _kill_admin(pid: int, signum: int) -> tuple[bool, str]:
         pkexec = shutil.which("pkexec")
         if not pkexec:
             return False, "pkexec not installed — install policykit-1 (Debian) or polkit (RHEL/Arch)"
-        kill_bin = shutil.which("kill") or "/bin/kill"
+        kill_bin = shutil.which("kill")
+        if not kill_bin:
+            return False, "`kill` binary not found on PATH"
         try:
             r = subprocess.run(
                 [pkexec, kill_bin, f"-{signum}", str(pid)],
@@ -267,6 +269,8 @@ def _kill_admin(pid: int, signum: int) -> tuple[bool, str]:
             )
         except subprocess.TimeoutExpired:
             return False, "admin prompt timed out"
+        except FileNotFoundError:
+            return False, "pkexec or kill disappeared mid-call"
         if r.returncode == 0:
             return True, "killed via pkexec"
         # pkexec exits 126 on auth failure / user dismissal, 127 when no agent.
