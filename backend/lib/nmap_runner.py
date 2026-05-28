@@ -383,8 +383,13 @@ def build_argv(opts: NmapOptions, nmap_bin: str, xml_path: str) -> list[str]:
     if opts.packet_trace:
         argv.append("--packet-trace")
 
-    # Excludes
+    # Excludes — validate each entry against the same regex used for targets so
+    # an exclude string starting with `-` can't get re-interpreted as a flag by
+    # nmap, and to keep the input shape consistent.
     if opts.exclude:
+        for x in opts.exclude:
+            if not _TARGET_TOKEN.match(x):
+                raise ValueError(f"invalid exclude entry: {x!r}")
         argv += ["--exclude", ",".join(opts.exclude)]
 
     # Free-form extras — tokenise but reject shell metas
@@ -587,10 +592,17 @@ async def run_scan(
     tmp.close()
     xml_path = tmp.name
 
+    def _cleanup_xml() -> None:
+        try:
+            Path(xml_path).unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning("nmap_runner: failed to unlink %s: %s", xml_path, exc)
+
     try:
         argv = build_argv(opts, nmap_bin, xml_path)
     except ValueError as e:
         await on_event({"type": "error", "detail": str(e)})
+        _cleanup_xml()
         return {"rc": -1, "stopped": False, "report": None}
 
     cmd_str = " ".join(shlex.quote(a) for a in argv)
@@ -605,9 +617,11 @@ async def run_scan(
         )
     except FileNotFoundError as e:
         await on_event({"type": "error", "detail": f"nmap not found: {e}"})
+        _cleanup_xml()
         return {"rc": -1, "stopped": False, "report": None}
     except Exception as e:
         await on_event({"type": "error", "detail": str(e)})
+        _cleanup_xml()
         return {"rc": -1, "stopped": False, "report": None}
 
     stopped_flag = False
@@ -673,5 +687,7 @@ async def run_scan(
 
     await on_event({"type": "done", "rc": rc,
                     "stopped": stopped_flag, "report": report})
-    return {"rc": rc, "stopped": stopped_flag, "report": report,
-            "xml_path": xml_path}
+    result = {"rc": rc, "stopped": stopped_flag, "report": report,
+              "xml_path": xml_path}
+    _cleanup_xml()
+    return result
