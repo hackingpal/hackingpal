@@ -87,7 +87,8 @@ def _fetch_crtsh(domain: str, timeout: float = 60.0, retries: int = 2) -> tuple[
             if attempt == retries:
                 raise
             time.sleep(0.6 * (attempt + 1))
-    assert last_err is not None
+    if last_err is None:
+        raise RuntimeError("ct_log retry loop exited without success or error")
     raise last_err
 
 
