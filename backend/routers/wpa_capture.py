@@ -191,7 +191,10 @@ async def run_capture(ws: WebSocket) -> None:
             path, *argv[1:],
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
-        assert proc.stdout
+        if proc.stdout is None:
+            await ws.send_json({"type": "error",
+                                "detail": "subprocess stdout pipe unavailable"})
+            await ws.close(); return
         async for raw in proc.stdout:
             if stop.is_set():
                 proc.terminate(); break
