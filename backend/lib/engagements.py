@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -84,34 +85,47 @@ SCHEMA = [
 
 
 _conn: sqlite3.Connection | None = None
+_conn_lock = threading.Lock()
+_write_lock = threading.Lock()
 
 
 def _connect() -> sqlite3.Connection:
     global _conn
     if _conn is not None:
         return _conn
-    conn = sqlite3.connect(_db_path(), check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.row_factory = sqlite3.Row
-    for stmt in SCHEMA:
-        conn.execute(stmt)
-    conn.commit()
-    _conn = conn
-    return conn
+    with _conn_lock:
+        if _conn is not None:
+            return _conn
+        conn = sqlite3.connect(_db_path(), check_same_thread=False)
+        # WAL gives us concurrent readers + a single writer without the default
+        # rollback-journal "database is locked" errors when the backend threadpool
+        # serves multiple engagement endpoints at once.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.row_factory = sqlite3.Row
+        for stmt in SCHEMA:
+            conn.execute(stmt)
+        conn.commit()
+        _conn = conn
+        return conn
 
 
 @contextmanager
 def cursor() -> Iterator[sqlite3.Cursor]:
     conn = _connect()
-    c = conn.cursor()
-    try:
-        yield c
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        c.close()
+    # Serialise writers in-process. WAL handles cross-process locking but a
+    # shared sqlite3.Connection is not itself thread-safe.
+    with _write_lock:
+        c = conn.cursor()
+        try:
+            yield c
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            c.close()
 
 
 def _now() -> str:
