@@ -32,6 +32,7 @@ jobs:
               frontend/dist-electron/*.msi
               frontend/dist-electron/*.nupkg
               frontend/dist-electron/*.blockmap
+              frontend/dist-electron/latest*.yml
           - os: ubuntu-latest
             target: linux
             # Name targets explicitly so the runner only builds x64 variants.
@@ -44,6 +45,7 @@ jobs:
               frontend/dist-electron/*.AppImage
               frontend/dist-electron/*.deb
               frontend/dist-electron/*.snap
+              frontend/dist-electron/latest*.yml
           - os: ubuntu-24.04-arm
             target: linux
             # Name the AppImage target explicitly so electron-builder doesn't
@@ -62,6 +64,9 @@ jobs:
             sidecar_path: backend/dist/network-tools-backend/network-tools-backend
             artifact_glob: |
               frontend/dist-electron/mac*/**
+              frontend/dist-electron/*.dmg
+              frontend/dist-electron/*.dmg.blockmap
+              frontend/dist-electron/latest*.yml
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
@@ -375,26 +380,36 @@ jobs:
 
       - name: Stage release assets
         # electron-builder filenames embed the version, so normalize them
-        # to the stable names the README + release notes link to.
-        # macOS target is "dir" (unsigned .app folder), so zip it here.
+        # to the stable names the README + release notes link to. We also
+        # ship the auto-updater metadata files (latest*.yml) so installed
+        # apps using electron-updater can detect new releases via GitHub.
         run: |
           set -euo pipefail
           mkdir -p release-assets
 
-          echo "::group::macOS — zip .app bundle"
-          MAC_APP=$(find artifacts/macos -maxdepth 4 -type d -name "*.app" | head -1)
-          if [ -z "$MAC_APP" ]; then
-            echo "::error::macOS .app not found"
-            find artifacts/macos -maxdepth 4
+          echo "::group::macOS — DMG + zipped .app fallback + updater metadata"
+          MAC_DMG=$(find artifacts/macos -maxdepth 3 -type f -name "*.dmg" | head -1)
+          if [ -z "$MAC_DMG" ]; then
+            echo "::error::macOS .dmg not found"
+            find artifacts/macos -maxdepth 3
             exit 1
           fi
-          echo "found: $MAC_APP"
-          MAC_PARENT=$(dirname "$MAC_APP")
-          MAC_NAME=$(basename "$MAC_APP")
-          (cd "$MAC_PARENT" && zip -ry "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip" "$MAC_NAME")
+          echo "found: $MAC_DMG"
+          cp "$MAC_DMG" release-assets/MyHackingPal-macos-arm64.dmg
+          # Keep the zipped .app as a fallback for users who'd rather drag
+          # the bundle directly (or who can't mount DMGs).
+          MAC_APP=$(find artifacts/macos -maxdepth 4 -type d -name "*.app" | head -1)
+          if [ -n "$MAC_APP" ]; then
+            MAC_PARENT=$(dirname "$MAC_APP")
+            MAC_NAME=$(basename "$MAC_APP")
+            (cd "$MAC_PARENT" && zip -ry "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip" "$MAC_NAME")
+          fi
+          # latest-mac.yml drives electron-updater on Mac.
+          MAC_YML=$(find artifacts/macos -maxdepth 3 -type f -name "latest-mac.yml" | head -1)
+          if [ -n "$MAC_YML" ]; then cp "$MAC_YML" release-assets/; fi
           echo "::endgroup::"
 
-          echo "::group::Windows — NSIS installer"
+          echo "::group::Windows — NSIS installer + updater metadata"
           WIN_EXE=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe" | head -1)
           if [ -z "$WIN_EXE" ]; then
             echo "::error::Windows NSIS installer not found"
@@ -403,9 +418,18 @@ jobs:
           fi
           echo "found: $WIN_EXE"
           cp "$WIN_EXE" release-assets/MyHackingPal-windows-x64.exe
+          # latest.yml drives electron-updater on Windows; the .blockmap
+          # enables differential updates so users only re-download the
+          # changed bytes between versions.
+          WIN_YML=$(find artifacts/windows -maxdepth 2 -type f -name "latest.yml" | head -1)
+          if [ -n "$WIN_YML" ]; then cp "$WIN_YML" release-assets/; fi
+          WIN_BLOCKMAP=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe.blockmap" | head -1)
+          if [ -n "$WIN_BLOCKMAP" ]; then
+            cp "$WIN_BLOCKMAP" release-assets/MyHackingPal-windows-x64.exe.blockmap
+          fi
           echo "::endgroup::"
 
-          echo "::group::Linux — AppImage (x86_64)"
+          echo "::group::Linux — AppImage (x86_64) + updater metadata"
           # The arm64 AppImage lives in MyHackingPal-ubuntu-24.04-arm and is
           # deliberately not attached to releases yet — release notes only
           # promise x86_64.
@@ -417,6 +441,8 @@ jobs:
           fi
           echo "found: $LINUX_APPIMAGE"
           cp "$LINUX_APPIMAGE" release-assets/MyHackingPal-linux-x86_64.AppImage
+          LINUX_YML=$(find artifacts/linux -maxdepth 2 -type f -name "latest-linux.yml" | head -1)
+          if [ -n "$LINUX_YML" ]; then cp "$LINUX_YML" release-assets/; fi
           echo "::endgroup::"
 
           ls -lh release-assets/
