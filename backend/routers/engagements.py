@@ -24,6 +24,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/engagements", tags=["engagements"])
 
 
+def _md_code_fence(content: str) -> tuple[str, str]:
+    """Return (open_fence, close_fence) that won't be terminated by `content`.
+
+    Markdown code fences may be ``` or longer; a longer fence wraps content
+    that contains shorter runs of backticks. Pick a fence one tick longer
+    than the longest run of backticks in `content`, with a minimum of 3.
+    """
+    longest = 0
+    run = 0
+    for ch in content:
+        if ch == "`":
+            run += 1
+            longest = max(longest, run)
+        else:
+            run = 0
+    fence = "`" * max(3, longest + 1)
+    return fence, fence
+
+
 # ── Request models ──────────────────────────────────────────────────────────
 
 class EngagementCreate(BaseModel):
@@ -263,6 +282,8 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
         for f in findings:
             title = f"[{f['severity'].upper()}] {f['title']}"
             label = f"{body.label_prefix}/{f['severity']}"
+            evidence = (f.get("evidence") or "")[:8000]
+            open_fence, close_fence = _md_code_fence(evidence)
             body_md = (
                 f"### Engagement\n{eng['name']}\n\n"
                 f"### Severity\n`{f['severity']}`"
@@ -270,7 +291,7 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
                 + "\n\n"
                 f"### Description\n{f.get('description', '') or '_(none)_'}\n\n"
                 f"### Evidence\n"
-                f"```\n{(f.get('evidence') or '')[:8000]}\n```\n\n"
+                f"{open_fence}\n{evidence}\n{close_fence}\n\n"
                 f"---\n_recorded {f['ts']} · finding id `{f['id']}` · "
                 f"engagement `{eid}`_\n"
             )
@@ -536,7 +557,8 @@ def _render_md(
         if f["description"]:
             out.append(f"\n{f['description']}\n")
         if f["evidence"]:
-            out.append(f"\n```\n{f['evidence']}\n```\n")
+            open_fence, close_fence = _md_code_fence(f["evidence"])
+            out.append(f"\n{open_fence}\n{f['evidence']}\n{close_fence}\n")
 
     out.append("\n## Activity Log\n")
     if not results:
