@@ -9,7 +9,16 @@
  */
 import { useState } from "react";
 
-export type KV = { key: string; value: string };
+// `id` is an internal, stable identifier used as the React key for KV rows.
+// Keying off the array index causes the wrong row to keep focus / IME state
+// when a row above is removed mid-typing.
+export type KV = { id: string; key: string; value: string };
+
+function newKvId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `kv-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 export type RequestState = {
   url: string;
@@ -73,7 +82,7 @@ export default function RequestForm({ state, setState, running }: Props) {
   }
 
   function addKV(field: "headers" | "cookies") {
-    update({ [field]: [...state[field], { key: "", value: "" }] } as Partial<RequestState>);
+    update({ [field]: [...state[field], { id: newKvId(), key: "", value: "" }] } as Partial<RequestState>);
   }
 
   function removeKV(field: "headers" | "cookies", index: number) {
@@ -150,7 +159,7 @@ export default function RequestForm({ state, setState, running }: Props) {
                 </button>
               </div>
               {state[field].map((kv, i) => (
-                <div key={i} className="flex gap-2 mb-1">
+                <div key={kv.id} className="flex gap-2 mb-1">
                   <input value={kv.key} onChange={(e) => updateKV(field, i, { key: e.target.value })}
                          disabled={running}
                          placeholder={field === "headers" ? "X-Header-Name" : "session_id"}
