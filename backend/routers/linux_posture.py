@@ -312,13 +312,14 @@ def _classify(mac: dict[str, Any], fw: dict[str, Any],
         f.append({"severity": "warn", "label": "No MAC framework",
                   "detail": "Neither SELinux nor AppArmor is loaded — kernel "
                             "has no mandatory access control layer."})
-    elif mac["selinux"] == "disabled" or mac["apparmor"] == "loaded" and mac["enforcing_profiles"] == 0:
-        f.append({"severity": "warn", "label": "MAC framework not enforcing",
-                  "detail": f"selinux={mac['selinux']} apparmor={mac['apparmor']} "
-                            f"({mac['enforcing_profiles']} enforcing profiles)"})
     elif mac["selinux"] == "permissive":
         f.append({"severity": "warn", "label": "SELinux permissive",
                   "detail": "Policy violations are logged but not blocked."})
+    elif not (mac["selinux"] == "enforcing"
+              or (mac["apparmor"] == "loaded" and mac["enforcing_profiles"] > 0)):
+        f.append({"severity": "warn", "label": "MAC framework not enforcing",
+                  "detail": f"selinux={mac['selinux']} apparmor={mac['apparmor']} "
+                            f"({mac['enforcing_profiles']} enforcing profiles)"})
 
     # ── Firewall ──────────────────────────────────────────────────────────
     if fw["backend"] == "none":
