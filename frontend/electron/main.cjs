@@ -50,29 +50,48 @@ function spawnBackend() {
 }
 
 function killBackend() {
-  if (backendProc && !backendProc.killed) {
-    console.log("[network-tools] killing backend pid", backendProc.pid);
-    try { backendProc.kill("SIGTERM"); } catch (e) { /* ignore */ }
-    backendProc = null;
-  }
+  if (!backendProc || backendProc.killed) return;
+  const proc = backendProc;
+  backendProc = null;
+  console.log("[network-tools] killing backend pid", proc.pid);
+  try { proc.kill("SIGTERM"); } catch (e) { /* ignore */ }
+  // If SIGTERM doesn't reap the process within 3s (uvicorn lifespan shutdown
+  // can stall on a stuck WS handler), escalate to SIGKILL so app quit
+  // doesn't hang.
+  setTimeout(() => {
+    if (proc.exitCode === null && proc.signalCode === null) {
+      console.log("[network-tools] backend didn't exit on SIGTERM — SIGKILL");
+      try { proc.kill("SIGKILL"); } catch (e) { /* ignore */ }
+    }
+  }, 3000).unref?.();
 }
 
 function waitForHealth(timeoutMs = 15000) {
   const start = Date.now();
   return new Promise((resolve) => {
-    const tick = () => {
-      const req = http.get({ host: "127.0.0.1", port: BACKEND_PORT,
-                              path: "/health", timeout: 1000 }, (res) => {
-        if (res.statusCode === 200) { resolve(true); return; }
-        res.resume();
-        retry();
-      });
-      req.on("error", retry);
-      req.on("timeout", () => { req.destroy(); retry(); });
-    };
-    const retry = () => {
+    const scheduleRetry = () => {
       if (Date.now() - start > timeoutMs) resolve(false);
       else setTimeout(tick, 200);
+    };
+    const tick = () => {
+      // On timeout we both call req.destroy() (which emits 'error') AND the
+      // timeout handler fires — without a per-tick guard that would queue
+      // multiple retries and pile parallel requests on top of each other.
+      let settled = false;
+      const finishTick = (success) => {
+        if (settled) return;
+        settled = true;
+        if (success) resolve(true);
+        else scheduleRetry();
+      };
+      const req = http.get({ host: "127.0.0.1", port: BACKEND_PORT,
+                              path: "/health", timeout: 1000 }, (res) => {
+        const ok = res.statusCode === 200;
+        res.resume(); // drain so the socket can be reused / closed cleanly
+        finishTick(ok);
+      });
+      req.on("error", () => finishTick(false));
+      req.on("timeout", () => { req.destroy(); finishTick(false); });
     };
     tick();
   });
@@ -131,7 +150,23 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+// Single-instance lock — second launch would otherwise spawn a second sidecar
+// that fails to bind to 8765 and silently leaves the user with a broken
+// window. Instead, focus the existing window and exit the new process.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    const wins = BrowserWindow.getAllWindows();
+    if (wins.length) {
+      const win = wins[0];
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
+  });
+  app.whenReady().then(createWindow);
+}
 
 app.on("before-quit", killBackend);
 app.on("will-quit",   killBackend);
