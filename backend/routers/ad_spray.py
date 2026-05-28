@@ -41,13 +41,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["ad-spray"])
 
 
-def _get_lockout_threshold(creds: CredsModel) -> int:
-    """Best-effort: pull lockoutThreshold from the domain policy. Returns 0
-    (no lockout) if we can't read it or it's not set."""
+def _get_lockout_threshold(creds: CredsModel) -> int | None:
+    """Pull lockoutThreshold from the domain policy.
+
+    Returns the integer threshold (0 means "no lockout policy"), or None if we
+    couldn't read it (bind failed, search failed, attribute missing). Callers
+    must distinguish None from 0 — None means we have no safety information,
+    not that there's no lockout policy.
+    """
     try:
         conn = open_ldap(creds)
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.warning("ad_spray: open_ldap failed (%s) — lockout threshold unknown", exc)
+        return None
     try:
         base = domain_to_base_dn(creds.domain)
         conn.search(
@@ -57,12 +63,14 @@ def _get_lockout_threshold(creds: CredsModel) -> int:
         )
         if conn.entries:
             return int(conn.entries[0].lockoutThreshold.value or 0)
-    except Exception:
-        pass
+        logger.warning("ad_spray: lockoutThreshold search returned no entries")
+        return None
+    except Exception as exc:
+        logger.warning("ad_spray: lockoutThreshold read failed (%s)", exc)
+        return None
     finally:
         try: conn.unbind()
         except Exception: pass
-    return 0
 
 
 def _try_bind(creds: CredsModel, user: str, password: str) -> tuple[str, str]:
@@ -129,16 +137,31 @@ async def spray_ws(ws: WebSocket) -> None:
             ))
             await ws.close(); return
 
-        # We need an authenticated bind to read the policy — caller must
-        # supply working creds in `creds.username` + `creds.password` OR
-        # accept that we treat threshold=0 (no lockout).
-        threshold = _get_lockout_threshold(creds)
+        # We need an authenticated bind to read the policy. If we can't read it,
+        # threshold_raw is None — the caller must opt in by setting
+        # `acknowledge_unknown_threshold` before we'll proceed, otherwise we
+        # could lock out every account we spray.
+        threshold_raw = _get_lockout_threshold(creds)
+        threshold_known = threshold_raw is not None
+        ack_unknown = bool(init.get("acknowledge_unknown_threshold", False))
+        if not threshold_known and not ack_unknown:
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Could not read domain lockoutThreshold (bind/search failed). "
+                "Provide working `creds.username`/`creds.password` so we can read "
+                "the policy, or pass `acknowledge_unknown_threshold: true` to "
+                "spray without lockout protection (RISKY — may lock out users).",
+            ))
+            await ws.close(); return
+
+        threshold = threshold_raw if threshold_known else 0
         safe = max(0, threshold - 1) if threshold > 0 else 0  # never hit the last attempt
 
         total = len(users) * len(passwords)
         await ws.send_json({
             "type": "started", "total": total,
             "lockout_threshold": threshold,
+            "threshold_known": threshold_known,
             "safe_threshold": safe,
         })
 

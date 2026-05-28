@@ -3,7 +3,7 @@ import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 
 type SprayEvent =
-  | { type: "started"; total: number; lockout_threshold: number; safe_threshold: number }
+  | { type: "started"; total: number; lockout_threshold: number; threshold_known: boolean; safe_threshold: number }
   | { type: "attempt"; user: string; password_index: number;
       status: "success" | "fail" | "locked" | "error" | "skipped"; detail: string }
   | { type: "progress"; done: number; total: number; success: number; locked: number }
@@ -19,8 +19,9 @@ export default function AdSpray() {
   const [passwordsText, setPasswordsText] = useState("Spring2026!\nWinter2026!\nPassword1!");
   const [delay, setDelay] = useState(0.5);
   const [maxLockouts, setMaxLockouts] = useState(0);
+  const [ackUnknown, setAckUnknown] = useState(false);
 
-  const [meta, setMeta] = useState<{ total: number; threshold: number; safe: number } | null>(null);
+  const [meta, setMeta] = useState<{ total: number; threshold: number; thresholdKnown: boolean; safe: number } | null>(null);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0, success: 0, locked: 0 });
   const [successes, setSuccesses] = useState<{ user: string; password: string }[]>([]);
@@ -30,7 +31,8 @@ export default function AdSpray() {
     "/ws/ad-spray",
     (ev) => {
       if (ev.type === "started") {
-        setMeta({ total: ev.total, threshold: ev.lockout_threshold, safe: ev.safe_threshold });
+        setMeta({ total: ev.total, threshold: ev.lockout_threshold,
+                  thresholdKnown: ev.threshold_known, safe: ev.safe_threshold });
         setAttempts([]); setSuccesses([]); setDoneText("");
         setProgress({ done: 0, total: ev.total, success: 0, locked: 0 });
       } else if (ev.type === "attempt") {
@@ -51,7 +53,8 @@ export default function AdSpray() {
   function go() {
     const users = usersText.split("\n").map((s) => s.trim()).filter(Boolean);
     const passwords = passwordsText.split("\n").map((s) => s.trim()).filter(Boolean);
-    start({ creds, users, passwords, delay_sec: delay, max_lockouts: maxLockouts });
+    start({ creds, users, passwords, delay_sec: delay, max_lockouts: maxLockouts,
+            acknowledge_unknown_threshold: ackUnknown });
   }
 
   return (
@@ -104,6 +107,13 @@ export default function AdSpray() {
                               text-[12px] font-mono focus:outline-none focus:border-accent" />
             lockouts (0 = unlimited)
           </label>
+          <label className="flex items-center gap-1.5 text-[11px] text-danger ml-auto"
+                 title="If checked, we'll spray even when we couldn't read the lockoutThreshold — risky.">
+            <input type="checkbox" checked={ackUnknown}
+                   onChange={(e) => setAckUnknown(e.target.checked)}
+                   disabled={running} />
+            spray without threshold (risky)
+          </label>
         </div>
         <div className="flex items-center gap-2">
           {!running ? (
@@ -120,7 +130,11 @@ export default function AdSpray() {
           )}
           {meta && (
             <span className="text-[11px] text-ink-dim">
-              total: {meta.total} · lockout threshold: {meta.threshold || "none"} · safe: {meta.safe || "∞"}
+              total: {meta.total} · lockout threshold: {
+                !meta.thresholdKnown
+                  ? <span className="text-danger">unknown (spraying blind)</span>
+                  : (meta.threshold || "none")
+              } · safe: {meta.safe || "∞"}
             </span>
           )}
           {error && <span className="text-[11px] text-danger">⚠ {error}</span>}
