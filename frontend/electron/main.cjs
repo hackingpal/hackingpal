@@ -9,6 +9,7 @@ const { app, BrowserWindow } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
+const { autoUpdater } = require("electron-updater");
 
 const isDev = process.env.NODE_ENV === "development";
 const BACKEND_PORT = parseInt(process.env.NT_BACKEND_PORT || "8765", 10);
@@ -97,6 +98,43 @@ function waitForHealth(timeoutMs = 15000) {
   });
 }
 
+function configureAutoUpdater() {
+  // electron-updater reads publish config from package.json's `build` block
+  // (provider: github, owner/repo). Skipped in dev — there's no installed
+  // app to update.
+  if (!app.isPackaged) return;
+
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("error", (err) => {
+    // Likely causes: no network, repo unreachable, or — on macOS — the
+    // unsigned bundle can't be replaced. Log and move on; the user will
+    // see a "BACKEND UNREACHABLE"-style state only if the actual app is
+    // broken, not because we failed to check for an update.
+    console.warn("[network-tools] autoUpdater error:", err?.message ?? err);
+  });
+  autoUpdater.on("update-available", (info) => {
+    console.log("[network-tools] update available:", info?.version);
+  });
+  autoUpdater.on("update-downloaded", (info) => {
+    console.log("[network-tools] update downloaded:", info?.version,
+                "— will install on next quit");
+  });
+
+  // Check shortly after launch so the renderer + sidecar finish booting
+  // first. Then re-check every 6h to catch long-running sessions.
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.warn("[network-tools] checkForUpdates rejected:",
+                   err?.message ?? err);
+    });
+  }, 10_000);
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch(() => { /* logged via 'error' */ });
+  }, 6 * 60 * 60 * 1000).unref?.();
+}
+
 async function createWindow() {
   if (app.isPackaged) {
     spawnBackend();
@@ -106,6 +144,7 @@ async function createWindow() {
     waitForHealth().then((ok) => {
       if (!ok) console.error("[network-tools] backend never became ready");
     });
+    configureAutoUpdater();
   }
 
   // Title-bar treatment per OS:
