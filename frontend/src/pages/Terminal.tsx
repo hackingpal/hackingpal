@@ -116,7 +116,9 @@ export default function Terminal() {
 }
 
 function shortCwd(cwd: string): string {
-  const home = "/Users/" + (cwd.split("/")[2] ?? "");
-  if (cwd.startsWith(home)) return "~" + cwd.slice(home.length);
+  // Match /Users/<name>, /home/<name>, or C:\Users\<name> so the prompt shortens
+  // on macOS, Linux, and Windows. /root is the conventional Linux root home.
+  const m = cwd.match(/^(\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\\Users\\[^\\]+)/);
+  if (m) return "~" + cwd.slice(m[0].length);
   return cwd;
 }
