@@ -71,7 +71,7 @@ if _ALLOW_PUBLIC:
         "is now the only thing protecting privileged endpoints.\n"
     )
 
-app = FastAPI(title="MyHackingPal", version="0.1.0")
+app = FastAPI(title="MyHackingPal", version="0.2.0")
 
 # Global error envelope + handlers. Every uncaught exception becomes
 # {"error": "...", "code": "..."} with the stack trace logged server-side
