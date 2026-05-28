@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["email-security"], dependencies=[Depends(require_local_auth)])
 
 import shutil as _shutil
-DIG = _shutil.which("dig") or "/usr/bin/dig"
+DIG = _shutil.which("dig")
 
 DKIM_SELECTORS = (
     "default", "google", "k1", "k2", "selector1", "selector2",
@@ -39,6 +39,8 @@ DKIM_SELECTORS = (
 
 
 def _query_txt(name: str) -> list[str]:
+    if not DIG:
+        return []
     try:
         r = subprocess.run(
             [DIG, "+short", "+time=2", "+tries=1", name, "TXT"],
@@ -158,6 +160,14 @@ async def email_audit(domain: str, confirm: bool = Query(default=False)) -> dict
     # literals (no dots-only labels), and requires at least one dot.
     domain = validate_domain(domain, field="domain")
     require_target(domain, confirm=confirm)
+
+    if not DIG:
+        raise MhpError(
+            "`dig` not found on PATH — install BIND tools "
+            "(`brew install bind` on macOS, `apt install dnsutils` on Debian/Ubuntu)",
+            code=ErrorCode.TOOL_MISSING,
+            status_code=503,
+        )
 
     # Resolve check — bail early on NXDOMAIN so we don't emit spurious findings.
     try:
