@@ -24,9 +24,11 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_domain
 
 import logging
@@ -47,6 +49,7 @@ class EnumBody(BaseModel):
     sources: list[str] = Field(
         default_factory=lambda: ["duckduckgo", "crtsh", "hackertarget", "hunter"],
     )
+    confirm: bool = False
 
 
 @router.get("/status")
@@ -63,10 +66,14 @@ def status() -> dict[str, Any]:
 
 
 @router.post("/enum")
-async def enum(body: EnumBody) -> dict[str, Any]:
+async def enum(body: EnumBody, request: Request) -> dict[str, Any]:
     # `validate_domain` strips whitespace, enforces length (RFC 1035 cap),
     # rejects IP literals, and requires at least one dot.
     target = validate_domain(body.target, field="target")
+    scope.enforce_rest(
+        target, get_engagement_id(request), get_mode(request),
+        confirm=body.confirm,
+    )
 
     findings: dict[str, list[str]] = {
         "duckduckgo": [], "crtsh": [], "hackertarget": [], "hunter": [],

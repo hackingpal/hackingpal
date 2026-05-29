@@ -19,12 +19,14 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from lib.auth import require_local_auth
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_domain
 
 from .settings import keychain_get_named
@@ -105,6 +107,7 @@ class GenerateBody(BaseModel):
     target: str = Field(..., min_length=1)
     categories: list[str] = Field(default_factory=lambda: list(CATEGORIES.keys()))
     execute: bool = False
+    confirm: bool = False
 
 
 @router.get("/categories")
@@ -138,8 +141,15 @@ def _dorks_for(target: str, picked: list[str]) -> list[dict[str, str]]:
 
 
 @router.post("/generate")
-async def generate(body: GenerateBody) -> dict[str, Any]:
+async def generate(body: GenerateBody, request: Request) -> dict[str, Any]:
     target = validate_domain(body.target, field="target")
+    # Generating dork *strings* is passive; only enforce on the execute path.
+    # In Engagement mode we still verify the engagement is valid so the user
+    # can't accidentally craft dorks against an out-of-scope target.
+    scope.enforce_rest(
+        target, get_engagement_id(request), get_mode(request),
+        confirm=body.confirm, deny_only=not body.execute,
+    )
     dorks = _dorks_for(target, body.categories)
     if not body.execute:
         return {"dorks": dorks, "executed": False}
@@ -206,9 +216,15 @@ _DORK_DESCRIPTIONS: dict[str, str] = {
 
 
 @osint_router.get("/osint/dorks/{domain}")
-async def osint_dorks(domain: str) -> dict[str, Any]:
+async def osint_dorks(domain: str, request: Request) -> dict[str, Any]:
     """Generate dork strings + per-engine search URLs for the target."""
     target = validate_domain(domain, field="domain")
+    # Passive — generates strings only, no outbound calls. Engagement mode
+    # still requires a valid active engagement so out-of-scope dorks can't
+    # be enumerated without an authorized scope.
+    scope.enforce_rest(
+        target, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     dorks: list[dict[str, str]] = []
     for cat, tmpls in CATEGORIES.items():
         for tmpl in tmpls:

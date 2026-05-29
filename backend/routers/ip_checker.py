@@ -12,12 +12,13 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
-from lib import ip_intel
+from lib import ip_intel, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_target
 
 logger = logging.getLogger(__name__)
@@ -207,15 +208,19 @@ def _lookup_cached(target: str) -> IpReport:
 
 
 @router.get("/{target}", response_model=IpReport)
-def lookup(target: str) -> IpReport:
+def lookup(target: str, request: Request) -> IpReport:
     # Path param validation. Strips whitespace, enforces length, rejects
     # malformed hostnames *before* we ever resolve them.
     target = validate_target(target)
+    # Passive lookup (geoIP / DNSBL only — no probe of the target itself).
+    scope.enforce_rest(
+        target, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     return _lookup_cached(target)
 
 
 @router.post("/bulk", response_model=BulkResponse)
-def bulk(req: BulkRequest) -> BulkResponse:
+def bulk(req: BulkRequest, request: Request) -> BulkResponse:
     # Strip blanks + per-item validation. The first bad entry surfaces
     # an INVALID_TARGET error with the offending value so the UI can
     # highlight it; the rest of the batch is *not* run.
@@ -242,7 +247,17 @@ def bulk(req: BulkRequest) -> BulkResponse:
     if not targets:
         return BulkResponse(results=[])
 
+    # Per-target scope check so a heterogeneous batch can have some entries
+    # in scope and others out — out-of-scope ones surface as `ok=false` with
+    # the scope reason instead of denying the whole batch.
+    eid = get_engagement_id(request)
+    mode = get_mode(request)
+
     def one(t: str) -> BulkResult:
+        try:
+            scope.enforce_rest(t, eid, mode, deny_only=True)
+        except MhpError as exc:
+            return BulkResult(target=t, ok=False, error=exc.message)
         try:
             return BulkResult(target=t, ok=True, report=_lookup_cached(t))
         except MhpError as exc:

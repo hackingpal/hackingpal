@@ -15,11 +15,13 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 from .settings import keychain_get_named
 
@@ -55,6 +57,7 @@ class ScanBody(BaseModel):
     patterns: list[str] | None = None  # subset of pattern labels, or None for all
     custom_queries: list[str] = Field(default_factory=list, max_length=20)
     per_query: int = Field(default=10, ge=1, le=30)
+    confirm: bool = False
 
 
 @router.get("/patterns")
@@ -83,7 +86,7 @@ def _build_headers() -> dict[str, str]:
 
 
 @router.post("/search")
-async def search(body: ScanBody) -> dict[str, Any]:
+async def search(body: ScanBody, request: Request) -> dict[str, Any]:
     t = body.target.strip()
     if not t:
         raise MhpError("target is required", code=ErrorCode.INVALID_TARGET)
@@ -98,6 +101,10 @@ async def search(body: ScanBody) -> dict[str, Any]:
             "target contains invalid characters",
             code=ErrorCode.INVALID_TARGET,
         )
+
+    scope.enforce_rest(
+        t, get_engagement_id(request), get_mode(request), confirm=body.confirm,
+    )
 
     chosen = body.patterns
     queries: list[tuple[str, str]] = []
