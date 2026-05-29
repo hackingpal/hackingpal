@@ -1,0 +1,22 @@
+services:
+  nmap-scanner:
+    build: .
+    image: nmap-scanner:latest
+    container_name: nmap-scanner
+    restart: unless-stopped
+
+    # nmap raw-socket scans (SYN scan, OS detection, UDP) need these
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+
+    ports:
+      - "5900:5900"   # VNC (direct client)
+      - "6080:6080"   # noVNC (browser)
+
+    environment:
+      - RESOLUTION=1280x800   # change to 1920x1080 for larger display
+
+    # Uncomment to persist scan results outside the container
+    # volumes:
+    #   - ./scans:/root/Nmap Scans
