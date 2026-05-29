@@ -158,9 +158,73 @@ async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
     return {"email": email, "breaches": data, "count": len(data)}
 
 
+@router.get("/domain/{domain}")
+async def domain_check(domain: str) -> dict[str, Any]:
+    """HIBP domain-wide breach search (paid HIBP API key required).
+
+    Returns the full per-breach roll-up — counts of accounts exposed,
+    data classes leaked, and breach timeline — so the UI can group by
+    breach and show exposed data types.
+    """
+    d = (domain or "").strip().lower().lstrip(".")
+    if not d or "." not in d:
+        raise MhpError(
+            "domain must contain a dot",
+            code=ErrorCode.INVALID_DOMAIN,
+            status_code=400,
+        )
+
+    key = keychain_get_named("hibp_api_key")
+    if not key:
+        raise MhpError(
+            "HIBP API key not set. Add one via "
+            "`POST /settings/keys/hibp_api_key` (paid, $3.95/month).",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
+    headers = {"hibp-api-key": key, "User-Agent": UA}
+    try:
+        async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+            r = await client.get(f"{HIBP_BASE}/breaches/domain/{quote(d)}")
+    except httpx.HTTPError as e:
+        logger.warning("HIBP domain request failed: %s", e)
+        raise MhpError(
+            "HIBP request failed",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        ) from None
+
+    if r.status_code == 404:
+        return {"domain": d, "breaches": [], "count": 0}
+    if r.status_code == 401:
+        raise MhpError(
+            "HIBP rejected the API key.",
+            code=ErrorCode.UNAUTHORIZED,
+            status_code=401,
+        )
+    if r.status_code == 429:
+        retry = r.headers.get("retry-after", "")
+        raise MhpError(
+            f"HIBP rate-limited; retry after {retry}s",
+            code=ErrorCode.RATE_LIMITED,
+            status_code=429,
+            extra={"retry_after": retry},
+        )
+    if not r.ok:
+        raise MhpError(
+            f"HIBP returned {r.status_code}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=r.status_code,
+        )
+    data = r.json()
+    breaches = data if isinstance(data, list) else []
+    return {"domain": d, "breaches": breaches, "count": len(breaches)}
+
+
 @router.get("/status")
 def status() -> dict[str, Any]:
     return {
         "password_check": True,            # always available (free k-anonymity)
         "email_check_available": keychain_get_named("hibp_api_key") is not None,
+        "domain_check_available": keychain_get_named("hibp_api_key") is not None,
     }

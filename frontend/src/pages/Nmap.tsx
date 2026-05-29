@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import NmapScriptPicker, { type ScriptPickerPatch } from "../components/NmapScriptPicker";
 import {
   openWs,
   fetchNmapStatus, installNmapSudo,
@@ -575,6 +576,28 @@ export default function Nmap() {
 
       {/* Body */}
       <div className="flex-1 overflow-auto p-6 space-y-4">
+        {/* Script picker — feeds nse_categories / nse_scripts / nse_args
+            straight into `opts` so the existing argv preview picks it up. */}
+        <NmapScriptPicker
+          selectedCategories={opts.nse_categories ?? []}
+          selectedScripts={opts.nse_scripts ?? []}
+          scriptArgs={opts.nse_args ?? ""}
+          onApply={(patch: ScriptPickerPatch & { _preset?: string | null }) => {
+            setOpts((o) => {
+              const next: NmapOptions = { ...o };
+              if (patch.nse_categories !== undefined) next.nse_categories = patch.nse_categories;
+              if (patch.nse_scripts    !== undefined) next.nse_scripts    = patch.nse_scripts;
+              if (patch.nse_args       !== undefined) next.nse_args       = patch.nse_args;
+              if (patch.port_spec      !== undefined && patch.port_spec)
+                next.port_spec = patch.port_spec;
+              if (patch.service_version) next.service_version = true;
+              if (patch.os_detect)       next.os_detect       = true;
+              if (patch.traceroute)      next.traceroute      = true;
+              return next;
+            });
+            if (patch._preset !== undefined) setActiveProfile(patch._preset ?? "");
+          }}
+        />
         {error && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">

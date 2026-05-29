@@ -30,6 +30,8 @@ from .settings import keychain_get_named
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dorking", tags=["dorking"])
+# Separate router (no /dorking prefix) for the /osint/dorks/{domain} alias.
+osint_router = APIRouter(tags=["dorking-osint"])
 
 UA = "MyHackingPal/0.1 dorking"
 
@@ -181,3 +183,46 @@ async def generate(body: GenerateBody) -> dict[str, Any]:
                 results.append({**d, "items": [], "error": "request failed"})
 
     return {"dorks": results, "executed": True}
+
+
+# ── /osint/dorks/{domain} alias ─────────────────────────────────────────────
+# Wraps the existing CATEGORIES into the spec'd shape (with per-engine
+# search URLs) so the new "Dork Generator" OSINT page can talk to one
+# stable endpoint rather than chaining /dorking/categories + /generate.
+
+_DORK_DESCRIPTIONS: dict[str, str] = {
+    "files":     "Public documents (PDF, XLSX, SQL, backups).",
+    "admin":     "Admin panels and login pages.",
+    "leaks":     "Exposed credentials, secrets, private keys.",
+    "errors":    "Server errors that may leak stack traces.",
+    "configs":   "Exposed config/.env/.git/yml/htaccess.",
+    "discovery": "Subdomains and dev/staging endpoints.",
+    "archives":  "Archived / cached copies (Wayback, archive.org).",
+}
+
+
+@osint_router.get("/osint/dorks/{domain}")
+async def osint_dorks(domain: str) -> dict[str, Any]:
+    """Generate dork strings + per-engine search URLs for the target."""
+    target = validate_domain(domain, field="domain")
+    dorks: list[dict[str, str]] = []
+    for cat, tmpls in CATEGORIES.items():
+        for tmpl in tmpls:
+            q = tmpl.replace("{t}", target)
+            dorks.append({
+                "category":    cat,
+                "dork":        q,
+                "description": _DORK_DESCRIPTIONS.get(cat, ""),
+            })
+    # Per-engine URL templates — populated once with the first dork query;
+    # the frontend re-renders these for each item by replacing the URL prefix.
+    return {
+        "domain":     target,
+        "count":      len(dorks),
+        "dorks":      dorks,
+        "engines": {
+            "google":     "https://www.google.com/search?q=",
+            "bing":       "https://www.bing.com/search?q=",
+            "duckduckgo": "https://duckduckgo.com/?q=",
+        },
+    }

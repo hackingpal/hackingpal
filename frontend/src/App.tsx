@@ -75,6 +75,11 @@ import C2Beacon from "./pages/C2Beacon";
 import ProfileFinder from "./pages/ProfileFinder";
 import BloodHound from "./pages/BloodHound";
 import LateralMove from "./pages/LateralMove";
+import Exploits from "./pages/Exploits";
+import Wayback from "./pages/Wayback";
+import UrlScan from "./pages/UrlScan";
+import EmailHarvest from "./pages/EmailHarvest";
+import DorksGen from "./pages/DorksGen";
 import ChatBubble from "./components/ChatBubble";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
@@ -331,6 +336,11 @@ export default function App() {
            active === "vpn"         ? <Vpn /> :
            active === "term"        ? <Terminal /> :
            active === "brew"        ? <Brew /> :
+           active === "exploits"    ? <Exploits /> :
+           active === "wayback"     ? <Wayback /> :
+           active === "urlscan"     ? <UrlScan /> :
+           active === "emailharvest" ? <EmailHarvest /> :
+           active === "dorksgen"    ? <DorksGen /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}
                                           onOpenCatalog={() => setCatalogOpen(true)}

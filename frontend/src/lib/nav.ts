@@ -70,6 +70,10 @@ export const GROUPS: NavGroup[] = [
       { id: "shodanc",  label: "Shodan · Censys"   },
       { id: "people",   label: "People · Email Enum"},
       { id: "profiles", label: "Profile Finder"   },
+      { id: "emailharvest", label: "Email Harvest" },
+      { id: "wayback",      label: "Wayback URLs"  },
+      { id: "urlscan",      label: "URLScan"       },
+      { id: "dorksgen",     label: "Dork Generator"},
     ],
   },
   {
@@ -121,6 +125,7 @@ export const GROUPS: NavGroup[] = [
       { id: "pivot",      label: "Pivoting Helper"   },
       { id: "credhrv",    label: "Credential Harvest"},
       { id: "c2",         label: "C2 Beacon Sim"     },
+      { id: "exploits",   label: "Exploits · SearchSploit" },
     ],
   },
   {

@@ -28,15 +28,16 @@ from lib.auth import AUTH_TOKEN, require_localhost
 from routers import (
     ad_spray, audit, aws_recon, azure_recon, bloodhound_ingest, breach, brew,
     bt_recon, c2_beacon, chat, cmdi, cms, cred_harvest, ct_log, dns_recon,
-    dorking, email_security, engagements, evil_twin, fingerprint, gcp_recon,
-    github_leak, graphql, hash_cracker, http_probe, ids, idor, imds, ip_checker,
-    jwt_analyzer, kerberos_roast, lan_scan, lateral, ldap_enum, lfi,
-    local_discovery, linux_posture, macos_posture, nmap, people_enum, persistence, ping,
-    port_scanner, presets, processes, profile_finder, reverse_ip, reverse_shell,
-    s3_scanner, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
-    subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit, vpn,
-    whois, wifi, wifi_scan, windows_posture, wpa_capture, xss,
-    systemd_units, firewall_rules, users_audit,
+    dorking, email_harvest, email_security, engagements, evil_twin, exploits,
+    fingerprint, gcp_recon, github_leak, graphql, hash_cracker, http_probe,
+    ids, idor, imds, ip_checker, jwt_analyzer, kerberos_roast, lan_scan,
+    lateral, ldap_enum, lfi, local_discovery, linux_posture, macos_posture,
+    nmap, people_enum, persistence, ping, port_scanner, presets, processes,
+    profile_finder, reverse_ip, reverse_shell, s3_scanner, settings,
+    shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, system_info,
+    takeover, tcpdump, terminal, tls_audit, urlscan, vpn, wayback, whois,
+    wifi, wifi_scan, windows_posture, wpa_capture, xss, systemd_units,
+    firewall_rules, users_audit,
 )
 
 logging_setup.configure()
@@ -92,6 +93,7 @@ app.add_middleware(
 )
 
 app.include_router(ip_checker.router)
+app.include_router(ip_checker.shodan_router)
 app.include_router(dns_recon.router)
 app.include_router(whois.router)
 app.include_router(tls_audit.router)
@@ -162,6 +164,11 @@ app.include_router(lfi.router)
 app.include_router(ssrf.router)
 app.include_router(idor.router)
 app.include_router(presets.router)
+app.include_router(exploits.router)
+app.include_router(wayback.router)
+app.include_router(urlscan.router)
+app.include_router(email_harvest.router)
+app.include_router(dorking.osint_router)
 
 
 @app.get("/health")

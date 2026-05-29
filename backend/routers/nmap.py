@@ -37,7 +37,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, nmap_runner, target_policy
+from lib import hids_notify, nmap_runner, nmap_scripts, target_policy
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import MAX_TARGET_LEN, validate_target
@@ -174,18 +174,52 @@ def install_sudoers() -> dict[str, Any]:
 
 @router.get("/nmap/scripts")
 def scripts() -> dict[str, Any]:
-    binary = _resolved_binary()
-    sdir = nmap_runner.scripts_dir(binary)
-    if not sdir:
+    """Return the full NSE script catalog, grouped by category + risk.
+
+    The result is cached in-memory (see `lib/nmap_scripts.py`) — parsing
+    `script.db`'s ~600 entries on every page load is wasteful.
+    """
+    cat = nmap_scripts.load_catalog()
+    if not cat.get("available"):
         raise HTTPException(status_code=503, detail="nmap scripts dir not found")
-    items = nmap_runner.list_scripts(sdir)
-    # Build category index too
-    cats: dict[str, int] = {}
-    for it in items:
-        for c in it["categories"]:
-            cats[c] = cats.get(c, 0) + 1
-    return {"count": len(items), "scripts": items,
-            "categories": sorted(cats.items())}
+    # Preserve the legacy `[(name, count), ...]` shape for older clients.
+    legacy_categories = sorted(
+        ((name, len(scripts)) for name, scripts in cat["categories"].items()),
+        key=lambda p: p[0],
+    )
+    return {
+        "count":          cat["count"],
+        "scripts_dir":    cat["scripts_dir"],
+        "scripts":        cat["scripts"],
+        "categories":     legacy_categories,
+        "category_index": cat["categories"],
+        "risk_groups":    cat["risk_groups"],
+    }
+
+
+@router.get("/nmap/scripts/{category}")
+def scripts_by_category(category: str) -> dict[str, Any]:
+    """Filter the NSE catalog to a single category."""
+    cat = nmap_scripts.load_catalog()
+    if not cat.get("available"):
+        raise HTTPException(status_code=503, detail="nmap scripts dir not found")
+    names = set(cat["categories"].get(category, []))
+    if not names:
+        # Empty list rather than 404 — frontend can render a "no scripts in
+        # this category" hint without an error toast.
+        return {"category": category, "count": 0, "scripts": []}
+    scripts_list = [s for s in cat["scripts"] if s["name"] in names]
+    return {
+        "category": category,
+        "count":    len(scripts_list),
+        "scripts":  scripts_list,
+    }
+
+
+@router.get("/nmap/script-presets")
+def script_presets() -> dict[str, Any]:
+    """Return the curated NSE script presets."""
+    return nmap_scripts.list_presets()
 
 
 @router.get("/nmap/script-help")
@@ -219,8 +253,58 @@ async def nmap_ws(ws: WebSocket) -> None:
 
     try:
         init: dict[str, Any] = await ws.receive_json()
-        raw_opts = init.get("opts") or {}
+        raw_opts = dict(init.get("opts") or {})
         confirm  = bool(init.get("confirm", False))
+
+        # ── Script-picker handshake fields ──────────────────────────────────
+        # Top-level convenience fields make the script-picker UI a thin
+        # wrapper: it doesn't need to know how to translate a preset into
+        # NmapOptions, it just names what the user picked.
+        #
+        #   {"preset": "quick_vuln"}                # expand to preset recipe
+        #   {"scripts": ["http-title", "ssl-*"]}    # raw --script entries
+        #   {"script_args": "user=admin"}           # --script-args
+        #   {"ports": "80,443"}                     # port_spec override
+        preset_id = (init.get("preset") or "").strip() or None
+        extra_scripts = list(init.get("scripts") or [])
+        script_args   = str(init.get("script_args") or "").strip()
+        ports_override = str(init.get("ports") or "").strip()
+        if preset_id:
+            preset = nmap_scripts.get_preset(preset_id)
+            if not preset:
+                await ws.send_json(ws_error(
+                    ErrorCode.VALIDATION_ERROR,
+                    f"unknown preset: {preset_id}",
+                ))
+                await ws.close(); return
+            # Preset's categories/scripts merge into anything already on opts.
+            raw_opts.setdefault("nse_categories", [])
+            raw_opts.setdefault("nse_scripts", [])
+            raw_opts["nse_categories"] = sorted(
+                set(raw_opts["nse_categories"]) | set(preset.get("categories", []))
+            )
+            raw_opts["nse_scripts"] = sorted(
+                set(raw_opts["nse_scripts"]) | set(preset.get("scripts", []))
+            )
+            if preset.get("service_version"):
+                raw_opts["service_version"] = True
+            if preset.get("os_detect"):
+                raw_opts["os_detect"] = True
+            if preset.get("traceroute"):
+                raw_opts["traceroute"] = True
+            preset_ports = preset.get("ports", "")
+            if preset_ports and not raw_opts.get("port_spec"):
+                raw_opts["port_spec"] = preset_ports
+        if extra_scripts:
+            merged = set(raw_opts.get("nse_scripts") or []) | {
+                str(s).strip() for s in extra_scripts if str(s).strip()
+            }
+            raw_opts["nse_scripts"] = sorted(merged)
+        if script_args:
+            existing = (raw_opts.get("nse_args") or "").strip()
+            raw_opts["nse_args"] = f"{existing} {script_args}".strip() if existing else script_args
+        if ports_override:
+            raw_opts["port_spec"] = ports_override
 
         binary = nmap_runner.find_nmap()
         if not binary:

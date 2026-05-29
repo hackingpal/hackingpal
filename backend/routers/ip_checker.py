@@ -24,11 +24,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ip", tags=["ip"], dependencies=[Depends(require_local_auth)])
 
+# Separate router (no prefix collision) for Shodan InternetDB lookups so
+# the path stays `/shodan/host/{ip}` per the spec instead of `/ip/shodan/...`.
+shodan_router = APIRouter(
+    prefix="/shodan", tags=["shodan-internetdb"],
+    dependencies=[Depends(require_local_auth)],
+)
+
 _CACHE_TTL = 300.0  # 5 minutes
 _CACHE: dict[str, tuple[float, "IpReport"]] = {}
 _CACHE_LOCK = threading.Lock()
 _BULK_MAX = 50
 _BULK_WORKERS = 8
+
+# Shodan InternetDB is no-auth but unmetered politeness asks us to cache
+# (60-minute TTL — recommended by their docs).
+_INTERNETDB_TTL = 3600.0
+_INTERNETDB_CACHE: dict[str, tuple[float, dict]] = {}
+_INTERNETDB_LOCK = threading.Lock()
 
 
 class DnsblEntry(BaseModel):
@@ -241,3 +254,86 @@ def bulk(req: BulkRequest) -> BulkResponse:
     with ThreadPoolExecutor(max_workers=_BULK_WORKERS) as pool:
         results = list(pool.map(one, targets))
     return BulkResponse(results=results)
+
+
+# ── Shodan InternetDB (no API key) ───────────────────────────────────────────
+# https://internetdb.shodan.io/{ip} — free, public, returns open ports + CVE
+# list + hostnames + tags + CPEs. We cache per-IP for an hour so a LAN-Scan
+# enrichment pass over /24 doesn't fire 254 requests every time the page reloads.
+
+import httpx  # added for InternetDB only
+
+INTERNETDB_UA = "MyHackingPal/0.1 internetdb"
+
+
+def _cached_internetdb(ip: str) -> dict | None:
+    with _INTERNETDB_LOCK:
+        hit = _INTERNETDB_CACHE.get(ip)
+        if not hit:
+            return None
+        ts, body = hit
+        if time.time() - ts > _INTERNETDB_TTL:
+            _INTERNETDB_CACHE.pop(ip, None)
+            return None
+        return body
+
+
+def _store_internetdb(ip: str, body: dict) -> None:
+    with _INTERNETDB_LOCK:
+        _INTERNETDB_CACHE[ip] = (time.time(), body)
+
+
+@shodan_router.get("/host/{ip}")
+async def shodan_internetdb(ip: str) -> dict:
+    """Return Shodan InternetDB enrichment for a single IP (no API key)."""
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        raise MhpError(
+            "invalid IP address",
+            code=ErrorCode.INVALID_IP,
+            status_code=400,
+        ) from None
+    if addr.is_private or addr.is_loopback or addr.is_link_local:
+        # InternetDB only has public IPs — short-circuit so we don't waste a
+        # request on a 404 for the user's LAN range.
+        return {"ip": str(addr), "ports": [], "vulns": [], "hostnames": [],
+                "tags": [], "cpes": [], "source": "skipped",
+                "reason": "private/loopback IP"}
+    cached = _cached_internetdb(str(addr))
+    if cached is not None:
+        return {**cached, "source": "cache"}
+    try:
+        async with httpx.AsyncClient(
+            timeout=10.0, headers={"User-Agent": INTERNETDB_UA},
+        ) as client:
+            r = await client.get(f"https://internetdb.shodan.io/{addr}")
+    except httpx.HTTPError as e:
+        raise MhpError(
+            f"InternetDB request failed: {e}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        ) from None
+    if r.status_code == 404:
+        body = {"ip": str(addr), "ports": [], "vulns": [], "hostnames": [],
+                "tags": [], "cpes": [], "found": False}
+        _store_internetdb(str(addr), body)
+        return {**body, "source": "live"}
+    if not r.ok:
+        raise MhpError(
+            f"InternetDB returned {r.status_code}",
+            code=ErrorCode.UPSTREAM_FAILED,
+            status_code=502,
+        )
+    data = r.json()
+    body = {
+        "ip":        data.get("ip", str(addr)),
+        "ports":     data.get("ports", []),
+        "vulns":     data.get("vulns", []),
+        "hostnames": data.get("hostnames", []),
+        "tags":      data.get("tags", []),
+        "cpes":      data.get("cpes", []),
+        "found":     True,
+    }
+    _store_internetdb(str(addr), body)
+    return {**body, "source": "live"}

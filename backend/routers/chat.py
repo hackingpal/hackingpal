@@ -92,6 +92,16 @@ this is here for users with an external USB adapter on a Linux VM).
 - Also in **OSINT**: Profile Finder — discovers LinkedIn / GitHub / X profiles \
 via Google dorks (no LinkedIn API hits), cross-references with the People \
 Aggregator pattern to suggest predicted emails per discovered name.
+- More **OSINT** additions: **Email Harvest** (aggregates emails from crt.sh \
+SANs + live mailto scraping + Hunter.io if a key is configured); **Wayback URLs** \
+(pulls historical URLs from the Internet Archive CDX index, buckets interesting/ \
+JS/API/all + diffs recent vs. 6-month-old to surface forgotten endpoints); \
+**URLScan** (search-only against urlscan.io's public history — never submits, \
+which would expose target on a public feed); **Dork Generator** (builds Google / \
+Bing / DuckDuckGo dork strings across categories — open in user's own browser \
+to avoid triggering anti-bot on shared Google sessions); **Shodan InternetDB** \
+(free no-auth /shodan/host/{ip} for open ports + CVEs + hostnames + tags + CPEs, \
+cached 1h to avoid hammering the API during /24 enrichment passes).
 - **ACTIVE DIRECTORY** — LDAP Enumerator (users / groups / DCs / password policy \
 / GPOs / SPNs / Domain Admins — flags PASSWD_NOTREQD, DONT_REQUIRE_PREAUTH, and \
 accounts with SPNs as Kerberoastable hints), SMB Enumerator (shares + read-access \
@@ -105,6 +115,22 @@ BloodHound instance — Neo4j not bundled), Lateral Movement Planner (upload \
 BloodHound JSON ZIP, computes shortest attack paths to Domain Admins via BFS \
 across MemberOf / AdminTo / GenericAll / DCSync / ForceChangePassword and other \
 edges — plus a static technique reference for each edge type).
+- **Exploits · SearchSploit** (in RED TEAM) — search ExploitDB locally via \
+the searchsploit binary, falls back to the public exploit-db.com API when \
+searchsploit isn't installed. Per-platform install hints (brew / apt / choco). \
+Port Scanner enrichment: pass scan rows to `POST /exploits/search-from-scan` to \
+get a `{port: [exploits...]}` map keyed off service+version.
+- **Nmap NSE Script Picker** (in the Nmap page) — three tabs: \
+**Presets** (curated recipes: quick_vuln, web_enum, auth_check, full_recon, \
+smb_enum, ssl_audit, each with a risk badge), **Categories** (accordion \
+across all NSE categories with per-script checkboxes + search), **Custom** \
+(raw --script and --script-args). All three feed into the same live command \
+preview and emit an intrusive-script warning banner when triggered.
+- **Subdomain Permutation Engine** (Phase 2 of Subdomain Enum) — after the \
+external sources settle, mutates discovered labels with prefix/env/number/ \
+common-suffix wordlists and resolves each via DNS. Bounded to ~3000 candidates \
+with a 32-concurrent semaphore on the resolver. Streams as `permutation_found` \
+events.
 - **RED TEAM** — Reverse Shell builder/listener; Payload Obfuscator (chainable \
 client-side transforms: base64, hex, URL-encode, XOR, PowerShell -enc, JS \
 eval-concat, etc — purely local, useful for naive-WAF / signature bypass); \

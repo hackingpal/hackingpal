@@ -30,6 +30,8 @@ export type NavId =
   | "ports" | "nmap" | "audit" | "tcpdump" | "tls" | "fingerprint" | "http"
   | "ct" | "email" | "takeover" | "revip" | "breach"
   | "dorking" | "ghleak" | "shodanc" | "people" | "profiles"
+  | "wayback" | "urlscan" | "emailharvest" | "dorksgen"
+  | "exploits"
   | "cms" | "jwt" | "graphql" | "subdom"
   | "xss" | "sqli" | "cmdi" | "lfi" | "ssrf" | "idor"
   | "imds" | "s3" | "aws" | "azure" | "gcp"

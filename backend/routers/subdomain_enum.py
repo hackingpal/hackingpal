@@ -45,6 +45,18 @@ ALL_SOURCES = [
     "securitytrails", "virustotal", "shodan",
 ]
 
+# Permutation generation — applied after the initial enum settles, only to
+# the labels we've already seen (so the wordlist stays scoped to the
+# target's own naming conventions).
+_PERM_PREFIXES = (
+    "dev", "staging", "stage", "prod", "production", "test", "uat", "qa",
+    "old", "new", "internal", "external", "admin", "private", "public",
+    "secure", "beta", "alpha", "demo", "preview",
+)
+_PERM_SUFFIXES = ("2", "3", "v2", "v3", "-v2", "-v3", "-old", "-new")
+_PERM_CONCURRENCY = 32      # max in-flight DNS lookups
+_PERM_HARD_CAP   = 3000     # hard ceiling on the permutation set we test
+
 
 async def _resolve(host: str) -> str | None:
     loop = asyncio.get_event_loop()
@@ -52,6 +64,45 @@ async def _resolve(host: str) -> str | None:
         return await loop.run_in_executor(None, socket.gethostbyname, host)
     except OSError:
         return None
+
+
+def _build_permutations(domain: str, found: list[str]) -> list[str]:
+    """Generate candidate subdomains from the labels already discovered.
+
+    Only mutates the *leaf* label of each known subdomain so the candidate
+    set stays bounded:
+
+        api.example.com -> dev-api.example.com, staging-api.example.com,
+                           api-v2.example.com, api2.example.com, ...
+    """
+    suffix = "." + domain
+    leaves: set[str] = set()
+    for sub in found:
+        if sub.endswith(suffix):
+            label = sub[: -len(suffix)]
+            # Skip multi-level labels like api.us-east — we'd combinatorially
+            # explode and most of them point at internal naming we'd never
+            # guess. The leftmost label is the high-signal one.
+            leaves.add(label.split(".", 1)[0])
+
+    # Always add the bare common labels even if we didn't see them, so an
+    # initial enum that returned only `www.` still gets the obvious tests.
+    leaves.update({"www", "mail", "api"})
+
+    candidates: set[str] = set()
+    for label in leaves:
+        for prefix in _PERM_PREFIXES:
+            candidates.add(f"{prefix}-{label}.{domain}")
+            candidates.add(f"{prefix}.{label}.{domain}")
+        for suf in _PERM_SUFFIXES:
+            candidates.add(f"{label}{suf}.{domain}")
+    # Drop anything we already know about.
+    for sub in found:
+        candidates.discard(sub)
+    out = sorted(candidates)
+    if len(out) > _PERM_HARD_CAP:
+        out = out[:_PERM_HARD_CAP]
+    return out
 
 
 async def src_crtsh(client: httpx.AsyncClient, domain: str) -> list[str]:
@@ -193,6 +244,7 @@ async def subdom_ws(ws: WebSocket) -> None:
         raw_domain = str(init.get("domain", "")).strip().lower().lstrip(".")
         sources = list(init.get("sources") or ALL_SOURCES)
         do_resolve = bool(init.get("resolve", True))
+        run_permutations = bool(init.get("permutations", True))
 
         try:
             domain = validate_domain(raw_domain, field="domain")
@@ -250,12 +302,51 @@ async def subdom_ws(ws: WebSocket) -> None:
             await asyncio.gather(*(run_one(s) for s in sources),
                                  return_exceptions=True)
 
+            # ── Phase 2: permutation engine ────────────────────────────────
+            # Run only if the caller asked for it and there's anything to
+            # mutate against. DNS lookups happen in the executor; we cap
+            # concurrency so we don't accidentally DoS the resolver.
+            perm_found = 0
+            if run_permutations and not stop.is_set():
+                candidates = _build_permutations(domain, list(seen.keys()))
+                if candidates:
+                    await ws.send_json({
+                        "type":    "phase",
+                        "phase":   "permutation",
+                        "count":   len(candidates),
+                        "message": f"Testing {len(candidates)} permutations...",
+                    })
+                    sem = asyncio.Semaphore(_PERM_CONCURRENCY)
+
+                    async def probe(name: str) -> None:
+                        nonlocal perm_found
+                        if stop.is_set():
+                            return
+                        async with sem:
+                            ip = await _resolve(name)
+                        if not ip or stop.is_set():
+                            return
+                        if name not in seen:
+                            seen[name] = {"sources": ["permutation"], "ip": ip}
+                            perm_found += 1
+                            await ws.send_json({
+                                "type": "permutation_found",
+                                "subdomain": name,
+                                "ip": ip,
+                            })
+
+                    await asyncio.gather(
+                        *(probe(c) for c in candidates),
+                        return_exceptions=True,
+                    )
+
         listener.cancel()
         elapsed = round(time.monotonic() - t0, 2)
         await ws.send_json({
             "type": "done", "elapsed": elapsed,
             "total": len(seen),
             "resolved": sum(1 for v in seen.values() if v["ip"]),
+            "permutations_found": perm_found if run_permutations else 0,
             "stopped": stop.is_set(),
         })
     except WebSocketDisconnect:
