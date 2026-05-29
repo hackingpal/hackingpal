@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import { api } from "../api";
 
@@ -27,6 +28,7 @@ export default function SubdomainEnum() {
   const [sourceStatus, setSourceStatus] = useState<SourceStatus[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set(FREE_DEFAULT));
   const [doResolve, setDoResolve] = useState(true);
+  const [authorized, setAuthorized] = useState(false);
 
   const [sourcesProgress, setSourcesProgress] = useState<Record<string, SourceProgress>>({});
   const [found, setFound] = useState<Map<string, Found>>(new Map());
@@ -73,7 +75,7 @@ export default function SubdomainEnum() {
   function go() {
     const d = domain.trim().toLowerCase();
     if (!d) return;
-    start({ domain: d, sources: [...selected], resolve: doResolve });
+    start({ domain: d, sources: [...selected], resolve: doResolve, confirm_auth: true });
   }
 
   function toggle(name: string) {
@@ -145,9 +147,13 @@ export default function SubdomainEnum() {
           <span className="text-ink-primary">Resolve discovered names to IPs</span>
         </label>
 
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName="subdomain enumeration" disabled={running} />
+
         <div className="flex gap-2">
           {!running ? (
-            <button onClick={go} disabled={!domain.trim() || selected.size === 0}
+            <button onClick={go}
+                    disabled={!domain.trim() || selected.size === 0 || !authorized}
                     className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                                disabled:opacity-40 disabled:cursor-not-allowed">
               Start

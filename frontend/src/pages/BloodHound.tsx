@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { api, authFetch, BACKEND_URL, parseError } from "../api";
 
 type Job = {
@@ -25,6 +26,7 @@ export default function BloodHound() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [activeJob, setActiveJob] = useState<JobDetail | null>(null);
   const [error, setError] = useState("");
+  const [authorized, setAuthorized] = useState(false);
 
   async function refresh() {
     try {
@@ -81,6 +83,7 @@ export default function BloodHound() {
           creds, methods: [...methods],
           nameserver: nameserver.trim(),
           num_workers: workers,
+          confirm_auth: true,
         }),
       });
       if (!r.ok) throw new Error(await parseError(r));
@@ -139,10 +142,13 @@ export default function BloodHound() {
           </div>
         </div>
 
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName="BloodHound AD collection"
+                           disabled={activeJob?.state === "running"} />
         <div className="flex items-center gap-2">
           <button onClick={go}
                   disabled={!creds.dc_host || !creds.username || methods.size === 0
-                            || (activeJob?.state === "running")}
+                            || (activeJob?.state === "running") || !authorized}
                   className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                              disabled:opacity-40 disabled:cursor-not-allowed">
             Start Collection

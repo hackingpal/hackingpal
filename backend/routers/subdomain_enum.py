@@ -241,6 +241,12 @@ async def subdom_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        if not bool(init.get("confirm_auth", False)):
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Confirm you have authorization to enumerate this domain.",
+            ))
+            await ws.close(); return
         raw_domain = str(init.get("domain", "")).strip().lower().lstrip(".")
         sources = list(init.get("sources") or ALL_SOURCES)
         do_resolve = bool(init.get("resolve", True))

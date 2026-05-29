@@ -1,5 +1,6 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 
 type SprayEvent =
@@ -20,6 +21,7 @@ export default function AdSpray() {
   const [delay, setDelay] = useState(0.5);
   const [maxLockouts, setMaxLockouts] = useState(0);
   const [ackUnknown, setAckUnknown] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
 
   const [meta, setMeta] = useState<{ total: number; threshold: number; thresholdKnown: boolean; safe: number } | null>(null);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
@@ -54,7 +56,7 @@ export default function AdSpray() {
     const users = usersText.split("\n").map((s) => s.trim()).filter(Boolean);
     const passwords = passwordsText.split("\n").map((s) => s.trim()).filter(Boolean);
     start({ creds, users, passwords, delay_sec: delay, max_lockouts: maxLockouts,
-            acknowledge_unknown_threshold: ackUnknown });
+            acknowledge_unknown_threshold: ackUnknown, confirm_auth: true });
   }
 
   return (
@@ -115,9 +117,12 @@ export default function AdSpray() {
             spray without threshold (risky)
           </label>
         </div>
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName="AD password spray" disabled={running} />
         <div className="flex items-center gap-2">
           {!running ? (
-            <button onClick={go} disabled={!usersText.trim() || !passwordsText.trim() || !creds.dc_host}
+            <button onClick={go}
+                    disabled={!usersText.trim() || !passwordsText.trim() || !creds.dc_host || !authorized}
                     className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                                disabled:opacity-40 disabled:cursor-not-allowed">
               Start Spray

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 
 type Tool = { installed: boolean; path: string; description: string };
@@ -54,6 +55,7 @@ export default function WpaCapture() {
   const [args, setArgs] = useState<string>(PRESETS[0].argv.join(" "));
   const [lines, setLines] = useState<string[]>([]);
   const [doneText, setDoneText] = useState("");
+  const [authorized, setAuthorized] = useState(false);
 
   const { status: wsStatus, error, start, stop } = useAttackWS<RunEvent>(
     "/wpa-capture/ws/run",
@@ -73,7 +75,7 @@ export default function WpaCapture() {
 
   function go() {
     const argv = args.trim().split(/\s+/).filter(Boolean);
-    if (argv.length) start({ argv });
+    if (argv.length) start({ argv, confirm_auth: true });
   }
 
   return (
@@ -164,10 +166,13 @@ export default function WpaCapture() {
                                text-[12px] font-mono focus:outline-none focus:border-accent" />
         </div>
 
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName="WPA capture / deauth" disabled={running} />
         <div className="flex items-center gap-2">
           {!running ? (
-            <button onClick={go} disabled={!args.trim()}
-                    className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold">
+            <button onClick={go} disabled={!args.trim() || !authorized}
+                    className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
+                               disabled:opacity-40 disabled:cursor-not-allowed">
               Run
             </button>
           ) : (

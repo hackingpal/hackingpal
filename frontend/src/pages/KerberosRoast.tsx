@@ -1,5 +1,6 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { authFetch, parseError } from "../api";
 
 type Mode = "kerberoast" | "asrep";
@@ -25,14 +26,16 @@ export default function KerberosRoast() {
   const [result, setResult] = useState<RoastResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [authorized, setAuthorized] = useState(false);
 
   async function go() {
     setLoading(true); setError(""); setResult(null);
     try {
       const path = mode === "kerberoast" ? "/kerberoast/run" : "/asrep/run";
       const body = mode === "kerberoast"
-        ? { creds, spn_filter: spnFilter }
-        : { creds, users: usersText.split("\n").map((s) => s.trim()).filter(Boolean) };
+        ? { creds, spn_filter: spnFilter, confirm_auth: true }
+        : { creds, users: usersText.split("\n").map((s) => s.trim()).filter(Boolean),
+            confirm_auth: true };
       const r = await authFetch(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -119,8 +122,11 @@ export default function KerberosRoast() {
           </div>
         )}
 
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName={mode === "kerberoast" ? "Kerberos roasting" : "AS-REP roasting"}
+                           disabled={loading} />
         <div className="flex items-center gap-2">
-          <button onClick={go} disabled={loading || !canRoast}
+          <button onClick={go} disabled={loading || !canRoast || !authorized}
                   title={canRoast ? "" : disabledReason}
                   className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                              disabled:opacity-40 disabled:cursor-not-allowed">

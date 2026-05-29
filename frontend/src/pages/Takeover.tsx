@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import AuthorizationGate from "../components/AuthorizationGate";
 import {
   fetchTakeoverCheck, openWs,
   type TakeoverEvent, type TakeoverResult, type TakeoverVerdict,
@@ -32,6 +33,7 @@ export default function Takeover() {
   const [confirmReason, setConfirmReason] = useState<string | null>(null);
 
   const [single, setSingle] = useState<TakeoverResult | null>(null);
+  const [authorized, setAuthorized] = useState(false);
 
   const [scanState, setScanState] = useState<{
     running: boolean;
@@ -67,7 +69,9 @@ export default function Takeover() {
 
     const ws = openWs("/ws/takeover-scan");
     wsRef.current = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ subdomains: subs, confirm }));
+    ws.onopen = () => ws.send(JSON.stringify({
+      subdomains: subs, confirm, confirm_auth: true,
+    }));
     ws.onmessage = (msg) => {
       const ev = JSON.parse(msg.data) as TakeoverEvent;
       if (ev.type === "started") {
@@ -145,7 +149,12 @@ export default function Takeover() {
               </button>
             </div>
           ) : (
-            <div className="flex-1 flex gap-2 items-center max-w-2xl">
+            <div className="flex-1 flex gap-3 items-center max-w-3xl">
+              <div className="flex-1">
+                <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                                   toolName="bulk subdomain-takeover scan"
+                                   disabled={scanState.running} />
+              </div>
               {scanState.running ? (
                 <button onClick={stop}
                   className="bg-danger/80 hover:bg-danger text-white text-xs font-bold
@@ -153,7 +162,7 @@ export default function Takeover() {
                   ◼ Stop
                 </button>
               ) : (
-                <button onClick={() => runBulk()} disabled={busy}
+                <button onClick={() => runBulk()} disabled={busy || !authorized}
                   className="bg-accent hover:bg-accentDim active:translate-y-px
                              text-white text-xs font-bold tracking-wide px-3.5 py-1.5 rounded
                              disabled:opacity-50 disabled:cursor-not-allowed border border-accent/60">

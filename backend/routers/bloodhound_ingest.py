@@ -46,6 +46,7 @@ class IngestBody(BaseModel):
     nameserver:     str = Field("", description="DNS server; defaults to dc_host")
     num_workers:    int = Field(default=10, ge=1, le=50)
     zip_jsons:      bool = True
+    confirm_auth:   bool = Field(False, description="I have authorization to run BloodHound collection against this domain")
 
 
 class Job:
@@ -160,6 +161,11 @@ def methods() -> dict[str, Any]:
 
 @router.post("/run")
 def start_run(body: IngestBody) -> dict[str, Any]:
+    if not body.confirm_auth:
+        raise MhpError(
+            "Confirm you have authorization to run BloodHound collection against this domain.",
+            code=ErrorCode.NEED_CONFIRM, status_code=409,
+        )
     with _lock:
         running = [j for j in _jobs.values() if j.state in ("queued", "running")]
         if running:

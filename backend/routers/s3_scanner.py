@@ -143,6 +143,12 @@ async def s3_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        if not bool(init.get("confirm_auth", False)):
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Confirm you have authorization to enumerate S3 buckets for this target.",
+            ))
+            await ws.close(); return
         target = str(init.get("target", "")).strip().lower()
         # Cap target + each extra keyword length so a runaway payload can't
         # produce a 100k-permutation queue.

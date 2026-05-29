@@ -60,12 +60,18 @@ def _import_impacket():
 # ── Kerberoasting ───────────────────────────────────────────────────────────
 
 class KerberoastBody(BaseModel):
-    creds:       CredsModel
-    spn_filter:  str = Field("", description="Optional sAMAccountName filter")
+    creds:        CredsModel
+    spn_filter:   str = Field("", description="Optional sAMAccountName filter")
+    confirm_auth: bool = Field(False, description="I have authorization to run Kerberos roasting against this domain")
 
 
 @router.post("/kerberoast/run")
 def kerberoast(body: KerberoastBody) -> dict[str, Any]:
+    if not body.confirm_auth:
+        raise MhpError(
+            "Confirm you have authorization to run Kerberos roasting against this domain.",
+            code=ErrorCode.NEED_CONFIRM, status_code=409,
+        )
     imp = _import_impacket()
     creds = body.creds
     creds.dc_host = validate_hostname(creds.dc_host, field="dc_host")
@@ -175,10 +181,16 @@ class AsrepBody(BaseModel):
     users: list[str] = Field(default_factory=list,
                               description="Specific usernames to try. If empty, "
                               "we LDAP-enumerate users with UF_DONT_REQUIRE_PREAUTH.")
+    confirm_auth: bool = Field(False, description="I have authorization to run AS-REP roasting against this domain")
 
 
 @router.post("/asrep/run")
 def asrep_roast(body: AsrepBody) -> dict[str, Any]:
+    if not body.confirm_auth:
+        raise MhpError(
+            "Confirm you have authorization to run AS-REP roasting against this domain.",
+            code=ErrorCode.NEED_CONFIRM, status_code=409,
+        )
     imp = _import_impacket()
     creds = body.creds
     creds.dc_host = validate_hostname(creds.dc_host, field="dc_host")

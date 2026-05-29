@@ -1,4 +1,5 @@
 import { useState } from "react";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 
 type S3Event =
@@ -17,6 +18,7 @@ export default function S3Scanner() {
   const [rate, setRate] = useState(10);
   const [showExisting, setShowExisting] = useState(true);
   const [showMissing, setShowMissing] = useState(false);
+  const [authorized, setAuthorized] = useState(false);
 
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -44,7 +46,8 @@ export default function S3Scanner() {
   function go() {
     if (!target.trim()) return;
     const extras = extra.split(",").map((s) => s.trim()).filter(Boolean);
-    start({ target: target.trim(), extra_keywords: extras, rate_per_sec: rate });
+    start({ target: target.trim(), extra_keywords: extras, rate_per_sec: rate,
+            confirm_auth: true });
   }
 
   const existing = buckets.filter((b) => b.exists);
@@ -98,9 +101,11 @@ export default function S3Scanner() {
           <span className="text-ink-primary tabular-nums w-10 text-right">{rate}/s</span>
         </div>
 
+        <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
+                           toolName="S3 bucket enumeration" disabled={running} />
         <div className="flex items-center gap-2">
           {!running ? (
-            <button onClick={go} disabled={!target.trim()}
+            <button onClick={go} disabled={!target.trim() || !authorized}
                     className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                                disabled:opacity-40 disabled:cursor-not-allowed">
               Start Scan

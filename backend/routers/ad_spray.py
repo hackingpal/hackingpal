@@ -114,6 +114,13 @@ async def spray_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        if not bool(init.get("confirm_auth", False)):
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Confirm you have authorization to spray this domain.",
+            ))
+            await ws.close(); return
+
         creds = CredsModel(**init.get("creds", {}))
         users = list(init.get("users") or [])
         passwords = list(init.get("passwords") or [])

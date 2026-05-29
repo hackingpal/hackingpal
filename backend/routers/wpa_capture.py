@@ -163,6 +163,13 @@ async def run_capture(ws: WebSocket) -> None:
     proc: asyncio.subprocess.Process | None = None
     try:
         init = await ws.receive_json()
+        if not bool(init.get("confirm_auth", False)):
+            await ws.send_json({
+                "type": "error",
+                "code": "NEED_CONFIRM",
+                "detail": "Confirm you have authorization to capture / deauth on this WiFi.",
+            })
+            await ws.close(); return
         argv = list(init.get("argv") or [])
         if not argv:
             await ws.send_json({"type": "error", "detail": "argv required"})

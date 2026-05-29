@@ -239,6 +239,12 @@ async def takeover_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        if not bool(init.get("confirm_auth", False)):
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                "Confirm you have authorization to scan these subdomains.",
+            ))
+            await ws.close(); return
         subs = init.get("subdomains") or []
         confirm = bool(init.get("confirm", False))
 
