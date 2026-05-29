@@ -1,6 +1,7 @@
 # MyHackingPal
 
-![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Docker-blue)
+![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Docker-blue)
+![Windows](https://img.shields.io/badge/Windows-experimental%20%2F%20deferred-lightgrey)
 [![Release](https://img.shields.io/github/v/release/myhackingpal/myhackingpal?include_prereleases&label=release)](https://github.com/myhackingpal/myhackingpal/releases/latest)
 
 > 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
@@ -34,7 +35,7 @@ exploitation logic. See [ROADMAP.md](ROADMAP.md) for the direction and
 myhackingpal/
 ├── backend/        FastAPI server — one router per tool
 │   ├── lib/        shared libs: target_policy, web_fuzz, hids_notify, …
-│   ├── routers/    ~40 routers, one per page
+│   ├── routers/    tool routers/endpoints, one per page or capability
 │   ├── main.py
 │   └── network-tools-backend.spec   PyInstaller spec (sidecar)
 └── frontend/
@@ -84,6 +85,9 @@ landing in 0.3.0 is the scaffold for that flow:
   (mac + linux), Surface Inventory, Web App First Look. Seven new tool
   adapters wired (dns_recon, ct_log, email_audit, cms_fingerprint,
   macos_posture, linux_posture, persistence_audit).
+- **Platform focus clarified** — v1.0 is macOS + Linux + Docker first. Native
+  Windows remains experimental/deferred and should not block the engagement,
+  safety, evidence, or reporting work.
 - **Central Settings page** — API keys, system info, mode toggle,
   appearance, engagement quick-links. Replaces the floating bubble's
   `⚙` panel.
@@ -99,8 +103,9 @@ See the [Roadmap](#roadmap) section below for what's done vs in flight.
 | Platform | Download | Notes |
 |---|---|---|
 | macOS (Apple Silicon) | [MyHackingPal-macos-arm64.dmg](https://github.com/myhackingpal/myhackingpal/releases/latest) | Mount, drag to /Applications. Right-click → Open on first launch. Or grab the `.zip` if your tooling can't mount DMGs. |
-| Windows (x64) | [MyHackingPal-windows-x64.exe](https://github.com/myhackingpal/myhackingpal/releases/latest) | Click "More info" → "Run anyway" |
 | Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest) | `chmod +x` then run |
+
+Native Windows builds may still appear in CI/releases, but Windows is experimental and not a v1.0 support target. Use Docker/remote backend mode if you are testing from a Windows workstation.
 
 All builds are unsigned. See per-platform guides in `docs/` for first-launch
 instructions, and [docs/SIGNING.md](docs/SIGNING.md) for what code-signing
@@ -136,41 +141,37 @@ Interactive API docs are at `http://127.0.0.1:8765/docs`.
 
 ### Option 3 — Build from source
 
-Works on macOS, Windows, and Linux. See [Development](#development) below for
+Works on macOS and Linux first. Windows may boot in development, but it is experimental/deferred for v1.0. See [Development](#development) below for
 the two-terminal dev loop, and [Building a release](#building-a-release) for
 producing a packaged binary.
 
 ### Per-platform install guides
 
 - [macOS](docs/README-macos.md) — Gatekeeper, Keychain, sudoers drop-ins
-- [Windows](docs/README-windows.md) — SmartScreen, Credential Manager, Npcap *(in progress)*
+- [Windows](docs/README-windows.md) — experimental/deferred; SmartScreen, Credential Manager, Npcap *(not a v1.0 target)*
 - [Linux](docs/README-linux.md) — capabilities, Secret Service, AppImage notes *(in progress)*
 
 ### Platform support matrix
 
-|                                | macOS | Linux | Windows |
-| ------------------------------ | :---: | :---: | :-----: |
-| Cross-platform tools (~60)     |   ✅  |   ✅  |   ✅    |
-| Persistence audit              |   ✅ launchd | ✅ systemd + cron + autostart | ✅ Registry Run + Startup + Scheduled Tasks |
-| Security posture               |   ✅ SIP/GK/FV/XP | ✅ SELinux/UFW/sshd | ✅ BitLocker/Defender/UAC/Firewall |
-| WiFi scan                      |   ✅ CoreWLAN | ✅ nmcli/iw | ✅ netsh wlan |
-| WiFi integrity / VPN / TCPDump |   ✅   |   ✅  | ⏳ planned |
-| Bluetooth recon                |   ✅ system_profiler | ✅ bluetoothctl | ⏳ planned |
-| WPA capture                    |   ✅ (forward to Kali VM) | ⏳ | ⏳ |
-| Systemd / Firewall rules / Users audit | n/a |  ✅  |   n/a   |
+| Support tier | Platform | Status | Notes |
+|---|---|---|---|
+| Tier 1 | macOS | Primary v1.0 desktop baseline | First polished UX target; Keychain, posture, WiFi, tcpdump/nmap sudoers, and signed-build work focus here first. |
+| Tier 1 | Linux | Primary v1.0 lab/power-user baseline | Best fit for security tooling, Docker hosts, systemd/firewall/users audit, and homelab usage. |
+| Tier 1 | Docker | Lab/server/remote backend mode | Backend/API mode for trusted networks, VPN/Tailscale, and homelab deployment. Do not expose publicly. |
+| Deferred | Windows | Experimental | Keep clean guards/501s and avoid regressions where easy, but native Windows parity is not a v1.0 blocker. |
 
-Endpoints flagged ⏳ return HTTP 501 with an explanatory hint on that OS;
-the sidebar hides them automatically via `GET /system/info`. The CI smoke
-step on `windows-latest` verifies that the sidecar boots, probes 14
-endpoints, and asserts the 501-guards stay clean rather than 500-crash.
+Platform-specific routers are tagged via the `platforms` array on each NavItem
+in `src/lib/nav.ts` and auto-hide on the wrong OS via `GET /system/info`.
+Unsupported endpoints should return clean 501/503 responses with useful hints
+instead of crashing. Windows CI smoke checks are useful if low-maintenance, but
+Windows feature parity is deferred.
 
 ---
 
 ## First run
 
 First launch will prompt for a fresh Keychain entry the first time it touches a
-privileged tool (tcpdump, nmap SYN/UDP/OS). For the chat assistant, open the
-floating "AI" bubble → ⚙ → paste an `sk-ant-…` Anthropic API key.
+privileged tool (tcpdump, nmap SYN/UDP/OS). For the AI Assistant, open **Settings → API keys** and paste an Anthropic API key. Claude is the first supported provider; the roadmap should keep the provider layer flexible for cheaper or local models later.
 
 ---
 
@@ -325,7 +326,7 @@ preserved when hidden via `pl-[88px]` inset.
 
 ### Anthropic key (required for chat)
 
-In-app: open the AI bubble → ⚙ → paste `sk-ant-…` → Save. Or:
+In-app: open **Settings → API keys** → paste `sk-ant-…` → Save. Or:
 
 ```sh
 security add-generic-password -a anthropic_api_key -s MyHackingPal -w 'sk-ant-…' -U
@@ -409,8 +410,9 @@ In dev it expects you to be running uvicorn yourself.
 2. Frontend: drop `src/pages/<Name>.tsx`; import + add to the ternary in
    `App.tsx`; add an entry to the right section in `src/lib/nav.ts` (the
    sidebar and command palette read from this).
-3. Chat assistant: extend `SYSTEM_PROMPT` in `backend/routers/chat.py` with
-   a one-line description so it can interpret the tool's results.
+3. Metadata: declare supported platforms, mode requirements, risk level, and whether the tool accepts targets.
+4. Safety: wire target-accepting tools through scope enforcement, command preview, audit logging, and authorization gates when active.
+5. AI: extend the tool catalogue/prompt metadata so the assistant can interpret results and suggest the tool appropriately.
 
 ### Building a release
 
@@ -451,7 +453,7 @@ Contributions are welcome. The easiest way to contribute right now is:
 - **Bug reports** — open an issue with steps to reproduce
 - **Preset files** — submit a .mhp playbook for a new attack scenario (see CONTRIBUTING.md)
 - **New tools** — follow the 3-step pattern in Adding a new tool above
-- **Platform testing** — help verify Windows and Linux builds
+- **Platform testing** — help verify macOS, Linux, and Docker builds. Windows testing is welcome but experimental/deferred.
 
 Please read CONTRIBUTING.md and DISCLAIMER.md before submitting a PR.
 
@@ -472,6 +474,7 @@ Full plan lives in [ROADMAP.md](ROADMAP.md). Short version:
 **Pivot underway:** from "tool dashboard" to **AI-assisted engagement workspace**.
 
 **v1.0 — Engagement-first workspace**
+- [ ] Platform focus: macOS + Linux + Docker first; Windows experimental/deferred
 - [ ] Scope enforcement: every target-accepting tool consults the active
       engagement's scope/exclusions before running
 - [ ] Lab mode vs Engagement mode toggle (default: Lab; opt into engagement
@@ -482,6 +485,7 @@ Full plan lives in [ROADMAP.md](ROADMAP.md). Short version:
       BloodHound, Kerberoasting, S3 enum, etc.)
 - [ ] Settings page (in-app key management, mode toggle, sudoers cleanup)
 - [ ] Engagement-centric default page on launch
+- [ ] Docker/server-mode hardening docs: VPN/Tailscale-only guidance, reverse-proxy auth examples, and clear warning banners
 - [ ] Test suite — pytest + Vitest, starting with engagement / scope / audit
 
 **v1.x — Copilot, not autopilot**
@@ -490,9 +494,11 @@ Full plan lives in [ROADMAP.md](ROADMAP.md). Short version:
 - [ ] Playbook redesign: guided multi-step flows with AI commentary at
       each step + per-step approval
 - [ ] Command preview / dry-run for every subprocess shell-out
+- [ ] AI provider abstraction for Claude first, with Gemini/OpenAI-compatible/local options later
+- [ ] Assessment coverage matrix for each engagement
 - [ ] Formalized evidence model — unified timeline of scan output,
       screenshots, chat turns
-- [ ] Code-signed Mac (Developer ID + notarization) + Windows (OV/EV)
+- [ ] Code-signed Mac (Developer ID + notarization); Windows signing deferred
 
 **Beyond:**
 - [ ] Community playbook library

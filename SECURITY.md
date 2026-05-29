@@ -42,6 +42,10 @@ auto-attach). Scope enforcement, command preview, the AI approval
 flow, the audit log, and the Lab/Engagement mode toggle are the v1.0
 work in flight.
 
+## Platform and deployment stance
+
+v1.0 is **macOS + Linux + Docker first**. Native Windows support is experimental/deferred and should not be treated as part of the v1.0 trust boundary. Docker is a lab/server/remote-backend deployment mode for trusted networks only; it is not a public SaaS surface.
+
 ## Local API Security
 
 MyHackingPal is a desktop app: the Electron renderer talks to a Python FastAPI
@@ -81,15 +85,23 @@ The following invariants are enforced in code:
   `docker-compose.yml`). If you run MyHackingPal as a network service, you are
   intentionally lifting the loopback restriction and accept that responsibility.
   At minimum: bind to a private VPN/Tailscale interface, put it behind an
-  authenticating reverse proxy, and treat the token as a shared secret.
+  authenticating reverse proxy, and treat the token as a shared secret. Docker/server mode should display a clear warning banner and should not be promoted as internet-exposable until proper authentication is mandatory.
 - The Docker browser UI. The same `docker-compose.yml` deploy also serves the
   React UI at `http://<host>:8765/`. The page is **unauthenticated** — anyone
   who can reach the port can use the API surface. The five privileged endpoints
   (`/terminal/exec`, `/nmap/install`, `/tcpdump/install`, `/vpn/start`,
   `/vpn/stop`) reject non-loopback callers, so they are not reachable from a
   remote browser — but every other endpoint is. Place the container behind a
-  reverse proxy with authentication, or restrict the listener to a trusted
-  network interface.
+  reverse proxy with authentication, restrict the listener to a trusted
+  network interface, or expose it only over Tailscale/WireGuard. Until mandatory
+  server-mode auth exists, Docker is lab/trusted-network only.
+
+## AI safety boundary
+
+The assistant is allowed to explain, summarize, suggest, and draft. It must not
+execute hidden actions, expand engagement scope, bypass approval gates, or run
+arbitrary shell commands. All AI-suggested active checks should be represented
+as structured approval cards and validated by app-side policy before execution.
 
 ## Reporting Scope
 

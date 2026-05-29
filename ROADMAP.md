@@ -83,6 +83,17 @@ The flow is always: AI suggests → user approves → app runs the action
 → output is logged to the audit log + engagement evidence → AI
 summarizes.
 
+## Platform strategy
+
+v1.0 is intentionally **macOS + Linux + Docker first**. Windows is not deleted, but it is no longer a release blocker. Treat native Windows as experimental/deferred until the engagement workflow, safety controls, and Docker/server mode are stable.
+
+- **macOS** — primary polished desktop baseline
+- **Linux** — security-lab and power-user desktop baseline
+- **Docker** — lab/server/remote backend mode for trusted networks
+- **Windows** — experimental; keep guards/501 responses clean, but do not spend v1.0 time chasing parity
+
+The codebase should still keep platform-specific logic behind adapters/helpers so Windows can be added later without rewriting the product.
+
 ## Release strategy
 
 The plan is staged, not "1.0 to the world day one":
@@ -123,6 +134,7 @@ not "replace the human".
 
 In order:
 
+0. **Platform focus** — ship v1.0 as macOS + Linux + Docker. Keep Windows experimental/deferred and clearly marked in README/docs.
 1. **Scope enforcement** — helper in `backend/lib/`, wire into every
    target-accepting tool. Without this, "Engagement mode" is decoration.
 2. **Lab mode vs Engagement mode toggle** — context provider in the
@@ -134,14 +146,15 @@ In order:
 4. **Engagement-centric default page** — App.tsx currently lands on
    IP Checker. Should land on the Engagements list (or an Engagement
    Dashboard if one is active).
-5. **Audit log table** — `audit_log` in the engagements SQLite, helper
+5. **Docker/server-mode hardening** — document Tailscale/VPN-only deployment, reverse-proxy auth, API-token expectations, and warning banners before promoting Docker beyond lab use.
+6. **Audit log table** — `audit_log` in the engagements SQLite, helper
    in `lib/`, surfaced in a new `/audit` page and in the report.
-6. **Settings page** — in-app key management, mode toggle, sudoers
+7. **Settings page** — in-app key management, mode toggle, sudoers
    cleanup, health check.
-7. **Test suite seed** — pytest + Vitest, starting with the
+8. **Test suite seed** — pytest + Vitest, starting with the
    engagement / scope / audit machinery (the newest, most
    consequential code is also the least-tested).
-8. **CLAUDE.md** — codifies all of the above so future contributors
+9. **CLAUDE.md** — codifies all of the above so future contributors
    (and AI agents) start aligned. *(Done — see [CLAUDE.md](CLAUDE.md).)*
 
 Roughly 10-12 days of focused work to clear the critical path.
@@ -162,9 +175,9 @@ Once the engagement workflow is solid:
 - **Formalized evidence model** — unified "evidence" type (scan
   output, screenshots, command transcripts, chat turns) all on the
   engagement timeline.
-- **Code-signed Mac (Developer ID + notarization) + Windows (OV/EV
-  cert)** — needed for auto-updates to actually work on Mac. See
-  [docs/SIGNING.md](docs/SIGNING.md) for cost + setup.
+- **Code-signed Mac (Developer ID + notarization)** — needed for auto-updates to actually work on Mac. Linux signing/package trust can follow. Windows signing is deferred with native Windows support. See [docs/SIGNING.md](docs/SIGNING.md) for cost + setup.
+- **AI provider abstraction** — keep Claude as the first provider, but design the app so Gemini, OpenAI-compatible endpoints, or local models can be added without rewriting the assistant.
+- **Coverage matrix** — show what has and has not been checked for the active engagement: DNS, TLS, headers, services, auth/session, evidence, findings, report sections.
 
 ## Beyond v1.x
 
