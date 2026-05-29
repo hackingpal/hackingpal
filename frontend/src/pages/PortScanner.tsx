@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
+import ScopeBanner from "../components/ScopeBanner";
+import { useActiveEngagementId } from "../lib/engagement";
 
 type OpenRow = { port: number; service: string; banner: string };
 
@@ -14,10 +16,17 @@ const PRESETS: { label: string; spec: string; hint: string }[] = [
 ];
 
 export default function PortScanner() {
+  const engagementId = useActiveEngagementId();
   const [target,  setTarget]  = useState("127.0.0.1");
   const [ports,   setPorts]   = useState("1-1024");
   const [threads, setThreads] = useState(100);
   const [timeout, setTimeout] = useState(1.0);
+  // Sticky bit so a user who accepted a warn-level scope verdict and clicked
+  // Scan again doesn't have to re-confirm every retry of the same target.
+  const [scopeConfirmed, setScopeConfirmed] = useState(false);
+  // Surfaced when the backend rejected the handshake with NEED_CONFIRM —
+  // shows a "Confirm & rescan" button that retries with confirm=true.
+  const [needConfirm, setNeedConfirm] = useState(false);
 
   const [scanning, setScanning] = useState(false);
   const [stopped,  setStopped]  = useState(false);
@@ -43,6 +52,7 @@ export default function PortScanner() {
   function start() {
     if (scanning) return;
     setScanning(true); setStopped(false); setError(null); setTimedOut(null);
+    setNeedConfirm(false);
     setMeta(null); setDone(0); setTotal(0); setElapsed(null); setRows([]);
 
     const ws = openWs("/ws/port-scan");
@@ -62,7 +72,13 @@ export default function PortScanner() {
     });
 
     ws.onopen = () => {
-      const init: ScanInit = { target, ports, timeout, threads };
+      // engagement_id (when set) drives the backend scope check; `confirm`
+      // is set after the user acknowledges a warn-level verdict.
+      const init: ScanInit & { engagement_id?: string; confirm?: boolean } = {
+        target, ports, timeout, threads,
+        engagement_id: engagementId ?? undefined,
+        confirm: scopeConfirmed,
+      };
       ws.send(JSON.stringify(init));
     };
 
@@ -88,8 +104,13 @@ export default function PortScanner() {
           watchRef.current?.stop();
           ws.close();
           break;
+        case "scope":
+          // Informational — ScopeBanner already shows the verdict from
+          // the preview endpoint. We just clear stale state.
+          break;
         case "error":
           setError(ev.detail);
+          if (ev.code === "NEED_CONFIRM") setNeedConfirm(true);
           setScanning(false);
           watchRef.current?.stop();
           ws.close();
@@ -208,6 +229,12 @@ export default function PortScanner() {
           </div>
         </div>
 
+        {/* Scope verdict — informs the user before scan whether the target
+            is in their engagement scope (or external in Lab mode). */}
+        <div className="mt-2">
+          <ScopeBanner target={target} />
+        </div>
+
         {/* Presets */}
         <div className="mt-2 flex flex-wrap gap-1.5 items-center">
           <span className="text-[10px] uppercase tracking-widest text-ink-dim mr-1">
@@ -281,9 +308,24 @@ export default function PortScanner() {
         )}
 
         {error && !timedOut && (
-          <div className="border border-danger/40 bg-danger/10 text-danger
-                          rounded px-3 py-2 text-sm font-mono mb-4">
-            Error — {error}
+          <div className={"rounded px-3 py-2 text-sm font-mono mb-4 border " +
+            (needConfirm
+              ? "border-amber/40 bg-amber/10 text-amber"
+              : "border-danger/40 bg-danger/10 text-danger")}>
+            <div>{needConfirm ? "Confirm required" : "Error"} — {error}</div>
+            {needConfirm && (
+              <button
+                onClick={() => {
+                  setScopeConfirmed(true);
+                  setNeedConfirm(false);
+                  setError(null);
+                  start();
+                }}
+                className="mt-2 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded
+                           border border-amber/60 bg-amber/20 hover:bg-amber/30">
+                Confirm &amp; rescan
+              </button>
+            )}
           </div>
         )}
 

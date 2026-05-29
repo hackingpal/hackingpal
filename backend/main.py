@@ -34,10 +34,10 @@ from routers import (
     lan_scan, lateral, ldap_enum, lfi, local_discovery, linux_posture,
     macos_posture, nmap, people_enum, persistence, ping, port_scanner,
     presets, processes, profile_finder, reverse_ip, reverse_shell, s3_scanner,
-    settings, shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum,
-    system_info, takeover, tcpdump, terminal, tls_audit, urlscan, vpn,
-    wayback, whois, wifi, wifi_scan, windows_posture, wpa_capture, xss,
-    systemd_units, firewall_rules, users_audit,
+    scope, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
+    subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit,
+    urlscan, vpn, wayback, whois, wifi, wifi_scan, windows_posture,
+    wpa_capture, xss, systemd_units, firewall_rules, users_audit,
 )
 
 logging_setup.configure()
@@ -170,6 +170,7 @@ app.include_router(urlscan.router)
 app.include_router(email_harvest.router)
 app.include_router(dorking.osint_router)
 app.include_router(audit_log.router)
+app.include_router(scope.router)
 
 
 @app.get("/health")

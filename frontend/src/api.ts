@@ -799,12 +799,14 @@ export type ScanInit = {
 };
 
 export type ScanEvent =
+  | { type: "scope";    target: string; verdict: "allow" | "warn" | "deny";
+      reason: string; layers: { policy: string; scope: string } }
   | { type: "started";  target: string; ip: string; total: number;
-      threads: number; timeout: number }
+      threads: number; timeout: number; audit_id?: string }
   | { type: "open";     port: number; service: string; banner: string }
   | { type: "progress"; done: number; total: number }
   | { type: "done";     elapsed: number; open_count: number; stopped: boolean }
-  | { type: "error";    detail: string };
+  | { type: "error";    detail: string; code?: string; need_confirm?: boolean };
 
 // ── Nmap ──────────────────────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import audit_log, hids_notify, scanner
+from lib import audit_log, hids_notify, scanner, scope
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_target
 
@@ -77,6 +77,32 @@ async def port_scan_ws(ws: WebSocket) -> None:
             await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close()
             return
+
+        # Scope check — combines target_policy (IP-class) + engagement scope.
+        # `confirm` lets the frontend re-send the handshake after the user
+        # acknowledges a `warn` verdict; without it, we refuse to start.
+        confirm = bool(init.get("confirm", False))
+        sc_verdict, sc_reason, sc_layers = scope.check_combined(target, engagement_id)
+        await ws.send_json({
+            "type": "scope", "target": target,
+            "verdict": sc_verdict, "reason": sc_reason, "layers": sc_layers,
+        })
+        if sc_verdict == "deny":
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"scope check failed: {sc_reason}",
+                target=target,
+            ))
+            await ws.close()
+            return
+        if sc_verdict == "warn" and not confirm:
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                sc_reason, target=target, need_confirm=True,
+            ))
+            await ws.close()
+            return
+
         try:
             ports = scanner.parse_ports(ports_s)
         except ValueError as exc:
