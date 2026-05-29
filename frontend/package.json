@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "description": "MyHackingPal — security-research desktop app (Electron + FastAPI).",
+  "description": "MyHackingPal — AI-assisted security testing workspace for authorized engagements (Electron + FastAPI).",
   "homepage": "https://github.com/myhackingpal/myhackingpal",
   "author": {
     "name": "Jack Adams-Lovell",

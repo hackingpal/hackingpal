@@ -6,6 +6,42 @@ Please report security issues to **adamsjack711@gmail.com**. Do not open public
 GitHub issues for vulnerabilities — give the maintainer a chance to ship a fix
 first. A response is typically sent within 72 hours.
 
+## Product safety model
+
+MyHackingPal is an **AI-assisted security testing workspace for authorized
+engagements**. The product safety model assumes:
+
+- The operator has authorization to test the targets they enter
+- Active checks (web exploit, AD attacks, cloud enumeration) wait for
+  explicit human approval per run, even when the AI suggests them
+- Engagement scope is enforced by the tools that read it, not by
+  policy alone
+
+The v1.0 critical path treats the following as load-bearing safety
+controls (see [ROADMAP.md](ROADMAP.md) for the full rationale):
+
+- **Scope allowlist** — engagement scope/exclusions enforced by every
+  target-accepting tool
+- **Authorization confirmation** — explicit "I have authorization to
+  test this target" gate on every active check
+- **Command preview** — exact argv / HTTP request shown before any
+  subprocess shell-out; user approves
+- **AI suggestion → human approval** — the chat assistant proposes
+  checks as approval cards; nothing runs without human consent
+- **Rate limits** — per-tool throttling with sane defaults
+- **Stop / kill button** — every long-running scan is interruptible
+- **Audit log** — append-only record of every action that feeds the
+  engagement report
+- **Lab mode vs Engagement mode** — explicit toggle. Lab mode skips
+  scope checks for unfettered local experimentation; Engagement mode
+  enforces every gate above
+
+Several of these controls are partially in place today (auth gates on
+the web-exploit pages, rate slider, stop button, engagement evidence
+auto-attach). Scope enforcement, command preview, the AI approval
+flow, the audit log, and the Lab/Engagement mode toggle are the v1.0
+work in flight.
+
 ## Local API Security
 
 MyHackingPal is a desktop app: the Electron renderer talks to a Python FastAPI

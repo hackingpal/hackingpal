@@ -5,11 +5,30 @@
 
 > 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
 
-A cross-platform desktop security toolkit. Hybrid **Electron + React + TypeScript**
-frontend with a bundled **FastAPI + Python** sidecar that owns all the
-network/forensics/exploitation logic. ~40 tools organized into nine sidebar
-categories, plus a Claude-powered chat assistant that watches your session
-log and explains what your scans found.
+**An AI-assisted security testing workspace for authorized engagements.**
+
+The center of the app is the **engagement**: a scoped, named container for a
+single piece of work. You create one (with explicit targets and exclusions),
+pick a playbook or pick tools one-by-one, and every result — scan output,
+finding, screenshot — is auto-attached to that engagement and turned into a
+report at the end. A Claude-powered copilot watches the session and helps
+you interpret results, suggest next checks, and draft the report — but it
+**suggests, it doesn't act**. Every active check waits for a human to approve.
+
+```
+Engagement → Targets → Playbook → Tools → Evidence → Report
+```
+
+The product is built around that flow. The 75+ individual tools — discovery,
+recon, web exploit, AD, cloud, forensics — are the **library** that lives
+inside engagements, not the product itself. You can still launch any tool
+directly (the sidebar / ⌘K palette work the same way), but the engagement
+context is what turns a tool-launcher into a security workspace.
+
+Hybrid **Electron + React + TypeScript** frontend with a bundled
+**FastAPI + Python** sidecar that owns all the network / forensics /
+exploitation logic. See [ROADMAP.md](ROADMAP.md) for the direction and
+[CLAUDE.md](CLAUDE.md) for the architecture + contributor guide.
 
 ```
 myhackingpal/
@@ -156,9 +175,15 @@ floating "AI" bubble → ⚙ → paste an `sk-ant-…` Anthropic API key.
 
 ---
 
-## Tool catalogue
+## Tool library
 
-Sections match the sidebar.
+The library is a **resource called into engagements**, not the product
+itself. You can launch any tool from the sidebar / ⌘K palette and run it
+standalone (Lab mode), but the same tools become "the next check in an
+engagement" once you have one active — their results auto-attach as
+evidence and the AI can pull from them when drafting the report.
+
+Sections below mirror the sidebar.
 
 ### DISCOVERY
 
@@ -435,38 +460,50 @@ Please read CONTRIBUTING.md and DISCLAIMER.md before submitting a PR.
 
 ## Roadmap
 
-### v0.1.0-beta — macOS (current)
-- [x] 40+ tools across 9 categories
-- [x] Claude-powered AI assistant with session context
-- [x] Attack playbook / preset system
-- [x] WebSocket streaming for all active tools
-- [x] Authorization gates on all exploit tools
-- [x] Scope guard + rate limiting
-- [x] macOS Keychain for all credentials
-- [x] Command palette (⌘K) + sidebar (⌘B)
-- [x] Dark / light / system theme
+Full plan lives in [ROADMAP.md](ROADMAP.md). Short version:
 
-### v0.2.0 — Stability
-- [ ] Full error handling pass across all 40+ tools
-- [ ] Input validation on every endpoint
-- [ ] Test suite (pytest backend + Vitest frontend)
-- [ ] First-launch wizard
-- [ ] Settings page with in-app API key management
-- [ ] Engagement / session management with findings tracker
-- [ ] PDF/markdown report export
+**Shipped:**
+- v0.1.x — 75+ tools across 15 sidebar categories, AI chat with session context,
+  WebSocket streaming, authorization gates on web-exploit tools, macOS Keychain,
+  command palette, themes, Docker backend, Android quick-lookup companion.
+- v0.2.0 — Cross-platform builds (macOS / Windows / Linux), DMG + auto-updates
+  via electron-updater, engagement + findings system, screenshot evidence,
+  markdown + HTML + GitHub-issue report export.
 
-### v0.3.0 — Cross-platform
-- [ ] Windows build (.exe installer)
-- [ ] Linux build (.AppImage / .deb)
-- [ ] Docker image (backend only, browser frontend)
-- [ ] Code signing + notarization (macOS + Windows)
-- [ ] Auto-update via electron-updater
+**Pivot underway:** from "tool dashboard" to **AI-assisted engagement workspace**.
 
-### v1.0.0 — Community
-- [ ] Community preset library (.mhp files)
-- [ ] NGFW integration (pfSense, OPNsense, Palo Alto)
-- [ ] iOS companion app (Swift)
+**v1.0 — Engagement-first workspace**
+- [ ] Scope enforcement: every target-accepting tool consults the active
+      engagement's scope/exclusions before running
+- [ ] Lab mode vs Engagement mode toggle (default: Lab; opt into engagement
+      gating when doing authorized work)
+- [ ] Audit log: append-only record of every action (tool, target, argv,
+      approver, result) — feeds the report
+- [ ] Authorization checkbox on the remaining attack tools (AD spray,
+      BloodHound, Kerberoasting, S3 enum, etc.)
+- [ ] Settings page (in-app key management, mode toggle, sudoers cleanup)
+- [ ] Engagement-centric default page on launch
+- [ ] Test suite — pytest + Vitest, starting with engagement / scope / audit
+
+**v1.x — Copilot, not autopilot**
+- [ ] AI suggestion → approval card UX (suggest the next check, user
+      approves before it runs)
+- [ ] Playbook redesign: guided multi-step flows with AI commentary at
+      each step + per-step approval
+- [ ] Command preview / dry-run for every subprocess shell-out
+- [ ] Formalized evidence model — unified timeline of scan output,
+      screenshots, chat turns
+- [ ] Code-signed Mac (Developer ID + notarization) + Windows (OV/EV)
+
+**Beyond:**
+- [ ] Community playbook library
+- [ ] iOS companion (Swift)
 - [ ] Plugin / custom tool API
+- [ ] NGFW integrations
+
+The safety controls list (scope allowlist, command preview, approval gates,
+audit log, rate limits, lab vs real mode) is the v1.0 critical path — see
+ROADMAP.md for the full rationale.
 
 ---
 
