@@ -297,6 +297,31 @@ export const setApiKey = (api_key: string) =>
 export const deleteApiKey = () =>
   api<ApiKeyStatus>("/settings/api-key", { method: "DELETE" });
 
+// Named external-service keys (SecurityTrails, VirusTotal, Shodan, HIBP,
+// GitHub, Google CSE, Censys, Hunter). The Anthropic key has its own
+// /settings/api-key endpoints above — these wrap /settings/keys/*.
+export type NamedKeyStatus = {
+  name: string;
+  label: string;
+  present: boolean;
+  last4: string;
+};
+
+export const fetchNamedKeys = () =>
+  api<NamedKeyStatus[]>("/settings/keys");
+
+export const setNamedKey = (name: string, value: string) =>
+  api<NamedKeyStatus>(`/settings/keys/${encodeURIComponent(name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value }),
+  });
+
+export const deleteNamedKey = (name: string) =>
+  api<NamedKeyStatus>(`/settings/keys/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+
 export const fetchChatConfig = () =>
   api<{ key_present: boolean; model: string }>("/chat/config");
 

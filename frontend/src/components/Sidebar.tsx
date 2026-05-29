@@ -41,7 +41,7 @@ export type NavId =
   | "hash" | "cvss"
   | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
-  | "wifi" | "vpn" | "term" | "brew";
+  | "wifi" | "vpn" | "term" | "brew" | "settings";
 
 import { filterGroups, type Platform } from "../lib/nav";
 import { usePlannedTools } from "../lib/plannedTools";

@@ -81,6 +81,7 @@ import UrlScan from "./pages/UrlScan";
 import EmailHarvest from "./pages/EmailHarvest";
 import DorksGen from "./pages/DorksGen";
 import Audit from "./pages/Audit";
+import Settings from "./pages/Settings";
 import ChatBubble from "./components/ChatBubble";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
@@ -350,6 +351,7 @@ export default function App() {
            active === "emailharvest" ? <EmailHarvest /> :
            active === "dorksgen"    ? <DorksGen /> :
            active === "audit-log"   ? <Audit /> :
+           active === "settings"    ? <Settings onJumpTo={setActive} /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}
                                           onOpenCatalog={() => setCatalogOpen(true)}

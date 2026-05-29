@@ -172,10 +172,11 @@ export const GROUPS: NavGroup[] = [
       // wifi (Integrity), vpn (WireGuard wg-quick), and tcpdump (libpcap)
       // need OS-specific ports before Windows can use them. Hidden on win32
       // so users don't click into a 501 error toast.
-      { id: "wifi", label: "WiFi Integrity", platforms: NOT_WINDOWS },
-      { id: "vpn",  label: "VPN Manager",    platforms: NOT_WINDOWS },
-      { id: "term", label: "Terminal" },
-      { id: "brew", label: "Packages" },
+      { id: "wifi",     label: "WiFi Integrity", platforms: NOT_WINDOWS },
+      { id: "vpn",      label: "VPN Manager",    platforms: NOT_WINDOWS },
+      { id: "term",     label: "Terminal" },
+      { id: "brew",     label: "Packages" },
+      { id: "settings", label: "Settings" },
     ],
   },
 ];
