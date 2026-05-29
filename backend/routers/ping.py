@@ -20,8 +20,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_target
 
 logger = logging.getLogger(__name__)
@@ -59,6 +61,7 @@ async def ping_ws(ws: WebSocket) -> None:
     try:
         init: dict[str, Any] = await ws.receive_json()
         target  = str(init.get("target", "")).strip()
+        engagement_id = init.get("engagement_id") or None
         try:
             target = validate_target(target, field="target")
         except MhpError as exc:
@@ -71,6 +74,37 @@ async def ping_ws(ws: WebSocket) -> None:
             await ws.send_json(ws_error(
                 ErrorCode.VALIDATION_ERROR,
                 "count/interval must be numeric",
+            ))
+            await ws.close(); return
+
+        # Scope check — combines target_policy (IP-class) + engagement scope,
+        # gated by Lab/Engagement mode. Mode reads from the X-MHP-Mode header /
+        # ?mode= query; the handshake `mode` field is honored as a final
+        # override for tests. `confirm` lets the client re-send the handshake
+        # after the user acknowledges a `warn` verdict.
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        sc_verdict, sc_reason, sc_layers = scope.check_combined(
+            target, engagement_id, mode,
+        )
+        await ws.send_json({
+            "type": "scope", "target": target, "mode": mode,
+            "verdict": sc_verdict, "reason": sc_reason, "layers": sc_layers,
+        })
+        if sc_verdict == "deny":
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"scope check failed: {sc_reason}",
+                target=target,
+            ))
+            await ws.close(); return
+        if sc_verdict == "warn" and not confirm:
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                sc_reason, target=target, need_confirm=True,
             ))
             await ws.close(); return
 

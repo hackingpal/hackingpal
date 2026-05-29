@@ -39,3 +39,23 @@ def get_mode(conn: HTTPConnection) -> Mode:
         or ""
     ).strip().lower()
     return "engagement" if raw == "engagement" else "lab"
+
+
+def get_engagement_id(conn: HTTPConnection) -> str | None:
+    """Resolve the active engagement id for one request/WS.
+
+    Precedence mirrors `get_mode`:
+      1. ``X-MHP-Engagement-Id`` header
+      2. ``?engagement_id=`` query param
+      3. ``None``
+
+    Used by REST endpoints to avoid threading `engagement_id` through every
+    request body. WS endpoints generally read it from the handshake init
+    message instead, since that's already where per-scan options live.
+    """
+    raw = (
+        conn.headers.get("X-MHP-Engagement-Id")
+        or conn.query_params.get("engagement_id")
+        or ""
+    ).strip()
+    return raw or None

@@ -32,8 +32,9 @@ import time
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import audit_log
+from lib import audit_log, scope
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,37 @@ async def s3_ws(ws: WebSocket) -> None:
             await ws.send_json(ws_error(
                 ErrorCode.INVALID_TARGET,
                 "target must look like a bucket-name fragment (3-63 chars, lowercase letters/digits/hyphens)",
+            ))
+            await ws.close(); return
+
+        # Scope check — the S3 target is an org-name fragment (e.g. "acme")
+        # used to generate bucket-name permutations. Engagement scope still
+        # applies: in engagement mode with scope set, the fragment must match
+        # an entry (bare-host scope like "acme" or a CIDR/IP — wildcards like
+        # "*.acme.com" won't match a bare fragment, by design).
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        sc_verdict, sc_reason, sc_layers = scope.check_combined(
+            target, engagement_id, mode,
+        )
+        await ws.send_json({
+            "type": "scope", "target": target, "mode": mode,
+            "verdict": sc_verdict, "reason": sc_reason, "layers": sc_layers,
+        })
+        if sc_verdict == "deny":
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"scope check failed: {sc_reason}",
+                target=target,
+            ))
+            await ws.close(); return
+        if sc_verdict == "warn" and not confirm:
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                sc_reason, target=target, need_confirm=True,
             ))
             await ws.close(); return
 

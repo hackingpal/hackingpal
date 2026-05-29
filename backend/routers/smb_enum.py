@@ -16,11 +16,13 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.ad_auth import CredsModel, open_smb
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_mode
 from lib.validators import validate_hostname
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,8 @@ class EnumBody(BaseModel):
     creds:  CredsModel
     target: str = Field("", description="SMB host (defaults to dc_host)")
     list_files: bool = True  # try to list top-level files in each readable share
+    engagement_id: str | None = Field(None, description="Active engagement (for scope check + audit)")
+    confirm: bool = Field(False, description="Set true to re-submit after acknowledging a `warn` verdict")
 
 
 def _add(out: list[dict[str, Any]], severity: str, title: str,
@@ -48,10 +52,32 @@ def _add(out: list[dict[str, Any]], severity: str, title: str,
 
 
 @router.post("/enum")
-def enum(body: EnumBody) -> dict[str, Any]:
+def enum(body: EnumBody, request: Request) -> dict[str, Any]:
     body.creds.dc_host = validate_hostname(body.creds.dc_host, field="dc_host")
     target = body.target or body.creds.dc_host
     target = validate_hostname(target, field="target")
+
+    # Scope check — combines target_policy + engagement scope, gated by
+    # Lab/Engagement mode (resolved from the X-MHP-Mode header).
+    mode = get_mode(request)
+    sc_verdict, sc_reason, sc_layers = scope.check_combined(
+        target, body.engagement_id, mode,
+    )
+    if sc_verdict == "deny":
+        raise MhpError(
+            f"scope check failed: {sc_reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": target, "layers": sc_layers},
+        )
+    if sc_verdict == "warn" and not body.confirm:
+        raise MhpError(
+            sc_reason,
+            code=ErrorCode.NEED_CONFIRM,
+            status_code=409,
+            extra={"target": target, "need_confirm": True, "layers": sc_layers},
+        )
+
     try:
         conn = open_smb(body.creds, target=target)
     except Exception:

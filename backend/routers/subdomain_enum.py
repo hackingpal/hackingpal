@@ -28,8 +28,9 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import audit_log
+from lib import audit_log, scope
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_domain
 
 from .settings import keychain_get_named
@@ -259,6 +260,35 @@ async def subdom_ws(ws: WebSocket) -> None:
             domain = validate_domain(raw_domain, field="domain")
         except MhpError as exc:
             await ws.send_json(ws_error(exc.code, exc.message))
+            await ws.close(); return
+
+        # Scope check — combines target_policy + engagement scope, gated by
+        # Lab/Engagement mode. `confirm` lets the client re-send the handshake
+        # after the user acknowledges a `warn` verdict.
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        sc_verdict, sc_reason, sc_layers = scope.check_combined(
+            domain, engagement_id, mode,
+        )
+        await ws.send_json({
+            "type": "scope", "target": domain, "mode": mode,
+            "verdict": sc_verdict, "reason": sc_reason, "layers": sc_layers,
+        })
+        if sc_verdict == "deny":
+            await ws.send_json(ws_error(
+                ErrorCode.TARGET_DENIED,
+                f"scope check failed: {sc_reason}",
+                target=domain,
+            ))
+            await ws.close(); return
+        if sc_verdict == "warn" and not confirm:
+            await ws.send_json(ws_error(
+                ErrorCode.NEED_CONFIRM,
+                sc_reason, target=domain, need_confirm=True,
+            ))
             await ws.close(); return
 
         sources = [s for s in sources if s in SOURCE_CONFIG]

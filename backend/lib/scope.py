@@ -51,6 +51,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from lib import engagements
+from lib.errors import ErrorCode, MhpError, ws_error
 from lib.mode import Mode
 
 logger = logging.getLogger(__name__)
@@ -228,3 +229,90 @@ def check_combined(
         reason = f"scope: {sc_r}"
     return verdict, reason, {"policy": f"{pol_v}: {pol_r}",
                              "scope":  f"{sc_v}: {sc_r}"}
+
+
+# ── Enforcement helpers ──────────────────────────────────────────────────────
+#
+# Two thin wrappers around `check_combined` that fold in the side-effects
+# every router does identically (emit a `scope` event, return an error frame
+# / raise `MhpError` on deny|warn, close the WS). Routers call these in one
+# line instead of repeating the 25-line check + dispatch block.
+
+
+async def enforce_ws(
+    ws,
+    target: str,
+    engagement_id: str | None,
+    mode: Mode,
+    *,
+    confirm: bool = False,
+    deny_only: bool = False,
+) -> bool:
+    """WS scope check + side-effects. Returns True if the scan may proceed.
+
+    On allow: sends a `{"type":"scope",...}` event so the UI can show the
+    verdict, returns True.
+
+    On deny or unconfirmed warn: sends the scope event, then a TARGET_DENIED
+    or NEED_CONFIRM error frame, closes the WS, returns False. The caller
+    typically does `if not await enforce_ws(...): return`.
+
+    `deny_only=True` is for passive tools (TLS audit, WHOIS, CT logs) where
+    `warn` doesn't block — the verdict is still surfaced in the response
+    but execution proceeds without a confirm round-trip.
+    """
+    verdict, reason, layers = check_combined(target, engagement_id, mode)
+    await ws.send_json({
+        "type": "scope", "target": target, "mode": mode,
+        "verdict": verdict, "reason": reason, "layers": layers,
+    })
+    if verdict == "deny":
+        await ws.send_json(ws_error(
+            ErrorCode.TARGET_DENIED,
+            f"scope check failed: {reason}",
+            target=target,
+        ))
+        await ws.close()
+        return False
+    if verdict == "warn" and not confirm and not deny_only:
+        await ws.send_json(ws_error(
+            ErrorCode.NEED_CONFIRM,
+            reason, target=target, need_confirm=True,
+        ))
+        await ws.close()
+        return False
+    return True
+
+
+def enforce_rest(
+    target: str,
+    engagement_id: str | None,
+    mode: Mode,
+    *,
+    confirm: bool = False,
+    deny_only: bool = False,
+) -> tuple[Verdict, str, dict[str, str]]:
+    """REST scope check. Raises MhpError on deny or unconfirmed warn.
+
+    Returns `(verdict, reason, layers)` for the allow / passive-warn case
+    so callers can include the verdict in their response payload (existing
+    `policy: {verdict, reason}` fields keep working).
+
+    `deny_only=True`: passive tools — `warn` proceeds without confirm.
+    """
+    verdict, reason, layers = check_combined(target, engagement_id, mode)
+    if verdict == "deny":
+        raise MhpError(
+            f"scope check failed: {reason}",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"target": target, "layers": layers},
+        )
+    if verdict == "warn" and not confirm and not deny_only:
+        raise MhpError(
+            reason,
+            code=ErrorCode.NEED_CONFIRM,
+            status_code=409,
+            extra={"need_confirm": True, "target": target, "layers": layers},
+        )
+    return verdict, reason, layers
