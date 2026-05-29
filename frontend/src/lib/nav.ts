@@ -139,6 +139,7 @@ export const GROUPS: NavGroup[] = [
     section: "MONITORING",
     items: [
       { id: "ids",           label: "IDS"                                       },
+      { id: "audit-log",     label: "Audit Log"                                 },
       { id: "systemd",       label: "Systemd Units",     platforms: LINUX_ONLY },
       { id: "firewallrules", label: "Firewall Rules",    platforms: LINUX_ONLY },
     ],

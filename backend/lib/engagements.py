@@ -81,6 +81,30 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_results_engagement ON scan_results(engagement_id, ts DESC)",
     "CREATE INDEX IF NOT EXISTS ix_findings_engagement ON findings(engagement_id, ts DESC)",
+    # ── Audit log ───────────────────────────────────────────────────────────
+    # Append-only record of every tool invocation. One row per action: it's
+    # INSERTed at start (status='started') and UPDATEd at completion to set
+    # ts_end + status + summary. We never DELETE — that's the whole point.
+    # `engagement_id` is nullable because Lab-mode runs aren't tied to one.
+    """
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id             TEXT PRIMARY KEY,
+      engagement_id  TEXT REFERENCES engagements(id) ON DELETE SET NULL,
+      ts_start       TEXT NOT NULL,
+      ts_end         TEXT,
+      tool           TEXT NOT NULL,
+      target         TEXT NOT NULL DEFAULT '',
+      argv_json      TEXT NOT NULL DEFAULT '[]',
+      approver       TEXT NOT NULL DEFAULT 'local',
+      mode           TEXT NOT NULL DEFAULT 'lab',  -- lab|engagement
+      status         TEXT NOT NULL DEFAULT 'started',
+      summary        TEXT NOT NULL DEFAULT '',
+      error          TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_audit_engagement ON audit_log(engagement_id, ts_start DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_log(ts_start DESC)",
+    "CREATE INDEX IF NOT EXISTS ix_audit_tool ON audit_log(tool, ts_start DESC)",
 ]
 
 

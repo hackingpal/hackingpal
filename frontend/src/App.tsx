@@ -80,6 +80,7 @@ import Wayback from "./pages/Wayback";
 import UrlScan from "./pages/UrlScan";
 import EmailHarvest from "./pages/EmailHarvest";
 import DorksGen from "./pages/DorksGen";
+import Audit from "./pages/Audit";
 import ChatBubble from "./components/ChatBubble";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
@@ -348,6 +349,7 @@ export default function App() {
            active === "urlscan"     ? <UrlScan /> :
            active === "emailharvest" ? <EmailHarvest /> :
            active === "dorksgen"    ? <DorksGen /> :
+           active === "audit-log"   ? <Audit /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}
                                           onOpenCatalog={() => setCatalogOpen(true)}

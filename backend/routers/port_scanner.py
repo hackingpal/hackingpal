@@ -26,7 +26,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, scanner
+from lib import audit_log, hids_notify, scanner
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_target
 
@@ -55,11 +55,13 @@ async def port_scan_ws(ws: WebSocket) -> None:
         except Exception:
             stop.set()
 
+    audit_id: str | None = None
     try:
         # Handshake message
         init: dict[str, Any] = await ws.receive_json()
         target  = str(init.get("target", "")).strip()
         ports_s = str(init.get("ports", "1-1024"))
+        engagement_id = init.get("engagement_id") or None
         try:
             timeout = float(init.get("timeout", 1.0))
         except (TypeError, ValueError):
@@ -94,11 +96,25 @@ async def port_scan_ws(ws: WebSocket) -> None:
 
         listener = asyncio.create_task(listen_for_stop())
 
+        # Audit log: one row per scan invocation. Recorded after validation
+        # so failures land as `error`, not `started`-and-then-orphaned.
+        try:
+            audit_id = audit_log.start(
+                tool="port_scanner",
+                target=f"{target} ({ip})",
+                argv=["tcp-connect", f"--ports={ports_s}",
+                      f"--threads={n_threads}", f"--timeout={timeout}"],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (scan continues)")
+
         await ws.send_json({
             "type": "started",
             "target": target, "ip": ip,
             "total": len(ports),
             "threads": n_threads, "timeout": timeout,
+            "audit_id": audit_id,
         })
         await asyncio.sleep(0)   # let the start event flush
 
@@ -150,6 +166,15 @@ async def port_scan_ws(ws: WebSocket) -> None:
             "open_count": open_count,
             "stopped": stop.is_set(),
         })
+        if audit_id:
+            summary = f"{open_count} open of {len(ports)} ports in {elapsed}s"
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
         if not stop.is_set():
             await hids_notify.notify(
                 "info", "port-scan",
@@ -161,8 +186,14 @@ async def port_scan_ws(ws: WebSocket) -> None:
             )
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("port_scan_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,

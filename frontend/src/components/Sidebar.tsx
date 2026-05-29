@@ -39,7 +39,7 @@ export type NavId =
   | "wifiscan" | "eviltwin" | "bt" | "wpacap"
   | "revshell" | "obfuscator" | "pivot" | "credhrv" | "c2"
   | "hash" | "cvss"
-  | "ids" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
+  | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
   | "wifi" | "vpn" | "term" | "brew";
 
