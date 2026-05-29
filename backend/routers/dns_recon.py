@@ -30,6 +30,8 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 from lib import hids_notify
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, ws_error
+from lib import scope
+from lib.mode import get_mode
 from lib.target_policy import check_target, require_target
 from lib.validators import validate_domain
 
@@ -230,6 +232,11 @@ async def dns_recon_ws(ws: WebSocket) -> None:
         raw_domain = str(init.get("domain", "")).strip().lower()
         wordlist_key = str(init.get("wordlist", "small"))
         confirm = bool(init.get("confirm", False))
+        engagement_id = init.get("engagement_id") or None
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
 
         try:
             domain = validate_domain(raw_domain, field="domain")
@@ -240,22 +247,8 @@ async def dns_recon_ws(ws: WebSocket) -> None:
             ))
             await ws.close(); return
 
-        verdict, reason = check_target(domain)
-        if verdict == "deny":
-            await ws.send_json(ws_error(
-                ErrorCode.TARGET_DENIED,
-                f"target denied: {reason}",
-                target=domain,
-            ))
-            await ws.close(); return
-        if verdict == "warn" and not confirm:
-            await ws.send_json(ws_error(
-                ErrorCode.NEED_CONFIRM,
-                reason,
-                target=domain,
-                need_confirm=True,
-            ))
-            await ws.close(); return
+        if not await scope.enforce_ws(ws, domain, engagement_id, mode, confirm=confirm):
+            return
 
         wordlist = _WORDLIST_MEDIUM if wordlist_key == "medium" else _WORDLIST_SMALL
 

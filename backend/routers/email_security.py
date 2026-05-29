@@ -16,11 +16,13 @@ import subprocess
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
 from lib import hids_notify
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import require_target
 from lib.validators import validate_domain
 
@@ -155,11 +157,14 @@ def _find_dkim(domain: str) -> dict[str, Any]:
 
 
 @router.get("/email/audit/{domain}")
-async def email_audit(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
+async def email_audit(domain: str, request: Request,
+                      confirm: bool = Query(default=False)) -> dict[str, Any]:
     # `validate_domain` strips whitespace, enforces length, rejects IP
     # literals (no dots-only labels), and requires at least one dot.
     domain = validate_domain(domain, field="domain")
-    require_target(domain, confirm=confirm)
+    scope.enforce_rest(
+        domain, get_engagement_id(request), get_mode(request), confirm=confirm,
+    )
 
     if not DIG:
         raise MhpError(

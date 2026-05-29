@@ -25,11 +25,12 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import MAX_TARGET_LEN, validate_hostname
 
@@ -206,18 +207,13 @@ HOSTING_KEYWORDS = (
 
 
 @router.get("/whois/{target:path}")
-async def whois_lookup(target: str) -> dict[str, Any]:
+async def whois_lookup(target: str, request: Request) -> dict[str, Any]:
     target = _validate_whois_target(target)
 
-    verdict, reason = check_target(target)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": target},
-        )
-    # passive mode: warn proceeds — verdict surfaced in response
+    # Passive lookup — `warn` is informational only and surfaced in response.
+    verdict, reason, _ = scope.enforce_rest(
+        target, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
 
     ttype, resolved_ip = _classify(target)
 

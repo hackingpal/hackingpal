@@ -35,11 +35,12 @@ import subprocess
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 
-from lib import audit_log, hids_notify
+from lib import audit_log, hids_notify, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import validate_hostname
 
@@ -195,6 +196,7 @@ def _check_host(fqdn: str) -> dict[str, Any]:
 @router.get("/takeover/check/{fqdn}")
 async def takeover_check(
     fqdn: str,
+    request: Request,
     confirm: bool = Query(default=False),
     confirm_auth: bool = Query(default=False),
 ) -> dict[str, Any]:
@@ -204,14 +206,9 @@ async def takeover_check(
             detail="Confirm you have authorization to scan this subdomain.",
         )
     fqdn = validate_hostname(fqdn, field="fqdn", allow_ip=False)
-    verdict, reason = check_target(fqdn)
-    if verdict == "deny":
-        raise HTTPException(status_code=403, detail=f"target denied: {reason}")
-    if verdict == "warn" and not confirm:
-        raise HTTPException(
-            status_code=409,
-            detail={"need_confirm": True, "reason": reason, "target": fqdn},
-        )
+    verdict, reason, _ = scope.enforce_rest(
+        fqdn, get_engagement_id(request), get_mode(request), confirm=confirm,
+    )
 
     res = await asyncio.to_thread(_check_host, fqdn)
     res["policy"] = {"verdict": verdict, "reason": reason}
@@ -278,22 +275,12 @@ async def takeover_ws(ws: WebSocket) -> None:
         except MhpError as exc:
             await ws.send_json(ws_error(exc.code, exc.message))
             await ws.close(); return
-        verdict, reason = check_target(sample)
-        if verdict == "deny":
-            await ws.send_json(ws_error(
-                ErrorCode.TARGET_DENIED,
-                f"target denied: {reason}",
-                target=sample,
-            ))
-            await ws.close(); return
-        if verdict == "warn" and not confirm:
-            await ws.send_json(ws_error(
-                ErrorCode.NEED_CONFIRM,
-                reason,
-                target=sample,
-                need_confirm=True,
-            ))
-            await ws.close(); return
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_ws(ws, sample, engagement_id, mode, confirm=confirm):
+            return
 
         listener = asyncio.create_task(listen_for_stop())
         try:

@@ -21,10 +21,11 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import validate_url
 
@@ -308,7 +309,8 @@ def _match_signatures(
 
 
 @router.get("/cms/fingerprint")
-async def cms_fingerprint(url: str = Query(...),
+async def cms_fingerprint(request: Request,
+                          url: str = Query(...),
                           confirm: bool = Query(default=False)) -> dict[str, Any]:
     raw = url.strip()
     if raw and "://" not in raw:
@@ -319,21 +321,9 @@ async def cms_fingerprint(url: str = Query(...),
     if not host:
         raise MhpError("could not parse host", code=ErrorCode.INVALID_URL)
 
-    verdict, reason = check_target(host)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": host},
-        )
-    if verdict == "warn" and not confirm:
-        raise MhpError(
-            reason,
-            code=ErrorCode.NEED_CONFIRM,
-            status_code=409,
-            extra={"need_confirm": True, "target": host},
-        )
+    verdict, reason, _ = scope.enforce_rest(
+        host, get_engagement_id(request), get_mode(request), confirm=confirm,
+    )
 
     t0 = time.monotonic()
     status, headers, body, final_url = await asyncio.to_thread(_fetch, url)

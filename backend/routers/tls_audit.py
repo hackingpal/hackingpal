@@ -34,11 +34,12 @@ from typing import Any
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import validate_hostname, validate_port
 
@@ -236,19 +237,14 @@ def _check_hsts_and_redirect(host: str, port: int, timeout: float = 5.0) -> tupl
 
 
 @router.get("/tls/audit/{host}")
-async def tls_audit(host: str, port: int = 443) -> dict[str, Any]:
+async def tls_audit(host: str, request: Request, port: int = 443) -> dict[str, Any]:
     host = validate_hostname(host, field="host")
     port = validate_port(port, field="port")
 
-    verdict, reason = check_target(host)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": host},
-        )
-    # passive — proceed even on warn
+    # Passive tool — warn is informational only, doesn't block.
+    verdict, reason, _ = scope.enforce_rest(
+        host, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
 
     ip = _resolve(host)
     if not ip:

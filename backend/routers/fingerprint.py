@@ -30,10 +30,12 @@ import struct
 import time
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import validate_port, validate_target
 
@@ -347,17 +349,13 @@ def _fingerprint_one(host: str, port: int, timeout: float = 3.0) -> dict[str, An
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/fingerprint/{host}/{port}")
-async def fingerprint_one(host: str, port: int) -> dict[str, Any]:
+async def fingerprint_one(host: str, port: int, request: Request) -> dict[str, Any]:
     host = validate_target(host, field="host")
     port = validate_port(port)
-    verdict, reason = check_target(host)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": host},
-        )
+    # Banner grab is passive — warn proceeds with verdict in response.
+    verdict, reason, _ = scope.enforce_rest(
+        host, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     result = await asyncio.to_thread(_fingerprint_one, host, port)
     result["policy"] = {"verdict": verdict, "reason": reason}
     return result
@@ -366,22 +364,18 @@ async def fingerprint_one(host: str, port: int) -> dict[str, Any]:
 class BulkRequest(BaseModel):
     host: str
     ports: list[int] = Field(..., max_length=100)
+    confirm: bool = False
 
 
 @router.post("/fingerprint/bulk")
-async def fingerprint_bulk(req: BulkRequest) -> dict[str, Any]:
+async def fingerprint_bulk(req: BulkRequest, request: Request) -> dict[str, Any]:
     host = validate_target(req.host, field="host")
     if len(req.ports) == 0:
         raise MhpError("ports is required", code=ErrorCode.VALIDATION_ERROR)
     ports = [validate_port(p) for p in req.ports]
-    verdict, reason = check_target(host)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": host},
-        )
+    verdict, reason, _ = scope.enforce_rest(
+        host, get_engagement_id(request), get_mode(request), confirm=req.confirm,
+    )
 
     sem = asyncio.Semaphore(16)
 

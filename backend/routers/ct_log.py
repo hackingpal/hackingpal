@@ -32,10 +32,11 @@ from typing import Any
 from urllib import parse as urlparse, request as urlrequest
 from urllib.error import HTTPError, URLError
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.target_policy import check_target
 from lib.validators import validate_domain
 
@@ -104,24 +105,13 @@ def _parse_dt(s: str) -> datetime | None:
 
 
 @router.get("/ct/search/{domain}")
-async def ct_search(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
+async def ct_search(domain: str, request: Request,
+                    confirm: bool = Query(default=False)) -> dict[str, Any]:
     domain = validate_domain(domain)
 
-    verdict, reason = check_target(domain)
-    if verdict == "deny":
-        raise MhpError(
-            f"target denied: {reason}",
-            code=ErrorCode.TARGET_DENIED,
-            status_code=403,
-            extra={"target": domain},
-        )
-    if verdict == "warn" and not confirm:
-        raise MhpError(
-            reason,
-            code=ErrorCode.NEED_CONFIRM,
-            status_code=409,
-            extra={"need_confirm": True, "target": domain},
-        )
+    verdict, reason, _ = scope.enforce_rest(
+        domain, get_engagement_id(request), get_mode(request), confirm=confirm,
+    )
 
     t0 = time.monotonic()
     throttled = False
