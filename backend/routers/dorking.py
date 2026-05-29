@@ -19,7 +19,9 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+
+from lib.auth import require_local_auth
 from pydantic import BaseModel, Field
 
 from lib.errors import ErrorCode, MhpError
@@ -29,9 +31,11 @@ from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/dorking", tags=["dorking"])
+router = APIRouter(prefix="/dorking", tags=["dorking"],
+                   dependencies=[Depends(require_local_auth)])
 # Separate router (no /dorking prefix) for the /osint/dorks/{domain} alias.
-osint_router = APIRouter(tags=["dorking-osint"])
+osint_router = APIRouter(tags=["dorking-osint"],
+                         dependencies=[Depends(require_local_auth)])
 
 UA = "MyHackingPal/0.1 dorking"
 
@@ -168,7 +172,7 @@ async def generate(body: GenerateBody) -> dict[str, Any]:
                     # Quota exceeded — bail rather than burn through it
                     results.append({**d, "items": [], "error": f"CSE quota: {r.status_code}"})
                     break
-                if not r.ok:
+                if not r.is_success:
                     results.append({**d, "items": [], "error": f"HTTP {r.status_code}"})
                     continue
                 data = r.json()

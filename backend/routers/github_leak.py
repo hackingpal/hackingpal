@@ -15,16 +15,18 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
 
 from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/github-leak", tags=["github-leak"])
+router = APIRouter(prefix="/github-leak", tags=["github-leak"],
+                   dependencies=[Depends(require_local_auth)])
 
 UA = "MyHackingPal/0.1 gh-leak"
 GH_BASE = "https://api.github.com"
@@ -121,8 +123,13 @@ async def search(body: ScanBody) -> dict[str, Any]:
                 continue
 
             if r.status_code == 403:
-                # Rate limited or auth required
-                detail = (r.json() or {}).get("message", "")
+                # Rate-limit or auth-required. GitHub usually returns JSON
+                # for these, but a hostile proxy or maintenance HTML page
+                # would crash a bare r.json() — keep parsing defensive.
+                try:
+                    detail = (r.json() or {}).get("message", "")
+                except Exception:
+                    detail = (r.text or "")[:120]
                 results.append({"label": label, "query": q, "items": [],
                                 "error": f"GitHub 403: {detail}"})
                 break  # don't keep hammering
@@ -130,12 +137,20 @@ async def search(body: ScanBody) -> dict[str, Any]:
                 results.append({"label": label, "query": q, "items": [],
                                 "error": "query rejected (422)"})
                 continue
-            if not r.ok:
+            if not r.is_success:
                 results.append({"label": label, "query": q, "items": [],
                                 "error": f"HTTP {r.status_code}"})
                 continue
 
-            data = r.json()
+            try:
+                data = r.json()
+            except Exception:
+                # GitHub returned 200 but the body wasn't JSON (rare —
+                # usually a captive portal / proxy injection). Surface
+                # the failure rather than crashing the loop.
+                results.append({"label": label, "query": q, "items": [],
+                                "error": "GitHub returned non-JSON response"})
+                continue
             items = []
             for it in data.get("items", []):
                 snippets: list[str] = []

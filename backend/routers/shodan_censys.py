@@ -14,7 +14,9 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from lib.auth import require_local_auth
 
 from lib.errors import ErrorCode, MhpError
 from pydantic import BaseModel, Field
@@ -23,7 +25,8 @@ from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/shodan-censys", tags=["shodan-censys"])
+router = APIRouter(prefix="/shodan-censys", tags=["shodan-censys"],
+                   dependencies=[Depends(require_local_auth)])
 
 UA = "MyHackingPal/0.1 shodan-censys"
 
@@ -73,7 +76,7 @@ async def _shodan(q: str, limit: int, page: int) -> dict[str, Any]:
             code=ErrorCode.UNAUTHORIZED,
             status_code=401,
         )
-    if not r.ok:
+    if not r.is_success:
         try:
             detail = r.json().get("error", r.text[:200])
         except Exception:
@@ -129,7 +132,7 @@ async def _censys(q: str, limit: int, page: int) -> dict[str, Any]:
             code=ErrorCode.UNAUTHORIZED,
             status_code=401,
         )
-    if not r.ok:
+    if not r.is_success:
         try:
             detail = r.json().get("error", r.text[:200])
         except Exception:

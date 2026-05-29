@@ -18,7 +18,9 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from lib.auth import require_local_auth
 from pydantic import BaseModel, Field
 
 from lib.errors import ErrorCode, MhpError
@@ -27,7 +29,8 @@ from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/breach", tags=["breach"])
+router = APIRouter(prefix="/breach", tags=["breach"],
+                   dependencies=[Depends(require_local_auth)])
 
 # Reasonable cap so a runaway password value can't blow through hashing
 # memory. Anything past 1024 chars is almost certainly junk.
@@ -147,7 +150,7 @@ async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
             status_code=429,
             extra={"retry_after": retry},
         )
-    if not r.ok:
+    if not r.is_success:
         raise MhpError(
             f"HIBP returned {r.status_code}",
             code=ErrorCode.UPSTREAM_FAILED,

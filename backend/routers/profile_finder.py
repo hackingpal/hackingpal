@@ -22,7 +22,9 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from lib.auth import require_local_auth
 from pydantic import BaseModel, Field
 
 from lib.errors import MhpError
@@ -31,7 +33,8 @@ from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/profile-finder", tags=["profile-finder"])
+router = APIRouter(prefix="/profile-finder", tags=["profile-finder"],
+                   dependencies=[Depends(require_local_auth)])
 
 UA = "MyHackingPal/0.1 profile-finder"
 
@@ -200,7 +203,7 @@ async def find(body: FindBody) -> dict[str, Any]:
                 if r.status_code in (403, 429):
                     d["error"] = f"CSE quota: {r.status_code}"
                     break
-                if not r.ok:
+                if not r.is_success:
                     d["error"] = f"HTTP {r.status_code}"
                     continue
                 data = r.json()
