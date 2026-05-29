@@ -319,7 +319,7 @@ async def shodan_internetdb(ip: str) -> dict:
                 "tags": [], "cpes": [], "found": False}
         _store_internetdb(str(addr), body)
         return {**body, "source": "live"}
-    if not r.ok:
+    if not r.is_success:
         raise MhpError(
             f"InternetDB returned {r.status_code}",
             code=ErrorCode.UPSTREAM_FAILED,

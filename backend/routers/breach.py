@@ -210,7 +210,7 @@ async def domain_check(domain: str) -> dict[str, Any]:
             status_code=429,
             extra={"retry_after": retry},
         )
-    if not r.ok:
+    if not r.is_success:
         raise MhpError(
             f"HIBP returned {r.status_code}",
             code=ErrorCode.UPSTREAM_FAILED,

@@ -192,7 +192,13 @@ def check_combined(
     verdict.
     """
     from lib import target_policy  # lazy import keeps this file's footprint minimal
-    pol_v, pol_r = target_policy.check_target(target)
+    # target_policy raises through to the IDNA encoder for pathological
+    # inputs like "..../etc/passwd" — we treat any unhandled crash from
+    # the policy layer as a deny rather than letting it 500.
+    try:
+        pol_v, pol_r = target_policy.check_target(target)
+    except Exception as e:
+        pol_v, pol_r = "deny", f"target failed validation: {type(e).__name__}"
     sc_v,  sc_r  = check(target, engagement_id)
     verdict, _ = combine((pol_v, pol_r), (sc_v, sc_r))
     # Reason on the combined verdict prefers the layer that triggered it.

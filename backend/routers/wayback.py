@@ -73,12 +73,16 @@ async def _fetch_cdx(domain: str, from_: str = "", to: str = "",
         try:
             r = await client.get(CDX_URL, params=params)
         except httpx.HTTPError as e:
+            # Some httpx exception classes (Timeout, ConnectError) have an
+            # empty str(). Surface the class name so the UI can show a
+            # useful "Timeout" instead of bare "Wayback CDX request failed:".
+            detail = str(e) or type(e).__name__
             raise MhpError(
-                f"Wayback CDX request failed: {e}",
+                f"Wayback CDX request failed: {detail}",
                 code=ErrorCode.UPSTREAM_FAILED,
                 status_code=502,
             ) from None
-    if not r.ok:
+    if not r.is_success:
         raise MhpError(
             f"Wayback CDX returned {r.status_code}",
             code=ErrorCode.UPSTREAM_FAILED,
@@ -145,8 +149,12 @@ async def diff(domain: str) -> dict[str, Any]:
     """
     d = validate_domain(domain, field="domain")
     cutoff = (datetime.utcnow() - timedelta(days=180)).strftime("%Y%m%d")
-    historical = await _fetch_cdx(d, to=cutoff, limit=_HARD_LIMIT)
-    recent     = await _fetch_cdx(d, from_=cutoff, limit=_HARD_LIMIT)
+    # Two CDX calls back-to-back with the hard cap routinely hits the
+    # CDX server's per-request budget. Halve the limit for the diff so
+    # the pair returns within the 30s timeout.
+    limit = _HARD_LIMIT // 2
+    historical = await _fetch_cdx(d, to=cutoff, limit=limit)
+    recent     = await _fetch_cdx(d, from_=cutoff, limit=limit)
     h_set = set(historical)
     r_set = set(recent)
     gone = sorted(h_set - r_set)

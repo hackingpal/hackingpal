@@ -52,7 +52,7 @@ async def search(
             code=ErrorCode.RATE_LIMITED,
             status_code=429,
         )
-    if not r.ok:
+    if not r.is_success:
         raise MhpError(
             f"URLScan returned {r.status_code}",
             code=ErrorCode.UPSTREAM_FAILED,
