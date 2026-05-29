@@ -8,6 +8,7 @@
 
 import { record } from "./lib/sessionLog";
 import { getMode } from "./lib/mode";
+import { getActiveEngagementId } from "./lib/engagement";
 
 const BACKEND_URL =
   (import.meta as any).env?.VITE_BACKEND_URL ?? "http://127.0.0.1:8765";
@@ -217,6 +218,13 @@ async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
   // enforce engagement scope or short-circuit to lab. Default "lab" if
   // the store hasn't initialised for any reason.
   if (!headers.has("X-MHP-Mode")) headers.set("X-MHP-Mode", getMode());
+  // Active engagement id flows on every REST call so the backend can do
+  // engagement-relative scope checks without each page model needing an
+  // engagement_id field. Omitted when no engagement is active.
+  if (!headers.has("X-MHP-Engagement-Id")) {
+    const eid = getActiveEngagementId();
+    if (eid) headers.set("X-MHP-Engagement-Id", eid);
+  }
   return { ...(init ?? {}), headers };
 }
 
