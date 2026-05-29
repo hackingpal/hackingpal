@@ -13,6 +13,7 @@ Cross-platform notes:
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from lib import audit_log
 from lib.auth import require_local_auth
+
+logger = logging.getLogger(__name__)
 from lib.platform_util import IS_DARWIN, IS_LINUX, require_unix
 
 router = APIRouter(prefix="/wpa-capture", tags=["wpa-capture"], dependencies=[Depends(require_local_auth)])
@@ -161,8 +165,10 @@ async def run_capture(ws: WebSocket) -> None:
             stop.set()
 
     proc: asyncio.subprocess.Process | None = None
+    audit_id: str | None = None
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         if not bool(init.get("confirm_auth", False)):
             await ws.send_json({
                 "type": "error",
@@ -191,7 +197,18 @@ async def run_capture(ws: WebSocket) -> None:
                 "detail": f"{binary!r} not installed (try {hint})"})
             await ws.close(); return
 
-        await ws.send_json({"type": "started", "cmd": [path] + argv[1:]})
+        try:
+            audit_id = audit_log.start(
+                tool="wpa_capture",
+                target=binary,
+                argv=[path] + argv[1:],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (capture continues)")
+
+        await ws.send_json({"type": "started", "cmd": [path] + argv[1:],
+                            "audit_id": audit_id})
         listener = asyncio.create_task(listen_for_stop())
 
         proc = await asyncio.create_subprocess_exec(
@@ -211,11 +228,26 @@ async def run_capture(ws: WebSocket) -> None:
         rc = await proc.wait()
         listener.cancel()
         await ws.send_json({"type": "done", "rc": rc, "stopped": stop.is_set()})
+        if audit_id:
+            summary = f"{binary} rc={rc}"
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
     except WebSocketDisconnect:
         stop.set()
         if proc and proc.returncode is None:
             proc.terminate()
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
     except Exception as exc:
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json({"type": "error",
                                 "detail": f"{type(exc).__name__}: {exc}"})

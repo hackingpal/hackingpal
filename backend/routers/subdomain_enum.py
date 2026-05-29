@@ -28,6 +28,7 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from lib import audit_log
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_domain
 
@@ -227,6 +228,7 @@ def status() -> dict[str, Any]:
 async def subdom_ws(ws: WebSocket) -> None:
     await ws.accept()
     stop = asyncio.Event()
+    audit_id: str | None = None
 
     async def listen_for_stop() -> None:
         try:
@@ -241,6 +243,7 @@ async def subdom_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         if not bool(init.get("confirm_auth", False)):
             await ws.send_json(ws_error(
                 ErrorCode.NEED_CONFIRM,
@@ -259,7 +262,19 @@ async def subdom_ws(ws: WebSocket) -> None:
             await ws.close(); return
 
         sources = [s for s in sources if s in SOURCE_CONFIG]
-        await ws.send_json({"type": "started", "domain": domain, "sources": sources})
+        try:
+            audit_id = audit_log.start(
+                tool="subdomain_enum",
+                target=domain,
+                argv=[f"sources={','.join(sources)}",
+                      f"resolve={do_resolve}", f"permutations={run_permutations}"],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (enum continues)")
+
+        await ws.send_json({"type": "started", "domain": domain,
+                            "sources": sources, "audit_id": audit_id})
 
         listener = asyncio.create_task(listen_for_stop())
         t0 = time.monotonic()
@@ -335,11 +350,19 @@ async def subdom_ws(ws: WebSocket) -> None:
                         if name not in seen:
                             seen[name] = {"sources": ["permutation"], "ip": ip}
                             perm_found += 1
-                            await ws.send_json({
-                                "type": "permutation_found",
-                                "subdomain": name,
-                                "ip": ip,
-                            })
+                            # `send_json` raises if the client disconnected
+                            # mid-scan. We're in gather(return_exceptions=True)
+                            # so the exception would be silently captured —
+                            # explicit try/except keeps the intent visible
+                            # and lets us flip `stop` so sibling probes exit.
+                            try:
+                                await ws.send_json({
+                                    "type": "permutation_found",
+                                    "subdomain": name,
+                                    "ip": ip,
+                                })
+                            except (WebSocketDisconnect, RuntimeError):
+                                stop.set()
 
                     await asyncio.gather(
                         *(probe(c) for c in candidates),
@@ -348,17 +371,35 @@ async def subdom_ws(ws: WebSocket) -> None:
 
         listener.cancel()
         elapsed = round(time.monotonic() - t0, 2)
+        total_found = len(seen)
+        resolved_count = sum(1 for v in seen.values() if v["ip"])
         await ws.send_json({
             "type": "done", "elapsed": elapsed,
-            "total": len(seen),
-            "resolved": sum(1 for v in seen.values() if v["ip"]),
+            "total": total_found,
+            "resolved": resolved_count,
             "permutations_found": perm_found if run_permutations else 0,
             "stopped": stop.is_set(),
         })
+        if audit_id:
+            summary = (f"{total_found} unique, {resolved_count} resolved, "
+                       f"{elapsed}s")
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("subdom_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,

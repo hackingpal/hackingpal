@@ -15,7 +15,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import web_fuzz
+from lib import audit_log, web_fuzz
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_url
 
@@ -95,6 +95,7 @@ def classify(body: str, payload: str) -> tuple[str, str] | None:
 async def lfi_ws(ws: WebSocket) -> None:
     await ws.accept()
     stop = asyncio.Event()
+    audit_id: str | None = None
 
     async def listen_for_stop() -> None:
         try:
@@ -107,6 +108,7 @@ async def lfi_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         url = str(init.get("url", "")).strip()
         try:
             url = validate_url(url, field="url")
@@ -142,7 +144,18 @@ async def lfi_ws(ws: WebSocket) -> None:
         rate = max(1, min(int(init.get("rate_per_sec", 5)), 20))
         do_exploit = bool(init.get("exploit", False))
         payloads = build_payloads()
-        await ws.send_json({"type": "started", "url": url, "total_payloads": len(payloads)})
+        try:
+            audit_id = audit_log.start(
+                tool="lfi", target=url,
+                argv=[tmpl.method, url, f"payloads={len(payloads)}",
+                      f"exploit={do_exploit}", f"rate={rate}/s"],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (scan continues)")
+        await ws.send_json({"type": "started", "url": url,
+                            "total_payloads": len(payloads),
+                            "audit_id": audit_id})
 
         listener = asyncio.create_task(listen_for_stop())
         t0 = time.monotonic()
@@ -197,13 +210,28 @@ async def lfi_ws(ws: WebSocket) -> None:
                         })
 
         listener.cancel()
-        await ws.send_json({"type": "done",
-                            "elapsed": round(time.monotonic() - t0, 2),
+        elapsed = round(time.monotonic() - t0, 2)
+        await ws.send_json({"type": "done", "elapsed": elapsed,
                             "findings": findings, "stopped": stop.is_set()})
+        if audit_id:
+            summary = f"{findings} findings, {done}/{total} payloads, {elapsed}s"
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("lfi_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,

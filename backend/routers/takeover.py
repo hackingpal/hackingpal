@@ -37,7 +37,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify
+from lib import audit_log, hids_notify
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.target_policy import check_target
@@ -225,6 +225,7 @@ async def takeover_check(fqdn: str, confirm: bool = Query(default=False)) -> dic
 async def takeover_ws(ws: WebSocket) -> None:
     await ws.accept()
     stop = asyncio.Event()
+    audit_id: str | None = None
 
     async def listen_for_stop() -> None:
         try:
@@ -239,6 +240,7 @@ async def takeover_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         if not bool(init.get("confirm_auth", False)):
             await ws.send_json(ws_error(
                 ErrorCode.NEED_CONFIRM,
@@ -287,7 +289,17 @@ async def takeover_ws(ws: WebSocket) -> None:
         listener = asyncio.create_task(listen_for_stop())
         try:
             total = len(subs)
-            await ws.send_json({"type": "started", "count": total})
+            try:
+                audit_id = audit_log.start(
+                    tool="takeover_scan",
+                    target=sample,
+                    argv=[f"subdomains={total}"],
+                    engagement_id=engagement_id,
+                )
+            except Exception:
+                logger.exception("audit_log.start failed (scan continues)")
+            await ws.send_json({"type": "started", "count": total,
+                                "audit_id": audit_id})
 
             done = 0
             hits = 0
@@ -326,6 +338,15 @@ async def takeover_ws(ws: WebSocket) -> None:
             elapsed = round(time.monotonic() - t0, 2)
             await ws.send_json({"type": "done", "elapsed": elapsed,
                                 "hits": hits, "stopped": stop.is_set()})
+            if audit_id:
+                summary = f"{hits} vulnerable / {total} subdomains, {elapsed}s"
+                try:
+                    if stop.is_set():
+                        audit_log.stopped(audit_id, summary=summary)
+                    else:
+                        audit_log.complete(audit_id, summary=summary)
+                except Exception:
+                    logger.exception("audit_log finalize failed")
             if not stop.is_set():
                 sev = "warning" if hits else "info"
                 await hids_notify.notify(
@@ -337,8 +358,14 @@ async def takeover_ws(ws: WebSocket) -> None:
             listener.cancel()
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("takeover_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,

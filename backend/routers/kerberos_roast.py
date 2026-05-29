@@ -22,6 +22,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from lib import audit_log
 from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
 from lib.errors import ErrorCode, MhpError
 from lib.validators import validate_domain, validate_hostname
@@ -60,9 +61,10 @@ def _import_impacket():
 # ── Kerberoasting ───────────────────────────────────────────────────────────
 
 class KerberoastBody(BaseModel):
-    creds:        CredsModel
-    spn_filter:   str = Field("", description="Optional sAMAccountName filter")
-    confirm_auth: bool = Field(False, description="I have authorization to run Kerberos roasting against this domain")
+    creds:         CredsModel
+    spn_filter:    str = Field("", description="Optional sAMAccountName filter")
+    confirm_auth:  bool = Field(False, description="I have authorization to run Kerberos roasting against this domain")
+    engagement_id: str | None = Field(None, description="Active engagement id (audit-log + scope)")
 
 
 @router.post("/kerberoast/run")
@@ -79,6 +81,17 @@ def kerberoast(body: KerberoastBody) -> dict[str, Any]:
         creds.domain = validate_domain(creds.domain, field="domain")
     if not creds.username or (not creds.password and not creds.nt_hash):
         raise HTTPException(400, "Kerberoasting needs valid AD creds (any user)")
+
+    audit_id: str | None = None
+    try:
+        audit_id = audit_log.start(
+            tool="kerberoast",
+            target=creds.domain or creds.dc_host,
+            argv=[creds.dc_host, f"spn_filter={body.spn_filter or '*'}"],
+            engagement_id=body.engagement_id,
+        )
+    except Exception:
+        logger.exception("audit_log.start failed (continues)")
 
     # 1) Query AD for accounts with SPNs via LDAP
     try:
@@ -107,6 +120,9 @@ def kerberoast(body: KerberoastBody) -> dict[str, Any]:
         except Exception: pass
 
     if not targets:
+        if audit_id:
+            try: audit_log.complete(audit_id, summary="0 SPN-bearing accounts found")
+            except Exception: pass
         return {"targets": [], "hashes": [], "message": "No SPN-bearing accounts found."}
 
     # 2) Get our TGT using the supplied creds
@@ -167,6 +183,10 @@ def kerberoast(body: KerberoastBody) -> dict[str, Any]:
                 hashes.append({"user": t["sam"], "spn": spn,
                                "error": str(e)[:200]})
 
+    if audit_id:
+        crackable = sum(1 for h in hashes if h.get("hash"))
+        try: audit_log.complete(audit_id, summary=f"{crackable}/{len(hashes)} crackable hashes from {len(targets)} accounts")
+        except Exception: pass
     return {
         "targets": targets,
         "hashes": hashes,
@@ -181,7 +201,8 @@ class AsrepBody(BaseModel):
     users: list[str] = Field(default_factory=list,
                               description="Specific usernames to try. If empty, "
                               "we LDAP-enumerate users with UF_DONT_REQUIRE_PREAUTH.")
-    confirm_auth: bool = Field(False, description="I have authorization to run AS-REP roasting against this domain")
+    confirm_auth:  bool = Field(False, description="I have authorization to run AS-REP roasting against this domain")
+    engagement_id: str | None = Field(None, description="Active engagement id (audit-log + scope)")
 
 
 @router.post("/asrep/run")
@@ -197,6 +218,17 @@ def asrep_roast(body: AsrepBody) -> dict[str, Any]:
     if creds.domain:
         creds.domain = validate_domain(creds.domain, field="domain")
     users: list[str] = list(body.users)
+
+    audit_id: str | None = None
+    try:
+        audit_id = audit_log.start(
+            tool="asrep_roast",
+            target=creds.domain or creds.dc_host,
+            argv=[creds.dc_host, f"users_supplied={len(users)}"],
+            engagement_id=body.engagement_id,
+        )
+    except Exception:
+        logger.exception("audit_log.start failed (continues)")
 
     # If user didn't supply a list, try to enumerate via LDAP (requires creds)
     if not users:
@@ -230,6 +262,9 @@ def asrep_roast(body: AsrepBody) -> dict[str, Any]:
             except Exception: pass
 
     if not users:
+        if audit_id:
+            try: audit_log.complete(audit_id, summary="0 DONT_REQUIRE_PREAUTH accounts found")
+            except Exception: pass
         return {"users": [], "hashes": [], "message":
                 "No accounts with DONT_REQUIRE_PREAUTH found."}
 
@@ -298,6 +333,10 @@ def asrep_roast(body: AsrepBody) -> dict[str, Any]:
             else:
                 hashes.append({"user": user, "error": err[:200]})
 
+    if audit_id:
+        crackable = sum(1 for h in hashes if h.get("hash"))
+        try: audit_log.complete(audit_id, summary=f"{crackable}/{len(hashes)} crackable hashes from {len(users)} users")
+        except Exception: pass
     return {
         "users": users,
         "hashes": hashes,

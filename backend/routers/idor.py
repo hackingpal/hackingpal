@@ -25,7 +25,7 @@ import time
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import web_fuzz
+from lib import audit_log, web_fuzz
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_url
 
@@ -82,6 +82,7 @@ def expand_ids(spec: object) -> list[str]:
 async def idor_ws(ws: WebSocket) -> None:
     await ws.accept()
     stop = asyncio.Event()
+    audit_id: str | None = None
 
     async def listen_for_stop() -> None:
         try:
@@ -94,6 +95,7 @@ async def idor_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         raw_url = str(init.get("url", "")).strip()
         if not raw_url:
             await ws.send_json(ws_error(ErrorCode.INVALID_URL, "url is required"))
@@ -144,10 +146,22 @@ async def idor_ws(ws: WebSocket) -> None:
             await ws.close(); return
 
         rate = max(1, min(int(init.get("rate_per_sec", 4)), 20))
+
+        try:
+            audit_id = audit_log.start(
+                tool="idor", target=url,
+                argv=[tmpl.method, url, f"ids={len(ids)}",
+                      f"attackers={len(attackers)}", f"rate={rate}/s"],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (scan continues)")
+
         await ws.send_json({
             "type": "started", "url": url, "id_count": len(ids),
             "owner": owner.get("name", "owner"),
             "attackers": [a.get("name", "anon") for a in attackers],
+            "audit_id": audit_id,
         })
 
         listener = asyncio.create_task(listen_for_stop())
@@ -206,13 +220,28 @@ async def idor_ws(ws: WebSocket) -> None:
                 await asyncio.sleep(interval)
 
         listener.cancel()
-        await ws.send_json({"type": "done",
-                            "elapsed": round(time.monotonic() - t0, 2),
+        elapsed = round(time.monotonic() - t0, 2)
+        await ws.send_json({"type": "done", "elapsed": elapsed,
                             "findings": findings, "stopped": stop.is_set()})
+        if audit_id:
+            summary = f"{findings} findings, {len(ids)} ids x {len(attackers)} attackers, {elapsed}s"
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("idor_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,

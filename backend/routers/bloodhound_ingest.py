@@ -24,6 +24,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
+from lib import audit_log
 from lib.ad_auth import CredsModel
 from lib.errors import ErrorCode, MhpError
 
@@ -47,6 +48,7 @@ class IngestBody(BaseModel):
     num_workers:    int = Field(default=10, ge=1, le=50)
     zip_jsons:      bool = True
     confirm_auth:   bool = Field(False, description="I have authorization to run BloodHound collection against this domain")
+    engagement_id:  str | None = Field(None, description="Active engagement id (audit-log + scope)")
 
 
 class Job:
@@ -60,6 +62,7 @@ class Job:
         self.workdir = tempfile.mkdtemp(prefix="bh_")
         self.zip_path: str | None = None
         self.file_count = 0
+        self.audit_id: str | None = None
 
     def line(self, msg: str) -> None:
         self.log.append(f"{time.strftime('%H:%M:%S')} {msg}")
@@ -145,11 +148,18 @@ def _run_collection(job: Job, body: IngestBody) -> None:
             job.line(f"ZIP: {os.path.basename(zpath)}")
 
         job.state = "done"
-    except Exception:
+        if job.audit_id:
+            try: audit_log.complete(job.audit_id,
+                                    summary=f"{job.file_count} JSON files, methods={','.join(body.methods)}")
+            except Exception: logger.exception("audit_log finalize failed")
+    except Exception as exc:
         logger.exception("bloodhound collection failed job=%s", job.id)
         job.state = "error"
         job.error = "BloodHound collection failed — see server log for details."
         job.line(f"FAILED: {job.error}")
+        if job.audit_id:
+            try: audit_log.error(job.audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
     finally:
         job.finished_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -182,6 +192,17 @@ def start_run(body: IngestBody) -> dict[str, Any]:
 
         jid = uuid.uuid4().hex[:12]
         job = Job(jid)
+        try:
+            job.audit_id = audit_log.start(
+                tool="bloodhound",
+                target=body.creds.domain or body.creds.dc_host,
+                argv=[body.creds.dc_host,
+                      f"methods={','.join(body.methods)}",
+                      f"workers={body.num_workers}"],
+                engagement_id=body.engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (job continues)")
         _jobs[jid] = job
 
     thread = threading.Thread(target=_run_collection, args=(job, body), daemon=True)

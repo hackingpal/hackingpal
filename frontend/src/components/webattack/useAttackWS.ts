@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness } from "../../api";
 import { record } from "../../lib/sessionLog";
-import { recordResultIfActive } from "../../lib/engagement";
+import { recordResultIfActive, useActiveEngagementId } from "../../lib/engagement";
 
 export type WSStatus = "idle" | "connecting" | "running" | "done" | "error";
 export type WSTimeoutPhase = "connect" | "idle";
@@ -31,6 +31,14 @@ export function useAttackWS<E>(
   const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
   const handlerRef = useRef(onEvent);
   handlerRef.current = onEvent;
+
+  // Active engagement id is auto-merged into every WS init below so the
+  // backend can attach the audit_log row to the right engagement and run
+  // its scope check. Pages don't need to pass it explicitly. Captured via
+  // a ref so the start() callback doesn't have to re-create on every change.
+  const engagementId = useActiveEngagementId();
+  const engagementIdRef = useRef(engagementId);
+  engagementIdRef.current = engagementId;
 
   const summaryRef = useRef<{ findings: number; done: number; total: number }>({
     findings: 0, done: 0, total: 0,
@@ -72,7 +80,13 @@ export function useAttackWS<E>(
 
     ws.onopen = () => {
       setStatus("running");
-      ws.send(JSON.stringify(init));
+      // Merge active engagement id into the init payload so the backend can
+      // attach this scan to the right engagement + scope-check the target.
+      // Per-page init wins if the caller set engagement_id explicitly.
+      const merged = (typeof init === "object" && init !== null)
+        ? { engagement_id: engagementIdRef.current ?? undefined, ...(init as object) }
+        : init;
+      ws.send(JSON.stringify(merged));
     };
     ws.onmessage = (m) => {
       watchRef.current?.touch();

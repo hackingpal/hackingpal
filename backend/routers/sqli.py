@@ -19,7 +19,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import web_fuzz
+from lib import audit_log, web_fuzz
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.validators import validate_url
 
@@ -92,6 +92,7 @@ def detect_dbms(body: str) -> str | None:
 async def sqli_ws(ws: WebSocket) -> None:
     await ws.accept()
     stop = asyncio.Event()
+    audit_id: str | None = None
 
     async def listen_for_stop() -> None:
         try:
@@ -104,6 +105,7 @@ async def sqli_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        engagement_id = init.get("engagement_id") or None
         url = str(init.get("url", "")).strip()
         try:
             url = validate_url(url, field="url")
@@ -142,10 +144,21 @@ async def sqli_ws(ws: WebSocket) -> None:
 
         # Baseline
         base = await web_fuzz.baseline(tmpl)
+        try:
+            audit_id = audit_log.start(
+                tool="sqli", target=url,
+                argv=[tmpl.method, url, f"modes={','.join(methods)}",
+                      f"exploit={do_exploit}", f"rate={rate}/s"],
+                engagement_id=engagement_id,
+            )
+        except Exception:
+            logger.exception("audit_log.start failed (scan continues)")
+
         await ws.send_json({
             "type": "started", "url": url, "methods": methods,
             "baseline": {"status": base.status, "length": base.length,
                          "elapsed_ms": base.elapsed_ms},
+            "audit_id": audit_id,
         })
 
         listener = asyncio.create_task(listen_for_stop())
@@ -257,14 +270,31 @@ async def sqli_ws(ws: WebSocket) -> None:
                 })
 
         listener.cancel()
-        await ws.send_json({"type": "done",
-                            "elapsed": round(time.monotonic() - t0, 2),
+        elapsed = round(time.monotonic() - t0, 2)
+        await ws.send_json({"type": "done", "elapsed": elapsed,
                             "findings": findings, "dbms": detected_dbms,
                             "stopped": stop.is_set()})
+        if audit_id:
+            summary = (f"{findings} findings"
+                       + (f" ({detected_dbms})" if detected_dbms else "")
+                       + f", {elapsed}s")
+            try:
+                if stop.is_set():
+                    audit_log.stopped(audit_id, summary=summary)
+                else:
+                    audit_log.complete(audit_id, summary=summary)
+            except Exception:
+                logger.exception("audit_log finalize failed")
     except WebSocketDisconnect:
         stop.set()
-    except Exception:
+        if audit_id:
+            try: audit_log.stopped(audit_id, summary="client disconnected")
+            except Exception: pass
+    except Exception as exc:
         logger.exception("sqli_ws unhandled exception")
+        if audit_id:
+            try: audit_log.error(audit_id, f"{type(exc).__name__}: {exc}")
+            except Exception: pass
         try:
             await ws.send_json(ws_error(
                 ErrorCode.INTERNAL,
