@@ -1,15 +1,16 @@
-// Single source of truth for the sidebar / command-palette nav structure.
-// Both `components/Sidebar.tsx` and `components/CommandPalette.tsx` import
-// from here so they can't drift out of sync when tools are added.
+// Source of truth for navigation data.
+//
+// Two surfaces:
+//   - TOP_NAV    — flat engagement-first sidebar (rendered by Sidebar.tsx)
+//   - TOOL_GROUPS — categorized tool catalog (rendered by ToolLibrary.tsx
+//                   and searched by CommandPalette.tsx)
 
 import type { NavId } from "../components/Sidebar";
 import type { PlannedTool } from "./plannedTools";
 
 export type Platform = "darwin" | "linux" | "win32";
 
-// `id` is `NavId` for built-in tools and `planned:<slug>` for user-added stubs.
-// We type as `string` here so the static GROUPS below stay type-checked against
-// NavId (they're assignment-compatible) while runtime planned ids slot in.
+// `id` is `NavId` for built-in items and `planned:<slug>` for user-added stubs.
 export type NavItem = { id: NavId | string; label: string; platforms?: Platform[] };
 export type NavGroup = { section: string; items: NavItem[] };
 
@@ -19,20 +20,21 @@ export const WINDOWS_ONLY: Platform[] = ["win32"];
 // For routers that work on Mac+Linux but the Windows port hasn't landed yet.
 export const NOT_WINDOWS:  Platform[] = ["darwin", "linux"];
 
-export const GROUPS: NavGroup[] = [
-  {
-    section: "ENGAGEMENT",
-    items: [
-      { id: "engagements", label: "Engagements" },
-      { id: "findings",    label: "Findings"    },
-    ],
-  },
-  {
-    section: "PLAYBOOKS",
-    items: [
-      { id: "playbooks", label: "Presets" },
-    ],
-  },
+// The flat top-level sidebar. Workflow-first per the roadmap pivot.
+export const TOP_NAV: NavItem[] = [
+  { id: "home",        label: "Home"         },
+  { id: "engagements", label: "Engagements"  },
+  { id: "targets",     label: "Targets"      },
+  { id: "playbooks",   label: "Playbooks"    },
+  { id: "tools",       label: "Tool Library" },
+  { id: "evidence",    label: "Evidence"     },
+  { id: "findings",    label: "Findings"     },
+  { id: "reports",     label: "Reports"      },
+  { id: "assistant",   label: "AI Assistant" },
+  { id: "settings",    label: "Settings"     },
+];
+
+export const TOOL_GROUPS: NavGroup[] = [
   {
     section: "DISCOVERY",
     items: [
@@ -172,25 +174,25 @@ export const GROUPS: NavGroup[] = [
       // wifi (Integrity), vpn (WireGuard wg-quick), and tcpdump (libpcap)
       // need OS-specific ports before Windows can use them. Hidden on win32
       // so users don't click into a 501 error toast.
-      { id: "wifi",     label: "WiFi Integrity", platforms: NOT_WINDOWS },
-      { id: "vpn",      label: "VPN Manager",    platforms: NOT_WINDOWS },
-      { id: "term",     label: "Terminal" },
-      { id: "brew",     label: "Packages" },
-      { id: "settings", label: "Settings" },
+      { id: "wifi", label: "WiFi Integrity", platforms: NOT_WINDOWS },
+      { id: "vpn",  label: "VPN Manager",    platforms: NOT_WINDOWS },
+      { id: "term", label: "Terminal" },
+      { id: "brew", label: "Packages" },
     ],
   },
 ];
 
 /**
- * Drop items unsupported on the running OS, and tack on a "PLANNED" section at
- * the end built from the user's planned-tools list (from localStorage).
+ * Tool Library / command palette categorized data.
+ * Drops items unsupported on the running OS, and tacks on a "PLANNED" section
+ * at the end built from the user's planned-tools list (from localStorage).
  * `platform === null` means show everything (backend hasn't reported yet).
  */
 export function filterGroups(
   platform: Platform | null,
   planned: PlannedTool[] = [],
 ): NavGroup[] {
-  const groups: NavGroup[] = GROUPS
+  const groups: NavGroup[] = TOOL_GROUPS
     .map((g) => ({
       ...g,
       items: g.items.filter(
@@ -206,4 +208,11 @@ export function filterGroups(
     });
   }
   return groups;
+}
+
+/** Top-level sidebar nav with platform filtering (no current platform-gated items, but kept for symmetry). */
+export function topNav(platform: Platform | null): NavItem[] {
+  return TOP_NAV.filter(
+    (it) => !platform || !it.platforms || it.platforms.includes(platform),
+  );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AuthorizationGate from "../components/AuthorizationGate";
 import { api, authFetch, isApiError } from "../api";
 
 type Stats = { nodes: number; edges: number; by_kind: Record<string, number> };
@@ -31,6 +32,7 @@ export default function LateralMove() {
   const [pathTimedOut, setPathTimedOut] = useState(false);
 
   const [techniques, setTechniques] = useState<Technique[]>([]);
+  const [authorized, setAuthorized] = useState(false);
 
   async function refresh() {
     try {
@@ -50,6 +52,7 @@ export default function LateralMove() {
     try {
       const fd = new FormData();
       fd.append("file", file);
+      fd.append("confirm_auth", "true");
       await api("/lateral/load", { method: "POST", body: fd });
       await refresh();
     } catch (e) {
@@ -64,7 +67,7 @@ export default function LateralMove() {
       const result = await api<PathResp>("/lateral/path", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, target, max_hops: maxHops }),
+        body: JSON.stringify({ source, target, max_hops: maxHops, confirm_auth: true }),
       });
       setPathResult(result);
     } catch (e) {
@@ -89,6 +92,14 @@ export default function LateralMove() {
           and find shortest attack paths via BFS. No Neo4j needed.
         </p>
       </header>
+
+      <div className="bg-bg-card border border-divider rounded p-3 mb-4">
+        <AuthorizationGate
+          authorized={authorized} setAuthorized={setAuthorized}
+          toolName="lateral-movement analysis"
+          disabled={uploading || loading}
+        />
+      </div>
 
       {/* Loaded state */}
       <div className="bg-bg-card border border-divider rounded p-3 mb-4">
@@ -118,7 +129,7 @@ export default function LateralMove() {
         <div className="text-[11px] text-ink-muted tracking-wider mb-2">UPLOAD BLOODHOUND DATA</div>
         <input type="file" accept=".zip,.json"
                onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
-               disabled={uploading}
+               disabled={uploading || !authorized}
                className="block w-full text-[11px] text-ink-muted
                           file:mr-3 file:py-1 file:px-2 file:border file:border-divider
                           file:bg-bg-base file:text-accent file:rounded
@@ -165,7 +176,7 @@ export default function LateralMove() {
                                 text-[12px] font-mono focus:outline-none focus:border-accent" />
             </div>
           </div>
-          <button onClick={findPath} disabled={loading || !source.trim()}
+          <button onClick={findPath} disabled={loading || !source.trim() || !authorized}
                   className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                              disabled:opacity-40 disabled:cursor-not-allowed">
             {loading ? "Searching…" : "Find Path"}

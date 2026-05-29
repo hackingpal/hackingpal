@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from lib import preset_engine
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -106,10 +107,23 @@ async def preset_run_ws(ws: WebSocket) -> None:
         target = str(init.get("target", "")).strip()
         authorized = bool(init.get("authorized", False))
 
+        # Mode comes from the same X-MHP-Mode header / ?mode= query the rest
+        # of the app uses; the handshake `mode` field is an override for tests.
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = (
+            "engagement" if init_mode == "engagement"
+            else "lab" if init_mode == "lab"
+            else get_mode(ws)
+        )
+
         if not preset_id:
             await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, "preset id required"))
             return
-        if not target:
+        # Local-target bundles (posture audits, persistence enumeration) don't
+        # need a target — the engine handles the requirement check itself.
+        preset = preset_engine.get_preset(preset_id)
+        target_type = (preset or {}).get("target_type", "domain")
+        if target_type != "local" and not target:
             await ws.send_json(ws_error(ErrorCode.BAD_REQUEST, "target required"))
             return
         if not authorized:
@@ -128,7 +142,7 @@ async def preset_run_ws(ws: WebSocket) -> None:
                 # Client gone — flip stop so the engine winds down gracefully.
                 stop.set()
 
-        await preset_engine.run_preset(preset_id, target, emit, stop)
+        await preset_engine.run_preset(preset_id, target, emit, stop, mode=mode)
     except WebSocketDisconnect:
         stop.set()
     except Exception as exc:

@@ -28,6 +28,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import audit_log, hids_notify, scanner, scope
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_target
 
 logger = logging.getLogger(__name__)
@@ -78,13 +79,22 @@ async def port_scan_ws(ws: WebSocket) -> None:
             await ws.close()
             return
 
-        # Scope check — combines target_policy (IP-class) + engagement scope.
+        # Scope check — combines target_policy (IP-class) + engagement scope,
+        # gated by Lab/Engagement mode. Mode is resolved from the X-MHP-Mode
+        # header / ?mode= query the frontend attaches via `openWs`; the
+        # handshake `mode` field is honored as a final override for tests.
         # `confirm` lets the frontend re-send the handshake after the user
         # acknowledges a `warn` verdict; without it, we refuse to start.
         confirm = bool(init.get("confirm", False))
-        sc_verdict, sc_reason, sc_layers = scope.check_combined(target, engagement_id)
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        sc_verdict, sc_reason, sc_layers = scope.check_combined(
+            target, engagement_id, mode,
+        )
         await ws.send_json({
-            "type": "scope", "target": target,
+            "type": "scope", "target": target, "mode": mode,
             "verdict": sc_verdict, "reason": sc_reason, "layers": sc_layers,
         })
         if sc_verdict == "deny":

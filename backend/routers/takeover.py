@@ -7,7 +7,7 @@ For each candidate subdomain we:
 
 Reference signature list: https://github.com/EdOverflow/can-i-take-over-xyz
 
-REST  GET /takeover/check/{fqdn}?confirm=true
+REST  GET /takeover/check/{fqdn}?confirm=true&confirm_auth=true
 WS    /ws/takeover-scan
       client -> server:
         {"subdomains": ["a.x.com", "b.x.com"], "confirm": false}
@@ -193,7 +193,16 @@ def _check_host(fqdn: str) -> dict[str, Any]:
 # ── REST ──────────────────────────────────────────────────────────────────────
 
 @router.get("/takeover/check/{fqdn}")
-async def takeover_check(fqdn: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
+async def takeover_check(
+    fqdn: str,
+    confirm: bool = Query(default=False),
+    confirm_auth: bool = Query(default=False),
+) -> dict[str, Any]:
+    if not confirm_auth:
+        raise HTTPException(
+            status_code=403,
+            detail="Confirm you have authorization to scan this subdomain.",
+        )
     fqdn = validate_hostname(fqdn, field="fqdn", allow_ip=False)
     verdict, reason = check_target(fqdn)
     if verdict == "deny":

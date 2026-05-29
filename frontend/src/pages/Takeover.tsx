@@ -133,7 +133,7 @@ export default function Takeover() {
               <span className="text-ink-dim text-sm select-none">›</span>
               <input
                 type="text" value={fqdn} onChange={(e) => setFqdn(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") runSingle(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && authorized) runSingle(); }}
                 placeholder="sub.example.com"
                 className="flex-1 bg-bg-card border border-divider rounded
                            px-3 py-1.5 text-sm font-mono text-ink-primary
@@ -141,7 +141,7 @@ export default function Takeover() {
                            focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition"
                 autoCorrect="off" spellCheck={false}
               />
-              <button onClick={() => runSingle()} disabled={busy}
+              <button onClick={() => runSingle()} disabled={busy || !authorized}
                 className="bg-accent hover:bg-accentDim active:translate-y-px
                            text-white text-xs font-bold tracking-wide px-3.5 py-1.5 rounded
                            disabled:opacity-50 disabled:cursor-not-allowed border border-accent/60">
@@ -150,11 +150,6 @@ export default function Takeover() {
             </div>
           ) : (
             <div className="flex-1 flex gap-3 items-center max-w-3xl">
-              <div className="flex-1">
-                <AuthorizationGate authorized={authorized} setAuthorized={setAuthorized}
-                                   toolName="bulk subdomain-takeover scan"
-                                   disabled={scanState.running} />
-              </div>
               {scanState.running ? (
                 <button onClick={stop}
                   className="bg-danger/80 hover:bg-danger text-white text-xs font-bold
@@ -171,6 +166,13 @@ export default function Takeover() {
               )}
             </div>
           )}
+        </div>
+        <div className="mt-3">
+          <AuthorizationGate
+            authorized={authorized} setAuthorized={setAuthorized}
+            toolName={mode === "single" ? "subdomain-takeover check" : "bulk subdomain-takeover scan"}
+            disabled={busy || scanState.running}
+          />
         </div>
       </header>
 

@@ -1,3 +1,6 @@
+// AI Assistant page — full-page chat surface wired into the engagement's
+// session log. Replaces the floating ChatBubble used pre-pivot.
+
 import { useEffect, useRef, useState } from "react";
 import {
   authFetch,
@@ -40,8 +43,6 @@ function saveMessages(msgs: ChatMessage[]): void {
   }
 }
 
-// Tiny inline-only renderer: backticks → <code>. Preserves newlines via
-// `whitespace-pre-wrap` on the surrounding element.
 function renderInline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   const re = /`([^`\n]+)`/g;
@@ -62,7 +63,6 @@ function renderInline(text: string): React.ReactNode[] {
 }
 
 function MessageBody({ msg }: { msg: ChatMessage }) {
-  // Split fenced code blocks (```…```) from prose; render fenced as <pre>.
   const blocks: { kind: "code" | "text"; body: string }[] = [];
   const fence = /```([\s\S]*?)```/g;
   let cursor = 0;
@@ -93,8 +93,7 @@ function MessageBody({ msg }: { msg: ChatMessage }) {
 
 type Props = { activePage: string };
 
-export default function ChatBubble({ activePage }: Props) {
-  const [open, setOpen] = useState(false);
+export default function AiAssistant({ activePage }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
   const [keyInput, setKeyInput] = useState("");
@@ -108,22 +107,17 @@ export default function ChatBubble({ activePage }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Persist transcript
   useEffect(() => { saveMessages(messages); }, [messages]);
 
-  // Load key status when panel opens (or on first mount so the badge is fresh)
   useEffect(() => {
-    if (!open) return;
     fetchApiKeyStatus().then(setKeyStatus).catch(() => setKeyStatus({ present: false }));
-  }, [open]);
+  }, []);
 
-  // Auto-scroll on new content
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
-  // Cancel any inflight stream on unmount
   useEffect(() => () => abortRef.current?.abort(), []);
 
   async function saveKey() {
@@ -213,32 +207,10 @@ export default function ChatBubble({ activePage }: Props) {
 
   const eventCount = events.length;
 
-  // ── Floating button ──
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-50 w-12 h-12 rounded-full bg-accent text-white
-                   shadow-lg hover:scale-105 transition flex items-center justify-center
-                   font-bold text-lg ring-2 ring-bg-base"
-        title="Ask the assistant"
-        aria-label="Open assistant chat"
-      >
-        AI
-      </button>
-    );
-  }
-
-  // ── Expanded panel ──
   return (
-    <div
-      className="fixed bottom-5 right-5 z-50 w-[420px] h-[600px] bg-bg-card border border-divider
-                 rounded-lg shadow-2xl flex flex-col font-mono"
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-divider bg-bg-sidebar
-                      rounded-t-lg">
-        <span className="text-accent text-[11px] font-bold tracking-widest">ASSISTANT</span>
+    <div className="h-full flex flex-col font-mono">
+      <header className="flex items-center gap-2 px-4 py-2 border-b border-divider bg-bg-sidebar">
+        <span className="text-accent text-[11px] font-bold tracking-widest">AI ASSISTANT</span>
         <span className="text-ink-dim text-[10px]">claude-opus-4-7</span>
         <span className="flex-1" />
         <span className="text-[10px] text-ink-dim" title="Session log entries Claude can see">
@@ -254,16 +226,10 @@ export default function ChatBubble({ activePage }: Props) {
           className="text-ink-muted hover:text-ink-primary text-xs px-1"
           title="Clear chat"
         >⎚</button>
-        <button
-          onClick={() => setOpen(false)}
-          className="text-ink-muted hover:text-ink-primary px-1"
-          title="Close"
-        >✕</button>
-      </div>
+      </header>
 
-      {/* Body */}
       {showSettings ? (
-        <div className="flex-1 overflow-y-auto p-4 text-[12px] space-y-3">
+        <div className="flex-1 overflow-y-auto p-6 text-[12px] space-y-4 max-w-2xl">
           <div>
             <div className="text-ink-primary font-bold text-[13px] mb-1">Anthropic API key</div>
             <div className="text-ink-dim text-[11px] mb-2">
@@ -307,7 +273,7 @@ export default function ChatBubble({ activePage }: Props) {
                 onClick={() => setShowSettings(false)}
                 className="px-3 py-1 rounded bg-bg-base border border-divider text-ink-muted text-[12px] ml-auto"
               >
-                Back
+                Back to chat
               </button>
             </div>
           </div>
@@ -326,9 +292,9 @@ export default function ChatBubble({ activePage }: Props) {
           </div>
         </div>
       ) : (
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-3 text-ink-primary">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-3 text-ink-primary">
           {messages.length === 0 && (
-            <div className="text-ink-dim text-[12px] leading-relaxed">
+            <div className="text-ink-dim text-[13px] leading-relaxed max-w-2xl">
               <p>
                 Hi — I'm wired into MyHackingPal. I can see your recent tool results
                 (currently <span className="text-accent">{eventCount}</span> entries in
@@ -347,8 +313,8 @@ export default function ChatBubble({ activePage }: Props) {
               <div
                 className={
                   m.role === "user"
-                    ? "max-w-[85%] bg-accentDim/40 border border-accentDim rounded-md px-3 py-2 text-[13px]"
-                    : "max-w-full w-full"
+                    ? "max-w-[75%] bg-accentDim/40 border border-accentDim rounded-md px-3 py-2 text-[13px]"
+                    : "max-w-3xl w-full"
                 }
               >
                 {m.role === "assistant" && m.thinking && m.streaming && !m.content && (
@@ -367,9 +333,8 @@ export default function ChatBubble({ activePage }: Props) {
         </div>
       )}
 
-      {/* Footer */}
       {!showSettings && (
-        <div className="border-t border-divider p-2 flex gap-2">
+        <div className="border-t border-divider p-3 flex gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -382,15 +347,15 @@ export default function ChatBubble({ activePage }: Props) {
             placeholder={keyStatus?.present
               ? "Ask about the current view or your scan results…"
               : "Set an API key in ⚙ Settings first"}
-            rows={1}
-            className="flex-1 resize-none bg-bg-base border border-divider rounded px-2 py-1.5
+            rows={2}
+            className="flex-1 resize-none bg-bg-base border border-divider rounded px-3 py-2
                        text-[13px] text-ink-primary focus:outline-none focus:border-accent
-                       max-h-24"
+                       max-h-40"
           />
           {sending ? (
             <button
               onClick={stop}
-              className="px-3 py-1 rounded bg-bg-base border border-danger text-danger text-[12px]"
+              className="px-3 py-1.5 rounded bg-bg-base border border-danger text-danger text-[12px]"
             >
               Stop
             </button>
@@ -398,7 +363,7 @@ export default function ChatBubble({ activePage }: Props) {
             <button
               onClick={send}
               disabled={!input.trim()}
-              className="px-3 py-1 rounded bg-accent text-white text-[12px] font-bold
+              className="px-4 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                          disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Send
@@ -410,7 +375,6 @@ export default function ChatBubble({ activePage }: Props) {
   );
 }
 
-// Light human-readable mapping for nav ids — only used in the placeholder hint.
 function labelFor(navId: string): string {
   const map: Record<string, string> = {
     ip: "IP Checker", lan: "LAN Scan", dns: "DNS Recon", whois: "WHOIS",
@@ -425,8 +389,6 @@ function labelFor(navId: string): string {
   };
   return map[navId] ?? navId;
 }
-
-// ── SSE streaming client ────────────────────────────────────────────────────
 
 type StreamCallbacks = {
   onText: (delta: string) => void;
@@ -474,7 +436,6 @@ async function streamChat(
       if (done) break;
       buf += decoder.decode(value, { stream: true });
 
-      // SSE frames are separated by blank lines
       let idx;
       while ((idx = buf.indexOf("\n\n")) !== -1) {
         const frame = buf.slice(0, idx);

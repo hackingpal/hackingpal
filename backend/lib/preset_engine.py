@@ -47,10 +47,19 @@ class PresetError(Exception):
 # ─────────────────────────────────────────────────────────────────────────────
 
 REQUIRED_FIELDS = {"id", "name", "steps"}
-ALLOWED_TARGET_TYPES = {"domain", "ip", "cidr", "url", "host"}
+ALLOWED_TARGET_TYPES = {"domain", "ip", "cidr", "url", "host", "local"}
+ALLOWED_CATEGORIES = {
+    "passive_recon", "local_posture", "surface_inventory", "web_app",
+    "engagement_attack", "custom",
+}
+ALLOWED_MODES = {"lab", "engagement", "either"}
 
 
 def _validate(d: dict[str, Any]) -> None:
+    """Schema check. All new guided fields (category, mode_required, per-step
+    rationale/success/approval) are optional, so legacy `.mhp` files written
+    before the guided redesign keep loading without modification.
+    """
     missing = REQUIRED_FIELDS - d.keys()
     if missing:
         raise PresetError(f"preset missing required fields: {sorted(missing)}")
@@ -70,8 +79,25 @@ def _validate(d: dict[str, Any]) -> None:
                 f"step #{i} ({s['id']!r}): unknown tool {s['tool']!r}. "
                 f"Known tools: {sorted(_TOOL_ADAPTERS)}",
             )
+        # Guided fields — type-check but don't require.
+        for field in ("rationale", "success"):
+            if field in s and not isinstance(s[field], str):
+                raise PresetError(
+                    f"step #{i} ({s['id']!r}): `{field}` must be a string",
+                )
+        if "approval" in s and not isinstance(s["approval"], bool):
+            raise PresetError(
+                f"step #{i} ({s['id']!r}): `approval` must be a boolean",
+            )
     if d.get("target_type") and d["target_type"] not in ALLOWED_TARGET_TYPES:
         raise PresetError(f"unknown target_type: {d['target_type']!r}")
+    if d.get("category") and d["category"] not in ALLOWED_CATEGORIES:
+        raise PresetError(f"unknown category: {d['category']!r}")
+    if d.get("mode_required") and d["mode_required"] not in ALLOWED_MODES:
+        raise PresetError(
+            f"unknown mode_required: {d['mode_required']!r} "
+            f"(expected one of {sorted(ALLOWED_MODES)})",
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,11 +136,13 @@ def list_presets() -> list[dict[str, Any]]:
             "id": p["id"], "name": p["name"],
             "description": p.get("description", ""),
             "target_type": p.get("target_type", "domain"),
+            "category": p.get("category", "custom"),
+            "mode_required": p.get("mode_required", "either"),
             "author": p.get("author", ""),
             "step_count": len(p["steps"]),
             "builtin": p["_builtin"],
         })
-    summaries.sort(key=lambda s: (not s["builtin"], s["name"]))
+    summaries.sort(key=lambda s: (not s["builtin"], s["category"], s["name"]))
     return summaries
 
 
@@ -365,11 +393,208 @@ async def _adapter_http_probe(target: str, options: dict[str, Any],
     return {"hits": hit_count, "url": url}
 
 
+async def _adapter_dns_recon(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import dns_recon as r
+    try:
+        result = await r.dns_recon(target, confirm=True)
+    except Exception as e:
+        raise PresetError(f"dns_recon: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "dns_recon",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "DNS finding"),
+            "detail":   f.get("detail", ""),
+        })
+    records = result.get("records", {}) or {}
+    return {
+        "domain": result.get("domain"),
+        "a":  records.get("A",  []),
+        "ns": records.get("NS", []),
+        "mx": records.get("MX", []),
+        "axfr_succeeded": any(
+            z.get("succeeded") for z in result.get("zone_transfer", []) or []
+        ),
+        "dnssec_signed": (result.get("dnssec") or {}).get("signed", False),
+    }
+
+
+async def _adapter_ct_log(target: str, options: dict[str, Any],
+                          context: dict[str, Any], emit: EmitFn,
+                          stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import ct_log as r
+    try:
+        result = await r.ct_search(target, confirm=True)
+    except Exception as e:
+        raise PresetError(f"ct_log: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "ct_log",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "CT finding"),
+            "detail":   f.get("detail", ""),
+        })
+    return {
+        "domain": result.get("domain"),
+        "subdomain_count": len(result.get("subdomains", []) or []),
+        "subdomains": (result.get("subdomains") or [])[:50],
+        "recent_7d": result.get("recent_7d_count", 0),
+    }
+
+
+async def _adapter_email_audit(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import email_security as r
+    try:
+        result = await r.email_audit(target, confirm=True)
+    except Exception as e:
+        raise PresetError(f"email_audit: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "email_audit",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "Email security finding"),
+            "detail":   f.get("detail", ""),
+        })
+    spf = result.get("spf",   {}) or {}
+    dmarc = result.get("dmarc", {}) or {}
+    return {
+        "domain": result.get("domain"),
+        "spf_present":   spf.get("present", False),
+        "dmarc_present": dmarc.get("present", False),
+        "mta_sts":       (result.get("mta_sts") or {}).get("present", False),
+        "bimi":          (result.get("bimi")    or {}).get("present", False),
+    }
+
+
+async def _adapter_cms_fingerprint(target: str, options: dict[str, Any],
+                                   context: dict[str, Any], emit: EmitFn,
+                                   stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import cms as r
+    url = target.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    try:
+        result = await r.cms_fingerprint(url=url, confirm=True)
+    except Exception as e:
+        raise PresetError(f"cms_fingerprint: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "cms_fingerprint",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "CMS finding"),
+            "detail":   f.get("detail", ""),
+        })
+    techs = result.get("technologies", []) or []
+    return {
+        "url": result.get("final_url") or result.get("url"),
+        "tech_count": len(techs),
+        "tech_names": [t.get("name") for t in techs if t.get("name")][:20],
+        "host": result.get("host"),
+        "status_code": result.get("status_code"),
+    }
+
+
+async def _adapter_macos_posture(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import macos_posture as r
+    try:
+        result = await r.macos_posture()
+    except Exception as e:
+        raise PresetError(f"macos_posture: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "macos_posture",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "macOS posture finding"),
+            "detail":   f.get("detail", ""),
+        })
+    return {
+        "sip":        (result.get("sip")        or {}).get("status"),
+        "gatekeeper": (result.get("gatekeeper") or {}).get("status"),
+        "filevault":  (result.get("filevault")  or {}).get("status"),
+        "firewall_on": bool((result.get("firewall") or {}).get("global_state", 0)),
+    }
+
+
+async def _adapter_linux_posture(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import linux_posture as r
+    try:
+        result = r.linux_posture()
+    except Exception as e:
+        raise PresetError(f"linux_posture: {e}") from e
+    for f in result.get("findings", []) or []:
+        await emit({
+            "type": "finding", "step": "linux_posture",
+            "severity": f.get("severity", "info"),
+            "title":    f.get("label", "Linux posture finding"),
+            "detail":   f.get("detail", ""),
+        })
+    mac = result.get("mac", {}) or {}
+    fw  = result.get("firewall", {}) or {}
+    return {
+        "selinux":  mac.get("selinux"),
+        "apparmor": mac.get("apparmor"),
+        "firewall_backend": fw.get("backend"),
+        "firewall_active":  fw.get("active"),
+        "updates_pending": (result.get("updates") or {}).get("pending", 0),
+        "luks_present":    (result.get("disk") or {}).get("any_encrypted", False),
+    }
+
+
+async def _adapter_persistence_audit(target: str, options: dict[str, Any],
+                                     context: dict[str, Any], emit: EmitFn,
+                                     stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import persistence as r
+    try:
+        result = r.audit()
+    except Exception as e:
+        raise PresetError(f"persistence_audit: {e}") from e
+    entries = result.get("entries", []) or []
+    sev_counts = {"high": 0, "warn": 0, "info": 0}
+    for entry in entries:
+        # Entries may be Pydantic models or dicts depending on router.
+        sev   = getattr(entry, "severity",      None) or (entry.get("severity") if isinstance(entry, dict) else "info")
+        label = getattr(entry, "label",         None) or (entry.get("label", "")    if isinstance(entry, dict) else "")
+        prog  = getattr(entry, "program",       None) or (entry.get("program", "")  if isinstance(entry, dict) else "")
+        susp  = getattr(entry, "suspicious_path", False)
+        if isinstance(entry, dict):
+            susp = entry.get("suspicious_path", False)
+        sev_counts[sev] = sev_counts.get(sev, 0) + 1
+        if sev in ("high", "warn") or susp:
+            await emit({
+                "type": "finding", "step": "persistence_audit",
+                "severity": "high" if sev == "high" else "medium",
+                "title": f"Persistence: {label or '(unnamed)'}",
+                "detail": f"{prog or '(no program)'}"
+                          + (" — suspicious path" if susp else ""),
+            })
+    return {
+        "total":  len(entries),
+        "high":   sev_counts.get("high", 0),
+        "warn":   sev_counts.get("warn", 0),
+        "info":   sev_counts.get("info", 0),
+    }
+
+
 _TOOL_ADAPTERS: dict[str, Callable[..., Awaitable[dict[str, Any]]]] = {
-    "whois":         _adapter_whois,
-    "tls_audit":     _adapter_tls_audit,
-    "port_scanner":  _adapter_port_scanner,
-    "http_probe":    _adapter_http_probe,
+    "whois":             _adapter_whois,
+    "tls_audit":         _adapter_tls_audit,
+    "port_scanner":      _adapter_port_scanner,
+    "http_probe":        _adapter_http_probe,
+    "dns_recon":         _adapter_dns_recon,
+    "ct_log":            _adapter_ct_log,
+    "email_audit":       _adapter_email_audit,
+    "cms_fingerprint":   _adapter_cms_fingerprint,
+    "macos_posture":     _adapter_macos_posture,
+    "linux_posture":     _adapter_linux_posture,
+    "persistence_audit": _adapter_persistence_audit,
 }
 
 
@@ -381,20 +606,53 @@ def known_tools() -> list[str]:
 # Runner
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_preset(preset_id: str, target: str, emit: EmitFn,
-                     stop_event: asyncio.Event) -> None:
+async def run_preset(
+    preset_id: str,
+    target: str,
+    emit: EmitFn,
+    stop_event: asyncio.Event,
+    *,
+    mode: str = "lab",
+    approve_step: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None,
+) -> None:
     """Execute a preset, streaming events via `emit`.
 
     Honors `stop_event`: between steps we exit cleanly; during a step,
     individual adapters poll the same flag to stop their inner work.
+
+    `mode` is the Lab/Engagement flag from `lib/mode.py`. Bundles declaring
+    `mode_required: "engagement"` refuse to run from Lab; bundles declaring
+    `mode_required: "lab"` (e.g. local posture audits that need no target)
+    refuse to run from Engagement to avoid cluttering evidence with
+    own-host data.
+
+    `approve_step` is an optional async callback invoked once per step
+    with `approval: true`. It receives `(step_id, step_dict)` and must
+    return True/False. The default of `None` auto-approves — the WS
+    runner in `routers/presets.py` wires this to a UI confirmation prompt
+    when the user wants per-step gating.
     """
     preset = get_preset(preset_id)
     if not preset:
         await emit({"type": "error", "detail": f"unknown preset: {preset_id!r}"})
         return
     target = (target or "").strip()
-    if not target:
+    target_type = preset.get("target_type", "domain")
+    # `target_type: local` bundles run against the host MyHackingPal is on
+    # (posture audits, persistence enumeration). Target is irrelevant.
+    if target_type != "local" and not target:
         await emit({"type": "error", "detail": "target is required"})
+        return
+
+    mode_required = preset.get("mode_required", "either")
+    if mode_required != "either" and mode_required != mode:
+        await emit({
+            "type": "error",
+            "detail": (
+                f"playbook requires {mode_required} mode "
+                f"(currently {mode})"
+            ),
+        })
         return
 
     steps = preset["steps"]
@@ -411,6 +669,8 @@ async def run_preset(preset_id: str, target: str, emit: EmitFn,
     await counted_emit({
         "type": "preset_start",
         "preset": preset["id"], "target": target,
+        "category": preset.get("category", "custom"),
+        "mode_required": mode_required,
         "step_count": len(steps),
     })
 
@@ -426,10 +686,26 @@ async def run_preset(preset_id: str, target: str, emit: EmitFn,
         tool = step["tool"]
         opts = step.get("options", {}) or {}
         adapter = _TOOL_ADAPTERS.get(tool)
+        needs_approval = bool(step.get("approval", False))
 
         await counted_emit({
             "type": "step_start", "step": sid, "tool": tool, "index": i,
+            "rationale": step.get("rationale", ""),
+            "success":   step.get("success", ""),
+            "approval":  needs_approval,
         })
+
+        if needs_approval and approve_step is not None:
+            try:
+                ok = await approve_step(sid, step)
+            except Exception:
+                ok = False
+            if not ok:
+                await counted_emit({
+                    "type": "step_done", "step": sid, "status": "skipped",
+                    "elapsed": 0.0, "detail": "approval declined",
+                })
+                continue
         s_start = time.monotonic()
         try:
             if adapter is None:

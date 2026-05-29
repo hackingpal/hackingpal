@@ -30,7 +30,7 @@ import zipfile
 from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from lib.errors import ErrorCode, MhpError
@@ -183,7 +183,15 @@ def _classify_file(name: str) -> str | None:
 # ── Upload + load ──────────────────────────────────────────────────────────
 
 @router.post("/load")
-async def load_zip(file: UploadFile = File(...)) -> dict[str, Any]:
+async def load_zip(
+    file: UploadFile = File(...),
+    confirm_auth: bool = Form(False),
+) -> dict[str, Any]:
+    if not confirm_auth:
+        raise HTTPException(
+            403,
+            "Confirm you have authorization to analyze this AD environment.",
+        )
     global _graph
     data = await file.read()
     if not data:
@@ -253,6 +261,7 @@ class PathBody(BaseModel):
     source: str = Field(..., min_length=1, max_length=MAX_NAME_LEN)
     target: str = Field("", max_length=MAX_NAME_LEN)  # empty = "any Domain Admin"
     max_hops: int = Field(6, ge=1, le=20)
+    confirm_auth: bool = False
 
 
 def _resolve(g: Graph, key: str) -> str | None:
@@ -322,6 +331,11 @@ def _bfs(g: Graph, src: str, targets: set[str], max_hops: int) -> list[list[tupl
 
 @router.post("/path")
 def path(body: PathBody) -> dict[str, Any]:
+    if not body.confirm_auth:
+        raise HTTPException(
+            403,
+            "Confirm you have authorization to analyze this AD environment.",
+        )
     if not _graph.nodes:
         raise HTTPException(400, "no graph loaded — upload a BloodHound ZIP first")
 

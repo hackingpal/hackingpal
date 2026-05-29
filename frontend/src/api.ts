@@ -7,6 +7,7 @@
  */
 
 import { record } from "./lib/sessionLog";
+import { getMode } from "./lib/mode";
 
 const BACKEND_URL =
   (import.meta as any).env?.VITE_BACKEND_URL ?? "http://127.0.0.1:8765";
@@ -210,9 +211,12 @@ export function resetAuthToken(): void {
 
 async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
   const token = await fetchAuthToken();
-  if (!token) return init ?? {};
   const headers = new Headers(init?.headers);
-  if (!headers.has("X-MHP-Token")) headers.set("X-MHP-Token", token);
+  if (token && !headers.has("X-MHP-Token")) headers.set("X-MHP-Token", token);
+  // Mode header is always sent so backend scope checks know whether to
+  // enforce engagement scope or short-circuit to lab. Default "lab" if
+  // the store hasn't initialised for any reason.
+  if (!headers.has("X-MHP-Mode")) headers.set("X-MHP-Mode", getMode());
   return { ...(init ?? {}), headers };
 }
 
@@ -662,7 +666,9 @@ export type TakeoverResult = {
 export async function fetchTakeoverCheck(
   fqdn: string, confirm: boolean,
 ): Promise<TakeoverResult | { needConfirm: true; reason: string }> {
-  const url = `/takeover/check/${encodeURIComponent(fqdn)}${confirm ? "?confirm=true" : ""}`;
+  const params = new URLSearchParams({ confirm_auth: "true" });
+  if (confirm) params.set("confirm", "true");
+  const url = `/takeover/check/${encodeURIComponent(fqdn)}?${params.toString()}`;
   const res = await authFetch(url);
   if (res.status === 409) {
     return parseNeedConfirm(res);
@@ -716,14 +722,15 @@ export async function fetchReverseIp(
 const WS_URL = BACKEND_URL.replace(/^http/, "ws");
 
 export function openWs(path: string): WebSocket {
-  // WS upgrades can't set custom headers, so we append the auth token as a
-  // query param. The eager prefetch above means the token is almost always
-  // ready by the time any page opens a socket; if not, the backend rejects
-  // with a 1008 close frame and the caller will surface the error.
+  // WS upgrades can't set custom headers, so we append the auth token and
+  // mode as query params. The eager prefetch above means the token is
+  // almost always ready by the time any page opens a socket; if not, the
+  // backend rejects with a 1008 close frame and the caller surfaces it.
   let url = `${WS_URL}${path}`;
-  if (cachedAuthToken) {
-    url += (path.includes("?") ? "&" : "?") + `token=${encodeURIComponent(cachedAuthToken)}`;
-  }
+  const params: string[] = [];
+  if (cachedAuthToken) params.push(`token=${encodeURIComponent(cachedAuthToken)}`);
+  params.push(`mode=${encodeURIComponent(getMode())}`);
+  url += (path.includes("?") ? "&" : "?") + params.join("&");
   return new WebSocket(url);
 }
 

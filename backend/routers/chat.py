@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import subprocess
 from typing import Any, Literal
 
 import anthropic
@@ -22,6 +25,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 MODEL = "claude-opus-4-7"
+
+# Provider selection.
+#
+# - "anthropic"  → direct Anthropic SDK call, requires Anthropic API key in Keychain.
+# - "claude-cli" → shells out to the local `claude` CLI in headless `-p` mode,
+#                  uses the user's Claude Code login (no API key needed).
+#
+# Override via MHP_AI_PROVIDER env var. Default: claude-cli when no API key is
+# configured AND the CLI is on PATH; anthropic otherwise.
+CLAUDE_BIN = os.getenv("MHP_CLAUDE_BIN", "claude")
+
+
+def _resolve_provider() -> str:
+    override = os.getenv("MHP_AI_PROVIDER", "").strip().lower()
+    if override in ("anthropic", "claude-cli"):
+        return override
+    if keychain_get() is None and shutil.which(CLAUDE_BIN) is not None:
+        return "claude-cli"
+    return "anthropic"
 
 SYSTEM_PROMPT = """You are the in-app assistant for **MyHackingPal**, a macOS desktop \
 security toolkit. The user runs network and forensics tools through the app's UI; \
@@ -225,12 +247,28 @@ def sse_event(data: dict[str, Any]) -> bytes:
 
 @router.get("/config")
 def chat_config() -> dict[str, Any]:
-    """Tells the frontend whether the chat is usable (key present)."""
-    return {"key_present": keychain_get() is not None, "model": MODEL}
+    """Tells the frontend whether the chat is usable + which provider is active."""
+    key_present = keychain_get() is not None
+    cli_present = shutil.which(CLAUDE_BIN) is not None
+    provider = _resolve_provider()
+    return {
+        "key_present": key_present,
+        "model": MODEL,
+        "provider": provider,
+        "cli_present": cli_present,
+        "usable": (provider == "anthropic" and key_present)
+                  or (provider == "claude-cli" and cli_present),
+    }
 
 
 @router.post("/stream")
 def chat_stream(req: ChatRequest) -> StreamingResponse:
+    if _resolve_provider() == "claude-cli":
+        return _stream_via_cli(req)
+    return _stream_via_anthropic(req)
+
+
+def _stream_via_anthropic(req: ChatRequest) -> StreamingResponse:
     api_key = keychain_get()
     if not api_key:
         raise HTTPException(401, "Anthropic API key not set. Add one in Settings.")
@@ -316,5 +354,149 @@ def chat_stream(req: ChatRequest) -> StreamingResponse:
             logger.exception("chat stream failed")
             yield sse_event({"type": "error",
                              "detail": f"Chat stream failed ({type(e).__name__})"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ── claude-cli provider ──────────────────────────────────────────────────────
+#
+# Spawns the local `claude` CLI in headless print mode and re-emits its
+# stream-json output as the same SSE events the frontend already consumes.
+# Tools are disabled (`--tools ""`) and the system prompt is fully replaced
+# so Claude Code's default agentic context doesn't bleed in. Session
+# persistence is off so the user's ~/.claude/projects history isn't polluted.
+
+
+def _render_conversation(req: ChatRequest) -> str:
+    """Render the conversation history + current turn as a single prompt string.
+
+    The CLI's `-p` mode takes one prompt, so multi-turn is achieved by
+    inlining prior turns. The current user message gets the session-log
+    prefix prepended (same shape as the Anthropic SDK path)."""
+    last_user_idx = len(req.messages) - 1
+    while last_user_idx >= 0 and req.messages[last_user_idx].role != "user":
+        last_user_idx -= 1
+
+    history: list[str] = []
+    for i, m in enumerate(req.messages):
+        if i >= last_user_idx:
+            continue
+        speaker = "User" if m.role == "user" else "Assistant"
+        history.append(f"{speaker}: {m.content}")
+
+    prefix = build_user_prefix(req)
+    current = (prefix + req.messages[last_user_idx].content) if last_user_idx >= 0 else ""
+
+    if history:
+        return (
+            "<previous_conversation>\n"
+            + "\n\n".join(history)
+            + "\n</previous_conversation>\n\n"
+            + current
+        )
+    return current
+
+
+def _stream_via_cli(req: ChatRequest) -> StreamingResponse:
+    prompt = _render_conversation(req)
+
+    cmd = [
+        CLAUDE_BIN,
+        "-p",
+        "--system-prompt", SYSTEM_PROMPT,
+        "--tools", "",
+        "--no-session-persistence",
+        "--output-format", "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+    ]
+
+    def gen():
+        proc = None
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+            if proc.stdin is not None:
+                proc.stdin.write(prompt)
+                proc.stdin.close()
+
+            text_started = False
+            input_tokens = 0
+            output_tokens = 0
+            stop_reason = "end_turn"
+
+            assert proc.stdout is not None
+            for raw_line in proc.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                etype = evt.get("type")
+                if etype == "stream_event":
+                    inner = evt.get("event", {}) or {}
+                    if inner.get("type") == "content_block_delta":
+                        delta = inner.get("delta", {}) or {}
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text", "")
+                            if text:
+                                if not text_started:
+                                    yield sse_event({"type": "text_start"})
+                                    text_started = True
+                                yield sse_event({
+                                    "type": "text_delta",
+                                    "text": text,
+                                })
+                elif etype == "result":
+                    usage = evt.get("usage", {}) or {}
+                    input_tokens = int(usage.get("input_tokens", 0) or 0)
+                    output_tokens = int(usage.get("output_tokens", 0) or 0)
+                    if evt.get("subtype") and evt["subtype"] != "success":
+                        stop_reason = str(evt["subtype"])
+
+            rc = proc.wait()
+            if rc != 0:
+                err = (proc.stderr.read() if proc.stderr else "")[:500]
+                logger.warning("claude CLI exited %d: %s", rc, err)
+                yield sse_event({
+                    "type": "error",
+                    "detail": f"claude CLI exited {rc}. {err}".strip(),
+                })
+                return
+
+            yield sse_event({
+                "type": "done",
+                "stop_reason": stop_reason,
+                "usage": {
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cache_read": 0,
+                    "cache_creation": 0,
+                },
+            })
+        except FileNotFoundError:
+            yield sse_event({
+                "type": "error",
+                "detail": f"`{CLAUDE_BIN}` not found on PATH. Install Claude Code or "
+                          "set MHP_AI_PROVIDER=anthropic with an API key.",
+            })
+        except Exception as e:
+            logger.exception("claude-cli stream failed")
+            yield sse_event({
+                "type": "error",
+                "detail": f"Chat stream failed ({type(e).__name__})",
+            })
+            if proc and proc.poll() is None:
+                try: proc.kill()
+                except Exception: pass
 
     return StreamingResponse(gen(), media_type="text/event-stream")

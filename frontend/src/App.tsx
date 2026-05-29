@@ -47,6 +47,7 @@ import Idor from "./pages/Idor";
 import Placeholder from "./pages/Placeholder";
 import PlannedToolPage from "./pages/PlannedToolPage";
 import Engagements from "./pages/Engagements";
+import EngagementDashboard from "./pages/EngagementDashboard";
 import Findings from "./pages/Findings";
 import Presets from "./pages/Presets";
 import CvssCalculator from "./pages/CvssCalculator";
@@ -82,10 +83,15 @@ import EmailHarvest from "./pages/EmailHarvest";
 import DorksGen from "./pages/DorksGen";
 import Audit from "./pages/Audit";
 import Settings from "./pages/Settings";
-import ChatBubble from "./components/ChatBubble";
+import AiAssistant from "./pages/AiAssistant";
+import ToolLibrary from "./pages/ToolLibrary";
+import Targets from "./pages/Targets";
+import Evidence from "./pages/Evidence";
+import Reports from "./pages/Reports";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import EngagementPill from "./components/EngagementPill";
+import ModePill from "./components/ModePill";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { useTheme } from "./lib/theme";
 import { isPlannedId } from "./lib/plannedTools";
@@ -100,13 +106,11 @@ export default function App() {
   // also work. Built-in tools still use the `NavId` union — assignment from
   // it to `string` is always safe.
   //
-  // Default landing page: Engagements. Per the engagement-first product
-  // direction (see ROADMAP.md), the engagement is the center of the app —
-  // dropping the user onto a single tool (the old "ip" default) framed
-  // MyHackingPal as a tool-launcher. Landing on Engagements lets the user
-  // see their work-in-progress, switch active engagement, or open the
-  // empty-state if they're new (which doubles as soft onboarding).
-  const [active, setActive] = useState<NavId | string>("engagements");
+  // Default landing page: Home. Routes to EngagementDashboard, which shows
+  // the active engagement at a glance (scope, findings, next-step checklist)
+  // when one is active, or a soft onboarding card pointing at the
+  // Engagements list when none is.
+  const [active, setActive] = useState<NavId | string>("home");
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   // `everConnected` distinguishes "still booting" (show CONNECTING) from a
@@ -240,6 +244,7 @@ export default function App() {
             </button>
           </div>
           <div className="flex items-center gap-3 text-[10px] tracking-widest text-ink-dim app-no-drag">
+            <ModePill onOpenEngagementsPage={() => setActive("engagements")} />
             <EngagementPill onOpenEngagementsPage={() => setActive("engagements")} />
             <button
               onClick={theme.cycle}
@@ -273,7 +278,14 @@ export default function App() {
 
         <main className="flex-1 overflow-hidden">
          <ErrorBoundary resetKey={String(active)}>
-          {active === "engagements" ? <Engagements /> :
+          {active === "home"       ? <EngagementDashboard onNavigate={setActive} /> :
+           active === "dashboard"  ? <EngagementDashboard onNavigate={setActive} /> :
+           active === "engagements" ? <Engagements /> :
+           active === "targets"     ? <Targets onJumpTo={setActive} /> :
+           active === "tools"       ? <ToolLibrary onOpenTool={setActive} /> :
+           active === "evidence"    ? <Evidence onJumpTo={setActive} /> :
+           active === "reports"     ? <Reports onJumpTo={setActive} /> :
+           active === "assistant"   ? <AiAssistant activePage={active} /> :
            active === "findings"    ? <Findings /> :
            active === "playbooks"   ? <Presets /> :
            active === "ip"          ? <IpChecker /> :
@@ -355,13 +367,12 @@ export default function App() {
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}
                                           onOpenCatalog={() => setCatalogOpen(true)}
-                                          onAfterRemove={() => setActive("ip")}
+                                          onAfterRemove={() => setActive("home")}
                                         /> :
                                       <Placeholder name={active} />}
          </ErrorBoundary>
         </main>
       </div>
-      <ChatBubble activePage={active} />
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}

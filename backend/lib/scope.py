@@ -32,9 +32,16 @@ Empty scope means "no restriction" — the engagement is permissive
 unless the user explicitly scopes it. This is the standard pentest
 contract pattern: scope is opt-in.
 
-Lab mode (no engagement_id) skips the scope check entirely. Once the
-Lab/Engagement toggle lands (roadmap item #2), the mode flag will
-explicitly drive this behaviour rather than just "engagement_id present".
+The Lab/Engagement mode flag (see `lib/mode.py`) drives the top-level
+gate:
+
+  * ``mode="lab"`` — scope check is skipped entirely, returns
+    ``("allow", "lab mode")``. The target-policy layer (loopback /
+    private / Tailscale / external IP-class) still runs above this.
+  * ``mode="engagement"`` and no engagement_id — denied: engagement
+    mode requires an active engagement.
+  * ``mode="engagement"`` and engagement_id — full per-engagement
+    scope+exclusions check.
 """
 from __future__ import annotations
 
@@ -44,6 +51,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from lib import engagements
+from lib.mode import Mode
 
 logger = logging.getLogger(__name__)
 
@@ -157,17 +165,27 @@ def check_against(
     return "deny", "target not in engagement scope"
 
 
-def check(target: str, engagement_id: str | None) -> tuple[Verdict, str]:
-    """Engagement-scope check for the active engagement.
+def check(
+    target: str,
+    engagement_id: str | None,
+    mode: Mode = "lab",
+) -> tuple[Verdict, str]:
+    """Engagement-scope check honoring the Lab/Engagement mode.
 
-    Returns `("allow", "lab mode")` when there's no engagement_id —
-    Lab-mode callers can short-circuit without any DB hit. When an
-    engagement_id is supplied but doesn't exist, the verdict is "deny"
-    rather than "allow lab" — stale IDs from the frontend shouldn't
-    silently bypass scope.
+    Verdict matrix:
+      * ``mode="lab"`` → allow, regardless of engagement_id (Lab mode
+        is the "freely experiment" mode; scope is not enforced).
+      * ``mode="engagement"`` and missing engagement_id → deny.
+      * ``mode="engagement"`` with an engagement_id that doesn't exist
+        → deny (stale frontend IDs shouldn't silently bypass scope).
+      * ``mode="engagement"`` with a valid engagement → match against
+        its scope and exclusions.
     """
+    if mode == "lab":
+        return "allow", "lab mode"
+    # mode == "engagement" from here on.
     if not engagement_id:
-        return "allow", "lab mode (no engagement)"
+        return "deny", "engagement mode requires an active engagement"
     try:
         eng = engagements.get_engagement(engagement_id)
     except Exception:
@@ -183,9 +201,11 @@ def check(target: str, engagement_id: str | None) -> tuple[Verdict, str]:
 
 
 def check_combined(
-    target: str, engagement_id: str | None,
+    target: str,
+    engagement_id: str | None,
+    mode: Mode = "lab",
 ) -> tuple[Verdict, str, dict[str, str]]:
-    """Full check: target_policy + engagement scope.
+    """Full check: target_policy + engagement scope, honoring mode.
 
     Returns `(verdict, reason, layers)` where `layers` is a dict mapping
     layer name to reason so the UI can show which layer triggered which
@@ -199,7 +219,7 @@ def check_combined(
         pol_v, pol_r = target_policy.check_target(target)
     except Exception as e:
         pol_v, pol_r = "deny", f"target failed validation: {type(e).__name__}"
-    sc_v,  sc_r  = check(target, engagement_id)
+    sc_v,  sc_r  = check(target, engagement_id, mode)
     verdict, _ = combine((pol_v, pol_r), (sc_v, sc_r))
     # Reason on the combined verdict prefers the layer that triggered it.
     if _RANK[pol_v] >= _RANK[sc_v]:

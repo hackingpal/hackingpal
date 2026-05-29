@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { authFetch, BACKEND_URL, parseError } from "../api";
+import { getMode } from "./mode";
 
 export type EngagementStatus = "active" | "completed" | "archived";
 
@@ -89,10 +90,14 @@ const RECORD_SKIP = [
  * Best-effort fire-and-forget POST of a scan result to the active engagement.
  * Returns silently on any failure (network / 404 / 5xx) — auto-recording must
  * never block the actual scan flow.
+ *
+ * Lab mode suppresses auto-record even when an engagement is active, so
+ * ad-hoc experiments don't pollute an authorized engagement's timeline.
  */
 export async function recordResultIfActive(
   toolPath: string, target: string, summary: string, raw: unknown,
 ): Promise<void> {
+  if (getMode() !== "engagement") return;
   const eid = activeId;
   if (!eid) return;
   if (RECORD_SKIP.some((re) => re.test(toolPath))) return;

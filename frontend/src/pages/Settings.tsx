@@ -7,12 +7,11 @@
 //   - System: backend version, platform, hostname, Python version, refresh
 //   - Anthropic API key (chat assistant)
 //   - External API keys (10 keys for OSINT / cloud / breach sources)
+//   - Mode (Lab vs Engagement)
 //   - Appearance (theme cycle)
 //   - Engagement quick-links (Engagements list, Findings, Audit log)
 //
 // Out of scope for this first cut:
-//   - Lab vs Engagement mode toggle (needs deeper product design — the
-//     audit_log already auto-classifies based on engagement-id presence).
 //   - Sudoers cleanup UI (just shows current install status; revoke happens
 //     via the existing tcpdump/nmap pages or `sudo rm /etc/sudoers.d/...`).
 //   - Restart sidecar / clear engagement DB (destructive ops we want
@@ -29,6 +28,8 @@ import {
   type SystemInfo, type TcpdumpStatus, type NmapStatus,
 } from "../api";
 import { useTheme } from "../lib/theme";
+import { setMode, useMode } from "../lib/mode";
+import { useActiveEngagementId } from "../lib/engagement";
 
 type Health = { status: string; version: string; pid: string };
 
@@ -57,6 +58,7 @@ export default function Settings({ onJumpTo }: Props) {
         <AnthropicKeySection />
         <NamedKeysSection />
         <PrivilegedToolsSection />
+        <ModeSection onJumpTo={onJumpTo} />
         <AppearanceSection />
         <EngagementLinksSection onJumpTo={onJumpTo} />
       </div>
@@ -389,6 +391,86 @@ function StatusLine({ label, installed, detail }: {
 }
 
 // ── Appearance ─────────────────────────────────────────────────────────────
+
+// ── Mode (Lab vs Engagement) ───────────────────────────────────────────────
+
+function ModeSection({ onJumpTo }: { onJumpTo: (id: string) => void }) {
+  const mode = useMode();
+  const activeId = useActiveEngagementId();
+  const isEngagement = mode === "engagement";
+
+  return (
+    <Section
+      title="Mode"
+      hint="Lab is for free experimentation. Engagement enforces scope and auto-records evidence."
+    >
+      <div className="flex items-stretch gap-2">
+        <button
+          onClick={() => setMode("lab")}
+          className={
+            "flex-1 text-left p-3 rounded border transition " +
+            (!isEngagement
+              ? "border-amber bg-bg-base"
+              : "border-divider bg-bg-base hover:border-ink-muted")
+          }
+        >
+          <div className="flex items-center gap-2">
+            <span className={"inline-block w-1.5 h-1.5 rounded-full " +
+              (!isEngagement ? "bg-amber" : "bg-ink-dim")} />
+            <span className="text-[12px] font-bold text-ink-primary">Lab</span>
+            {!isEngagement && (
+              <span className="ml-auto text-[10px] uppercase tracking-wider text-amber">
+                Active
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-[11px] text-ink-dim">
+            Scope checks skipped. Auto-record suppressed. Use against your own
+            targets — home lab, public test sites, your own infra.
+          </div>
+        </button>
+
+        <button
+          onClick={() => setMode("engagement")}
+          className={
+            "flex-1 text-left p-3 rounded border transition " +
+            (isEngagement
+              ? "border-phos bg-bg-base"
+              : "border-divider bg-bg-base hover:border-ink-muted")
+          }
+        >
+          <div className="flex items-center gap-2">
+            <span className={"inline-block w-1.5 h-1.5 rounded-full " +
+              (isEngagement ? "bg-phos" : "bg-ink-dim")} />
+            <span className="text-[12px] font-bold text-ink-primary">Engagement</span>
+            {isEngagement && (
+              <span className="ml-auto text-[10px] uppercase tracking-wider text-phos">
+                Active
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-[11px] text-ink-dim">
+            Scope enforced against the active engagement. Results auto-attach
+            to the evidence timeline. Use for authorized assessments.
+          </div>
+        </button>
+      </div>
+
+      {isEngagement && !activeId && (
+        <div className="mt-3 px-3 py-2 rounded border border-amber/40 bg-amber/5
+                        text-[11px] text-amber">
+          No active engagement. Target-accepting tools will be denied until
+          you{" "}
+          <button onClick={() => onJumpTo("engagements")}
+                  className="underline hover:text-ink-primary">
+            pick one
+          </button>
+          .
+        </div>
+      )}
+    </Section>
+  );
+}
 
 function AppearanceSection() {
   const theme = useTheme();
