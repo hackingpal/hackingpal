@@ -52,44 +52,43 @@ build-pipeline simplicity) — only the user-facing branding is **MyHackingPal**
 
 ---
 
-## Latest update — 2026-05-22
+## Latest update — 2026-05-29
 
-**Docker backend now ships.** A headless API-server image for running
-MyHackingPal's backend on Linux without the Electron GUI. Useful as a
-"server mode" you can hit from a browser or another client, or as a
-reproducible sandbox for the scanning tools.
+**Engagement-first pivot in motion.** MyHackingPal is mid-rewrite from
+"click-a-tool dashboard" to "AI-assisted engagement workspace". The work
+landing in 0.3.0 is the scaffold for that flow:
 
-- **`backend/Dockerfile`** — `python:3.11-slim` + bundled tools (nmap 7.95,
-  tcpdump 4.99.5, dig, whois, openssl, wireguard-tools). Installs all cloud
-  recon SDKs (boto3, azure-mgmt-*, google-cloud-*) and AD tooling (ldap3,
-  impacket, bloodhound). Skips macOS-only `pyobjc-*` bindings.
-- **`docker-compose.yml`** — exposes `8765:8765`, grants `NET_RAW` +
-  `NET_ADMIN` for tcpdump and nmap SYN/UDP/OS raw-socket scans. Persistent
-  volume mounted at `/app/data`.
-- **3 cross-platform fixes** that surfaced from the Docker smoke tests:
-  - `azure_recon`: `SubscriptionClient` import moved to its split-out
-    `azure-mgmt-resource-subscriptions` package in v23+.
-  - `forensics.codesign_check`: short-circuits when the `codesign` binary
-    isn't present, so `/processes/list` works on Linux instead of 500ing.
-  - `gcp_recon /status`: pre-flight ADC check avoids a 15s GCE metadata
-    probe inside containers that aren't on GCE — now fast-fails in 20ms.
+- **Lab vs Engagement mode toggle** — persisted per-window flag in the top
+  bar. Lab skips scope checks and auto-record; Engagement enforces scope
+  and writes evidence to the active engagement timeline. `X-MHP-Mode`
+  header on HTTP / `?mode=` query on WS plumbs it through to the backend.
+- **Engagement scope enforcement** — `lib/scope.py` is the new layer
+  on top of `target_policy`. Five routers wired so far (port_scanner,
+  ping, s3_scanner, smb_enum, subdomain_enum); ~70 more to go. The
+  helpers `enforce_ws` / `enforce_rest` fold the boilerplate into one
+  call per router.
+- **Audit log** — append-only `lib/audit_log.py` records every action
+  (tool, target, argv, approver, result) — 13 attack tools already
+  emit. Surfaced on the new `/audit` page and into engagement reports.
+- **Sidebar restructure** — flat 10-item engagement-first nav: Home,
+  Engagements, Targets, Playbooks, Tool Library, Evidence, Findings,
+  Reports, AI Assistant, Settings. ChatBubble removed; replaced by the
+  full-page AI Assistant. Default landing is the engagement dashboard.
+- **Auth gate on every active attack tool** — AdSpray, S3Scanner,
+  SubdomainEnum, Takeover, KerberosRoast, BloodHound, LateralMove,
+  WpaCapture. Pairs with the existing checkbox on the six web-exploit
+  pages.
+- **Playbook schema, guided** — bundles can now declare `category`,
+  `mode_required`, plus per-step `rationale` / `success` / `approval`.
+  Five built-ins ship: Passive Recon (domain footprint), Local Posture
+  (mac + linux), Surface Inventory, Web App First Look. Seven new tool
+  adapters wired (dns_recon, ct_log, email_audit, cms_fingerprint,
+  macos_posture, linux_posture, persistence_audit).
+- **Central Settings page** — API keys, system info, mode toggle,
+  appearance, engagement quick-links. Replaces the floating bubble's
+  `⚙` panel.
 
-Verified: **45/52** parameterless GET endpoints return 200 on Linux; the
-remaining 4 are macOS-only routers (`brew`, `wifi-scan`, `bt/*`) returning
-helpful 503s. Live `nmap -sS` against `scanme.nmap.org` from inside the
-container completes in 0.11s, confirming NET_RAW is applied.
-
-**Android companion app shipped (`mobile/`)** — a Flutter app that points
-at the backend over Tailscale (default `http://100.75.23.96:8765`, editable
-in Settings). v1 ships 7 quick-lookup tools (IP, DNS Recon, WHOIS, TLS
-Audit, Fingerprint, CT Logs, Email Security) plus a streaming chat tab
-against `/chat/stream`. Package `dev.adamsjack.myhackingpal`,
-compileSdk=36, minSdk=24. Cleartext is permitted because the only network
-in play is your tailnet (which is already encrypted).
-
-For the chat tab to work against the Linux container, set
-`ANTHROPIC_API_KEY` in `docker-compose.yml` (the env-var path falls back
-to the macOS Keychain when running the desktop app natively).
+See the [Roadmap](#roadmap) section below for what's done vs in flight.
 
 ---
 
