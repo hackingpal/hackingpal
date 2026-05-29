@@ -97,7 +97,14 @@ export default function App() {
   // `active` is widened to `string` so planned-tool ids (`planned:<slug>`)
   // also work. Built-in tools still use the `NavId` union — assignment from
   // it to `string` is always safe.
-  const [active, setActive] = useState<NavId | string>("ip");
+  //
+  // Default landing page: Engagements. Per the engagement-first product
+  // direction (see ROADMAP.md), the engagement is the center of the app —
+  // dropping the user onto a single tool (the old "ip" default) framed
+  // MyHackingPal as a tool-launcher. Landing on Engagements lets the user
+  // see their work-in-progress, switch active engagement, or open the
+  // empty-state if they're new (which doubles as soft onboarding).
+  const [active, setActive] = useState<NavId | string>("engagements");
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   // `everConnected` distinguishes "still booting" (show CONNECTING) from a
