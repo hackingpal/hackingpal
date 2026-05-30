@@ -284,6 +284,62 @@ async def enforce_ws(
     return True
 
 
+def enforce_engagement_present(
+    engagement_id: str | None,
+    mode: Mode,
+) -> None:
+    """For tools where the "target" isn't a network endpoint (local
+    listeners, IMDS provider names, SSID detectors, etc.) but actions still
+    need to be tied to an engagement under Engagement mode.
+
+    Raises `MhpError(NEED_CONFIRM)` style only when mode=engagement and no
+    engagement is active; otherwise silently allows. Skips target matching
+    entirely — there's nothing to scope against.
+    """
+    if mode != "engagement":
+        return
+    if not engagement_id:
+        raise MhpError(
+            "engagement mode requires an active engagement",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+            extra={"reason": "engagement mode requires an active engagement"},
+        )
+    try:
+        eng = engagements.get_engagement(engagement_id)
+    except Exception:
+        logger.exception("scope: failed to load engagement %s", engagement_id)
+        raise MhpError(
+            "could not load engagement record",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+        ) from None
+    if not eng:
+        raise MhpError(
+            f"engagement {engagement_id} not found",
+            code=ErrorCode.TARGET_DENIED,
+            status_code=403,
+        )
+
+
+async def enforce_engagement_present_ws(
+    ws,
+    engagement_id: str | None,
+    mode: Mode,
+) -> bool:
+    """WS equivalent of `enforce_engagement_present`. Sends an error frame
+    + closes the WS on failure, returns False; returns True on allow."""
+    try:
+        enforce_engagement_present(engagement_id, mode)
+    except MhpError as exc:
+        await ws.send_json(ws_error(
+            ErrorCode.TARGET_DENIED, exc.message,
+        ))
+        await ws.close()
+        return False
+    return True
+
+
 def enforce_rest(
     target: str,
     engagement_id: str | None,

@@ -14,9 +14,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -192,8 +194,14 @@ def _check_keyvault(cred, sub_id: str) -> dict[str, Any]:
 
 
 @router.get("/recon")
-def recon(subscription_id: str | None = None,
+def recon(request: Request, subscription_id: str | None = None,
           services: str = "storage,compute,network,keyvault") -> dict[str, Any]:
+    # Subscription id (if provided) is matched as scope target so a
+    # specific tenant can be locked in for the engagement.
+    sc_target = (subscription_id or "azure").strip() or "azure"
+    scope.enforce_rest(
+        sc_target, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     DefaultAzureCredential, _, _ = _import_az()
     cred = DefaultAzureCredential()
 

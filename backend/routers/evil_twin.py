@@ -56,6 +56,16 @@ async def evil_twin_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+        # SSID is not a network endpoint; scope's hostname/CIDR matching
+        # doesn't apply. Just require an active engagement under Engagement
+        # mode so the scan ties to a record.
+        engagement_id = init.get("engagement_id") or None
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_engagement_present_ws(ws, engagement_id, mode):
+            return
         try:
             rounds = max(1, min(int(init.get("scans", 3)), 10))
         except (TypeError, ValueError):

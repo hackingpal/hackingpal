@@ -36,11 +36,13 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_ip
 
 logger = logging.getLogger(__name__)
@@ -300,7 +302,11 @@ def list_listeners() -> dict[str, list[dict[str, Any]]]:
 
 
 @router.post("/reverse-shell/listeners")
-async def create_listener(body: ListenerCreate) -> dict[str, Any]:
+async def create_listener(body: ListenerCreate, request: Request) -> dict[str, Any]:
+    # Local catcher — no remote target to scope-match. Engagement mode still
+    # requires a valid engagement so the listener + any callback sessions
+    # tie back to an authorized record.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     # Validate bind address — accepts any IP literal incl. 0.0.0.0 / 127.0.0.1.
     host = validate_ip(body.host, field="host")
     # Reject obvious port collisions early — asyncio.start_server would otherwise
@@ -463,7 +469,11 @@ def payload_kinds() -> dict[str, list[dict[str, str]]]:
 
 
 @router.post("/reverse-shell/payload")
-def generate_payload(body: PayloadReq) -> dict[str, str]:
+def generate_payload(body: PayloadReq, request: Request) -> dict[str, str]:
+    # Payload generation = string rendering, no network probe. Still require
+    # an active engagement under Engagement mode so generated payloads tie
+    # to an authorized scope (the resulting callback session will too).
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     # Validate payload kind against the allowlist before rendering, otherwise
     # arbitrary text would be echoed back to the UI in the error message.
     kind = body.kind.strip()

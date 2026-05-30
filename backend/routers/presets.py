@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from lib import preset_engine
+from lib import preset_engine, scope
 from lib.errors import ErrorCode, ws_error
 from lib.mode import get_mode
 
@@ -132,6 +132,26 @@ async def preset_run_ws(ws: WebSocket) -> None:
                 "authorization checkbox required: pass `authorized: true`",
             ))
             return
+
+        # Top-level scope check on the playbook target. Each child tool
+        # invoked by the engine also runs its own check (same helper),
+        # but failing fast here saves the user a partial run + per-step
+        # error spam. Local-target playbooks (posture audits) skip the
+        # target match and just require an engagement under Engagement mode.
+        engagement_id = init.get("engagement_id") or None
+        confirm = bool(init.get("confirm", False))
+        if target_type == "local":
+            try:
+                scope.enforce_engagement_present(engagement_id, mode)
+            except Exception as exc:
+                await ws.send_json(ws_error(
+                    ErrorCode.TARGET_DENIED,
+                    getattr(exc, "message", str(exc)),
+                ))
+                return
+        else:
+            if not await scope.enforce_ws(ws, target, engagement_id, mode, confirm=confirm):
+                return
 
         listener = asyncio.create_task(listen_for_stop())
 

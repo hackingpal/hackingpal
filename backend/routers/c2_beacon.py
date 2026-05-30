@@ -28,10 +28,12 @@ import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_ip
 
 logger = logging.getLogger(__name__)
@@ -174,11 +176,15 @@ class StartBody(BaseModel):
 
 
 @router.post("/listener")
-async def start_listener(body: StartBody) -> dict[str, Any]:
+async def start_listener(body: StartBody, request: Request) -> dict[str, Any]:
     # Validate the bind IP early — accepts 0.0.0.0 / 127.0.0.1 / any IP literal.
     # Reject anything that isn't a parseable IP so we don't pass garbage to
     # asyncio.start_server (which would surface a less actionable OSError).
     host = validate_ip(body.host, field="host")
+    # The listener binds locally and receives callbacks — there's no remote
+    # "target" to scope-match. Engagement mode still requires a valid
+    # engagement so the listener (and any future callbacks) tie to a record.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
 
     if any(l.port == body.port for l in _LISTENERS.values()):
         raise HTTPException(409, f"port {body.port} already in use by another listener")

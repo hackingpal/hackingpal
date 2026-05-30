@@ -16,9 +16,11 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 
 router = APIRouter(tags=["systemd"], dependencies=[Depends(require_local_auth)])
 
@@ -53,11 +55,14 @@ def _safe_unit_name(name: str) -> str:
 
 
 @router.get("/systemd/units")
-def list_units(state: str = "all", type: str = "service") -> dict[str, Any]:
+def list_units(request: Request, state: str = "all", type: str = "service") -> dict[str, Any]:
     """List units. `state` ∈ {all,enabled,active,failed,running}. `type` ∈
     {service,timer,socket,target,mount,path,slice}.
     """
     _require_linux()
+    # Local inspection — no remote target. Engagement mode requires an
+    # active engagement so the audit log can attribute the action.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     sctl = _systemctl()
 
     valid_states = {"all", "enabled", "active", "failed", "running",
@@ -149,10 +154,11 @@ def list_units(state: str = "all", type: str = "service") -> dict[str, Any]:
 
 
 @router.get("/systemd/unit/{name}")
-def show_unit(name: str) -> dict[str, Any]:
+def show_unit(name: str, request: Request) -> dict[str, Any]:
     """Detailed status for a single unit. Combines `systemctl show` (structured
     properties) and `systemctl status` (human + recent log tail)."""
     _require_linux()
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     name = _safe_unit_name(name)
     sctl = _systemctl()
 
@@ -205,10 +211,11 @@ def show_unit(name: str) -> dict[str, Any]:
 
 
 @router.get("/systemd/journal/{name}")
-def journal_tail(name: str, lines: int = 200) -> dict[str, Any]:
+def journal_tail(name: str, request: Request, lines: int = 200) -> dict[str, Any]:
     """Tail the journal for a unit. `lines` capped at 1000 to keep the
     response bounded."""
     _require_linux()
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     name = _safe_unit_name(name)
     jctl = _journalctl()
     if not jctl:

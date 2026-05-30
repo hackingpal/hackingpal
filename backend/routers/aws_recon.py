@@ -13,9 +13,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +305,12 @@ def _check_rds(boto3, ClientError) -> dict[str, Any]:
 
 
 @router.get("/recon")
-def recon(services: str = "iam,s3,ec2,lambda,rds") -> dict[str, Any]:
+def recon(request: Request, services: str = "iam,s3,ec2,lambda,rds") -> dict[str, Any]:
+    # Cloud recon's "target" is the AWS account fetched via STS mid-handler.
+    # Require an active engagement under Engagement mode so the action ties
+    # to a record; per-account scope matching would need a follow-up edit
+    # after STS returns the account id.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     boto3, ClientError, NoCredentialsError, BotoCoreError = _import_boto()
     # Confirm we have credentials before issuing the per-service calls
     try:
