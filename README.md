@@ -397,6 +397,12 @@ npm install            # one-time
 npm run dev:all        # vite + electron
 # or just vite:
 npm run dev            # open http://localhost:5173
+
+# Terminal 3 — Android companion app (optional)
+cd mobile
+flutter pub get
+flutter run
+# Point the app at your backend IP in Settings
 ```
 
 When `app.isPackaged` is true, Electron spawns the bundled sidecar from
@@ -461,54 +467,56 @@ Please read CONTRIBUTING.md and DISCLAIMER.md before submitting a PR.
 
 ## Roadmap
 
-Full plan lives in [ROADMAP.md](ROADMAP.md). Short version:
+### v0.1.0-beta — Shipped ✅
+- [x] 40+ tools across 9 categories
+- [x] Claude-powered AI assistant with session context
+- [x] Attack playbook / preset system
+- [x] WebSocket streaming for all active tools
+- [x] Authorization gates on all exploit tools
+- [x] Scope guard + rate limiting
+- [x] macOS Keychain for all credentials
+- [x] Command palette (⌘K) + sidebar (⌘B)
+- [x] Dark / light / system theme
 
-**Shipped:**
-- v0.1.x — 75+ tools across 15 sidebar categories, AI chat with session context,
-  WebSocket streaming, authorization gates on web-exploit tools, macOS Keychain,
-  command palette, themes, Docker backend, Android quick-lookup companion.
-- v0.2.0 — Cross-platform builds (macOS / Windows / Linux), DMG + auto-updates
-  via electron-updater, engagement + findings system, screenshot evidence,
-  markdown + HTML + GitHub-issue report export.
+### v0.2.0-beta — Cross-platform + Mobile ✅ (current)
+- [x] Windows build (.exe NSIS installer + portable)
+- [x] Linux build (.AppImage + .deb, x64 + arm64)
+- [x] Docker backend image (headless API server)
+- [x] Android companion app (Flutter, 7 tools + chat)
+- [x] Cross-platform persistence audit
+      (launchd / systemd / Registry)
+- [x] Cross-platform posture
+      (macOS / Linux / Windows)
+- [x] Cross-platform WiFi scan
+      (CoreWLAN / nmcli / netsh)
+- [x] Cross-platform packages
+      (Homebrew / apt / dnf / pacman)
+- [x] Linux-specific tools
+      (Systemd Units, Firewall Rules, Users Audit)
+- [x] CI matrix builds on every push to main
 
-**Pivot underway:** from "tool dashboard" to **AI-assisted engagement workspace**.
+### v0.3.0 — Stability + Polish
+- [ ] Full error handling pass across all tools
+- [ ] Input validation on every endpoint
+- [ ] Test suite (pytest backend + Vitest frontend)
+- [ ] First-launch wizard
+- [ ] Settings page with in-app API key management
+- [ ] Engagement / session management + findings tracker
+- [ ] PDF/markdown report export
+- [ ] Code signing + notarization (macOS + Windows)
+- [ ] Auto-update via electron-updater
 
-**v1.0 — Engagement-first workspace**
-- [ ] Platform focus: macOS + Linux + Docker first; Windows experimental/deferred
-- [ ] Scope enforcement: every target-accepting tool consults the active
-      engagement's scope/exclusions before running
-- [ ] Lab mode vs Engagement mode toggle (default: Lab; opt into engagement
-      gating when doing authorized work)
-- [ ] Audit log: append-only record of every action (tool, target, argv,
-      approver, result) — feeds the report
-- [ ] Authorization checkbox on the remaining attack tools (AD spray,
-      BloodHound, Kerberoasting, S3 enum, etc.)
-- [ ] Settings page (in-app key management, mode toggle, sudoers cleanup)
-- [ ] Engagement-centric default page on launch
-- [ ] Docker/server-mode hardening docs: VPN/Tailscale-only guidance, reverse-proxy auth examples, and clear warning banners
-- [ ] Test suite — pytest + Vitest, starting with engagement / scope / audit
+### v0.4.0 — Mobile Expansion
+- [ ] iOS companion app (Swift)
+- [ ] Android: full tool parity with desktop
+- [ ] Mobile findings sync with desktop session
+- [ ] Push notifications for long-running scans
 
-**v1.x — Copilot, not autopilot**
-- [ ] AI suggestion → approval card UX (suggest the next check, user
-      approves before it runs)
-- [ ] Playbook redesign: guided multi-step flows with AI commentary at
-      each step + per-step approval
-- [ ] Command preview / dry-run for every subprocess shell-out
-- [ ] AI provider abstraction for Claude first, with Gemini/OpenAI-compatible/local options later
-- [ ] Assessment coverage matrix for each engagement
-- [ ] Formalized evidence model — unified timeline of scan output,
-      screenshots, chat turns
-- [ ] Code-signed Mac (Developer ID + notarization); Windows signing deferred
-
-**Beyond:**
-- [ ] Community playbook library
-- [ ] iOS companion (Swift)
+### v1.0.0 — Community
+- [ ] Community preset library (.mhp files)
+- [ ] NGFW integration (pfSense, OPNsense, Palo Alto)
 - [ ] Plugin / custom tool API
-- [ ] NGFW integrations
-
-The safety controls list (scope allowlist, command preview, approval gates,
-audit log, rate limits, lab vs real mode) is the v1.0 critical path — see
-ROADMAP.md for the full rationale.
+- [ ] Signed releases on GitHub Releases
 
 ---
 
@@ -533,7 +541,14 @@ init message. See `routers/port_scanner.py` for the canonical example.
   websockets/wsproto, anthropic SDK, Pillow, cryptography, python-multipart.
 - **Frontend:** React 18, Vite, TypeScript, Tailwind (CSS-variable theme),
   Electron 33.
+- **Mobile:** Flutter 3.x (Dart), targets Android 7+ (minSdk 24), compileSdk 36.
+  Package `dev.adamsjack.myhackingpal`. Connects to the FastAPI backend over
+  Tailscale.
+- **Container:** Docker (`python:3.11-slim`), bundled with nmap 7.95 +
+  tcpdump 4.99.5 + cloud SDKs (boto3, azure-mgmt-*, google-cloud-*) +
+  AD tooling (ldap3, impacket, bloodhound). `NET_RAW` + `NET_ADMIN` caps.
 - **Bundling:** PyInstaller (backend → standalone binary), electron-builder
   (Electron + sidecar + icon → `.app`).
-- **Persistence:** macOS Keychain (`security` CLI) for all API keys.
-  No on-disk credentials.
+- **Persistence:** macOS Keychain / Linux Secret Service / Windows Credential
+  Manager for all API keys. Docker: `ANTHROPIC_API_KEY` env var. No on-disk
+  credentials.

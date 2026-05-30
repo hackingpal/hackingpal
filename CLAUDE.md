@@ -199,6 +199,59 @@ engagement / scope / audit code, write tests alongside it.
   fine to have standalone tools, but think about how they'd fit into
   a playbook before shipping.
 
+## Mobile app (`mobile/`)
+
+Flutter project. Package `dev.adamsjack.myhackingpal`.
+`compileSdk=36`, `minSdk=24`.
+
+Connects to backend via `http://<tailscale-ip>:8765`. `ApiService`
+handles all HTTP + streaming. Cleartext allowed because traffic is
+over Tailscale (encrypted).
+
+Seven tools in v1: IP Checker, DNS Recon, WHOIS, TLS Audit,
+Fingerprint, CT Logs, Email Security. Chat tab streams from
+`/chat/stream` via SSE.
+
+## Docker (`backend/Dockerfile` + `docker-compose.yml`)
+
+`python:3.11-slim` base.
+
+Bundled: nmap 7.95, tcpdump 4.99.5, dig, whois, openssl,
+wireguard-tools.
+
+Cloud SDKs: `boto3`, `azure-mgmt-*`, `google-cloud-*`. AD tooling:
+`ldap3`, `impacket`, `bloodhound`. Skips macOS-only `pyobjc-*`
+bindings.
+
+Caps: `NET_RAW` + `NET_ADMIN` for raw socket tools.
+
+macOS-only endpoints return 503 with a hint message. Linux-only
+endpoints return 503 on macOS/Windows. `ANTHROPIC_API_KEY` env var
+used instead of Keychain.
+
+## Platform routing
+
+`backend/lib/platform_util.py` owns all platform detection:
+
+- `IS_DARWIN` / `IS_LINUX` / `IS_WINDOWS`
+- `app_data_dir()` — cross-platform data directory
+- `require_darwin()` / `require_linux()` / `require_windows()` —
+  dependency helpers that return 503 on the wrong OS
+
+Use `pathlib.Path` for all file paths, never string concat.
+
+## Cross-platform CI
+
+`.github/workflows/build.yml` runs on:
+
+- `macos-latest` (Apple Silicon `.app`)
+- `windows-latest` (NSIS installer + portable `.exe`)
+- `ubuntu-latest` (x86_64 `.AppImage` + `.deb`)
+- `ubuntu-24.04-arm` (arm64 `.AppImage`)
+
+Windows CI smoke-tests 14 endpoints and verifies 501-guards don't
+crash.
+
 ## Useful references
 
 - [ROADMAP.md](ROADMAP.md) — direction + v1.0 critical path
