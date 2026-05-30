@@ -30,8 +30,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, lan
+from lib import hids_notify, lan, scope
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import MAX_TARGET_LEN
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,19 @@ async def lan_scan_ws(ws: WebSocket) -> None:
                 await ws.close(); return
         else:
             base, prefix = lan.subnet_info(my_ip)
+
+        # Engagement scope on the CIDR. scope.py's IP-net matcher recognises
+        # CIDR scope entries, so a scope of "10.0.0.0/8" allows any subnet
+        # inside it. Defaults to allow in Lab mode.
+        engagement_id = init.get("engagement_id") or None
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        cidr_target = f"{base}/{prefix}"
+        if not await scope.enforce_ws(ws, cidr_target, engagement_id, mode, confirm=confirm):
+            return
 
         hosts = lan.subnet_hosts(base, prefix)
         targets = [h for h in hosts if h != my_ip]

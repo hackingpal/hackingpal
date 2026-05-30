@@ -16,10 +16,13 @@ import asyncio
 import logging
 import time
 
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import audit_log, web_fuzz
+from lib import audit_log, scope, web_fuzz
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_url
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,15 @@ async def ssrf_ws(ws: WebSocket) -> None:
                 "Confirm you have authorization to test this target",
             ))
             await ws.close(); return
+
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        host_for_scope = urlparse(url).hostname or url
+        if not await scope.enforce_ws(ws, host_for_scope, engagement_id, mode, confirm=confirm):
+            return
 
         # `allow_private` here refers to the OUTER URL (target), not the
         # injected one — we always want to test internal-IP payloads.

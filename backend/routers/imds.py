@@ -27,9 +27,11 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import web_fuzz
+from lib import scope, web_fuzz
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_url
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +82,7 @@ async def imds_ws(ws: WebSocket) -> None:
     try:
         init = await ws.receive_json()
         url = str(init.get("url", "")).strip()
+        engagement_id = init.get("engagement_id") or None
         if not url:
             await ws.send_json(ws_error(ErrorCode.INVALID_URL, "url is required"))
             await ws.close(); return
@@ -109,6 +112,15 @@ async def imds_ws(ws: WebSocket) -> None:
                 "Confirm you have authorization to test this target",
             ))
             await ws.close(); return
+
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        host_for_scope = urlparse(url).hostname or url
+        if not await scope.enforce_ws(ws, host_for_scope, engagement_id, mode, confirm=confirm):
+            return
 
         allow_private = bool(init.get("allow_private", False))
         ok, reason = web_fuzz.check_scope(url, allow_private)

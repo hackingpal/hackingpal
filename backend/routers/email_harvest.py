@@ -20,10 +20,12 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_domain
 
 from .settings import keychain_get_named
@@ -125,8 +127,12 @@ def _dorks_for_emails(domain: str) -> list[dict[str, str]]:
 
 
 @router.get("/emails/{domain}")
-async def harvest(domain: str) -> dict[str, Any]:
+async def harvest(domain: str, request: Request) -> dict[str, Any]:
     d = validate_domain(domain, field="domain")
+    # Active — scrapes /contact, /about etc. on the target's website.
+    scope.enforce_rest(
+        d, get_engagement_id(request), get_mode(request),
+    )
     hunter_key = keychain_get_named("hunter_api_key")
 
     async with httpx.AsyncClient(

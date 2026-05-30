@@ -37,9 +37,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, nmap_runner, nmap_scripts, target_policy
+from lib import hids_notify, nmap_runner, nmap_scripts, scope, target_policy
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
+from lib.mode import get_mode
 from lib.validators import MAX_TARGET_LEN, validate_target
 
 logger = logging.getLogger(__name__)
@@ -413,14 +414,24 @@ async def nmap_ws(ws: WebSocket) -> None:
             ))
             await ws.close(); return
 
-        # Target policy gate — collect verdicts, deny outright, warn-without-confirm errs
+        # Target policy + engagement-scope gate. Each expanded target gets
+        # the combined verdict (policy IP-class layer ∪ engagement scope),
+        # honoring Lab/Engagement mode. A single `deny` anywhere fails the
+        # whole batch; `warn` requires the user to re-submit with confirm.
+        engagement_id = init.get("engagement_id") or None
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
         verdicts: list[dict[str, str]] = []
         any_warn = False
         for t in nmap_runner.expand_for_policy(opts.targets):
-            v, r = target_policy.check_target(t)
-            verdicts.append({"target": t, "verdict": v, "reason": r})
+            v, r, layers = scope.check_combined(t, engagement_id, mode)
+            verdicts.append({"target": t, "verdict": v, "reason": r,
+                             "layers": layers})
             if v == "deny":
-                await ws.send_json({"type": "policy", "verdicts": verdicts})
+                await ws.send_json({"type": "policy", "verdicts": verdicts,
+                                    "mode": mode})
                 await ws.send_json(ws_error(
                     ErrorCode.TARGET_DENIED,
                     f"target denied: {t} ({r})",
@@ -429,7 +440,8 @@ async def nmap_ws(ws: WebSocket) -> None:
                 await ws.close(); return
             if v == "warn":
                 any_warn = True
-        await ws.send_json({"type": "policy", "verdicts": verdicts})
+        await ws.send_json({"type": "policy", "verdicts": verdicts,
+                            "mode": mode})
         if any_warn and not confirm:
             await ws.send_json(ws_error(
                 ErrorCode.NEED_CONFIRM,

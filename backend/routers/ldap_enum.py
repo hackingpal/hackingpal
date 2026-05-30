@@ -23,14 +23,16 @@ import datetime
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.ad_auth import (
     CredsModel, decode_uac, domain_to_base_dn, open_ldap,
     UAC_DONT_REQUIRE_PREAUTH, UAC_PASSWD_NOTREQD,
 )
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_mode
 from lib.validators import validate_domain, validate_hostname
 
 logger = logging.getLogger(__name__)
@@ -42,8 +44,10 @@ CATEGORIES = ["users", "groups", "dcs", "policy", "gpos",
 
 
 class EnumBody(BaseModel):
-    creds:      CredsModel
-    categories: list[str] = Field(default_factory=lambda: list(CATEGORIES))
+    creds:         CredsModel
+    categories:    list[str] = Field(default_factory=lambda: list(CATEGORIES))
+    confirm:       bool = False
+    engagement_id: str | None = None
 
 
 def _add_finding(out: list[dict[str, Any]], severity: str, title: str,
@@ -253,10 +257,15 @@ def _admins(conn, base_dn: str, findings: list[dict[str, Any]]) -> list[dict[str
 
 
 @router.post("/enum")
-def enum(body: EnumBody) -> dict[str, Any]:
+def enum(body: EnumBody, request: Request) -> dict[str, Any]:
     body.creds.dc_host = validate_hostname(body.creds.dc_host, field="dc_host")
     if body.creds.domain:
         body.creds.domain = validate_domain(body.creds.domain, field="domain")
+    scope.enforce_rest(
+        body.creds.domain or body.creds.dc_host,
+        body.engagement_id, get_mode(request),
+        confirm=body.confirm,
+    )
     try:
         conn = open_ldap(body.creds)
     except Exception:

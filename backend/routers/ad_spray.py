@@ -32,9 +32,10 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from lib import audit_log
+from lib import audit_log, scope
 from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_mode
 from lib.validators import validate_hostname
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,16 @@ async def spray_ws(ws: WebSocket) -> None:
                 getattr(exc, "message", str(exc)) or "dc_host is required",
             ))
             await ws.close(); return
+
+        confirm = bool(init.get("confirm", False))
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_ws(
+            ws, creds.dc_host, engagement_id, mode, confirm=confirm,
+        ):
+            return
 
         if not users or not passwords:
             await ws.send_json(ws_error(

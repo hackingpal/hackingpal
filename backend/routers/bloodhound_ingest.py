@@ -21,12 +21,13 @@ import uuid
 import zipfile
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from lib import audit_log
+from lib import audit_log, scope
 from lib.ad_auth import CredsModel
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -170,12 +171,16 @@ def methods() -> dict[str, Any]:
 
 
 @router.post("/run")
-def start_run(body: IngestBody) -> dict[str, Any]:
+def start_run(body: IngestBody, request: Request) -> dict[str, Any]:
     if not body.confirm_auth:
         raise MhpError(
             "Confirm you have authorization to run BloodHound collection against this domain.",
             code=ErrorCode.NEED_CONFIRM, status_code=409,
         )
+    eid = body.engagement_id or get_engagement_id(request)
+    scope.enforce_rest(
+        body.creds.dc_host or body.creds.domain, eid, get_mode(request),
+    )
     with _lock:
         running = [j for j in _jobs.values() if j.state in ("queued", "running")]
         if running:

@@ -21,10 +21,12 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_domain
 
 logger = logging.getLogger(__name__)
@@ -126,9 +128,14 @@ def _bucket(urls: list[str]) -> dict[str, Any]:
 @router.get("/urls/{domain}")
 async def urls(
     domain: str,
+    request: Request,
     limit: int = Query(_HARD_LIMIT, ge=10, le=_HARD_LIMIT),
 ) -> dict[str, Any]:
     d = validate_domain(domain, field="domain")
+    # Passive — Wayback Machine archive lookup, no live probe of the target.
+    scope.enforce_rest(
+        d, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     all_urls = await _fetch_cdx(d, limit=limit)
     buckets = _bucket(all_urls)
     return {
@@ -140,7 +147,7 @@ async def urls(
 
 
 @router.get("/diff/{domain}")
-async def diff(domain: str) -> dict[str, Any]:
+async def diff(domain: str, request: Request) -> dict[str, Any]:
     """Compare URLs seen in the last 6 months vs. those seen before that.
 
     "Gone but not forgotten" = ever-seen historically but not in the last
@@ -148,6 +155,9 @@ async def diff(domain: str) -> dict[str, Any]:
     the team thought they retired.
     """
     d = validate_domain(domain, field="domain")
+    scope.enforce_rest(
+        d, get_engagement_id(request), get_mode(request), deny_only=True,
+    )
     cutoff = (datetime.utcnow() - timedelta(days=180)).strftime("%Y%m%d")
     # Two CDX calls back-to-back with the hard cap routinely hits the
     # CDX server's per-request budget. Halve the limit for the diff so

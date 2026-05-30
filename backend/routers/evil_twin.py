@@ -29,7 +29,9 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from lib import scope
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_mode
 
 from .wifi_scan import scan_networks
 

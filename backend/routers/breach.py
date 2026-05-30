@@ -18,12 +18,14 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from lib import scope
 from lib.auth import require_local_auth
 from pydantic import BaseModel, Field
 
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 from .settings import keychain_get_named
 
@@ -89,7 +91,8 @@ async def password_check(body: PasswordCheck) -> dict[str, Any]:
 
 
 @router.get("/email/{email}")
-async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
+async def email_check(email: str, request: Request,
+                      truncate: bool = False) -> dict[str, Any]:
     # Strip + cap before passing into the HIBP URL. We don't run a full
     # RFC 5322 validator here because HIBP itself is the authoritative
     # validator — but rejecting obviously-malformed input early keeps
@@ -107,6 +110,14 @@ async def email_check(email: str, truncate: bool = False) -> dict[str, Any]:
             code=ErrorCode.VALIDATION_ERROR,
             status_code=400,
         )
+
+    # Scope-check the email's domain (the actual "target" of the lookup).
+    # Passive — HIBP queries an archive, doesn't probe the live domain.
+    email_domain = email.rsplit("@", 1)[-1].lower()
+    scope.enforce_rest(
+        email_domain, get_engagement_id(request), get_mode(request),
+        deny_only=True,
+    )
 
     key = keychain_get_named("hibp_api_key")
     if not key:

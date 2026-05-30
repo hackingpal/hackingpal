@@ -22,9 +22,11 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 from pydantic import BaseModel, Field
 
 from lib.errors import MhpError
@@ -90,6 +92,7 @@ class FindBody(BaseModel):
     domain: str = Field(default="", max_length=253)
     sources: list[str] = Field(default_factory=lambda: [s["id"] for s in SOURCES], max_length=32)
     execute: bool = False
+    confirm: bool = False
 
 
 def _build_dorks(company: str, domain: str, picked: set[str]) -> list[dict[str, Any]]:
@@ -173,13 +176,23 @@ def _guess_email(name: str, domain: str, pattern: str | None) -> str | None:
 
 
 @router.post("/find")
-async def find(body: FindBody) -> dict[str, Any]:
+async def find(body: FindBody, request: Request) -> dict[str, Any]:
     company = body.company.strip()
     raw_domain = body.domain.strip().lower().lstrip("@")
     if raw_domain:
         domain = validate_domain(raw_domain, field="domain")
     else:
         domain = ""
+    # Scope-check on the domain when provided. When only the company name
+    # is supplied (no domain), fall back to scope-checking the company
+    # string itself — engagement scope of "acme" will match, scope of
+    # "*.acme.com" will not (by design, same trade-off as s3_scanner).
+    scope_target = domain or company.lower()
+    # Generating dork strings is passive; executing them via CSE is active.
+    scope.enforce_rest(
+        scope_target, get_engagement_id(request), get_mode(request),
+        confirm=body.confirm, deny_only=not body.execute,
+    )
     picked = set(body.sources)
     dorks = _build_dorks(company, domain, picked)
 

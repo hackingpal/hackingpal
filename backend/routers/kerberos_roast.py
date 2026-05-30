@@ -19,10 +19,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from lib import audit_log
+from lib import audit_log, scope
+from lib.mode import get_mode
 from lib.ad_auth import CredsModel, domain_to_base_dn, open_ldap
 from lib.errors import ErrorCode, MhpError
 from lib.validators import validate_domain, validate_hostname
@@ -64,11 +65,12 @@ class KerberoastBody(BaseModel):
     creds:         CredsModel
     spn_filter:    str = Field("", description="Optional sAMAccountName filter")
     confirm_auth:  bool = Field(False, description="I have authorization to run Kerberos roasting against this domain")
+    confirm:       bool = Field(False, description="Re-confirm after a scope warn verdict")
     engagement_id: str | None = Field(None, description="Active engagement id (audit-log + scope)")
 
 
 @router.post("/kerberoast/run")
-def kerberoast(body: KerberoastBody) -> dict[str, Any]:
+def kerberoast(body: KerberoastBody, request: Request) -> dict[str, Any]:
     if not body.confirm_auth:
         raise MhpError(
             "Confirm you have authorization to run Kerberos roasting against this domain.",
@@ -81,6 +83,14 @@ def kerberoast(body: KerberoastBody) -> dict[str, Any]:
         creds.domain = validate_domain(creds.domain, field="domain")
     if not creds.username or (not creds.password and not creds.nt_hash):
         raise HTTPException(400, "Kerberoasting needs valid AD creds (any user)")
+
+    # Engagement scope. The DC host is the network endpoint we'll touch;
+    # if a domain is set we prefer it (matches the audit-log target choice).
+    scope.enforce_rest(
+        creds.domain or creds.dc_host,
+        body.engagement_id, get_mode(request),
+        confirm=body.confirm,
+    )
 
     audit_id: str | None = None
     try:
