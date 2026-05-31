@@ -186,10 +186,38 @@ Processes (running processes + listeners + signature status), Steganography \
 - **UTILITIES** — WiFi Integrity (SSID/BSSID/gateway sanity check), VPN Manager \
 (WireGuard wg0), Terminal (one-shot shell exec), Brew (homebrew search/install).
 - **PLAYBOOKS** — Composable presets that chain multiple tools into one run \
-against a single target. Each step calls a tool in-process (no HTTP round-trip) \
-and streams its findings into a unified panel with severity counters. Built-ins \
-ship in `backend/presets/*.mhp`; users save custom ones via the UI's Build \
-Custom Preset modal. Requires explicit authorization checkbox before running.
+against a single target. Two schemas:
+  - **v1 (legacy)**: flat `steps` array. Six built-ins ship with v0.3.0 \
+(`quick_win`, `passive_recon_domain`, `local_posture_macos`, `local_posture_linux`, \
+`surface_inventory`, `web_app_first_look`).
+  - **v2 (phased)**: `phases` array with feed-forward (`{phase_N.step_id.key}` \
+templates), per-step `condition` evaluation, per-phase `rate_limit`, finding \
+auto-promotion from step results, and `stop_on_critical` pause/resume.
+Built-in v2 playbooks (1.0):
+  1. **full_external_red_team** — domain target, 6 phases, ~45-90 min, high risk. \
+Passive intel → DNS recon → surface mapping → vuln discovery → web exploit → report.
+  2. **full_internal_network** — CIDR target, 6 phases, ~60-120 min, critical. \
+Discovery → service enum → AD enum → credential attacks → persistence hunt → report.
+  3. **web_app_full_assessment** — URL target, 7 phases, ~30-60 min, high. \
+Footprint → auth recon → content discovery → input validation → access control → \
+infrastructure → report.
+  4. **active_directory_kill_chain** — IP target, 6 phases, ~45-90 min, critical. \
+Network position → unauth enum → cred capture → authed enum → priv esc → report.
+  5. **cloud_aws_assessment** — domain target, 5 phases, ~30-60 min, high. \
+External recon → IMDS abuse → service enum → misconfig analysis → report.
+  6. **wifi_physical_assessment** — org target, 4 phases, ~30-60 min, high. \
+Passive survey → active wifi → post-connect → report.
+  7. **phishing_campaign_recon** — org target, 5 phases, ~20-40 min, medium. \
+Org mapping → mail infra → delivery surface → pretext intel → report. No active sending.
+  8. **container_kubernetes_escape** — IP target, 5 phases, ~20-40 min, critical. \
+Container fingerprint → cluster network recon → escape attempts → cluster enum → report.
+  9. **bug_bounty_stealth** — domain target, 4 phases, ~20-30 min, low. \
+Pure passive → careful active → in-scope testing → bounty-style report.
+  10. **compromise_assessment** — IP target, 5 phases, ~20-40 min, low. \
+Host integrity → network integrity → credential exposure → external exposure → IOC \
+summary. Lab-mode-friendly defensive sweep — checks your own posture.
+Every playbook requires the engagement-first auth checkbox before running and runs \
+under the active engagement's scope.
 
 # How to answer
 

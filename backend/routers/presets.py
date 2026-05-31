@@ -92,15 +92,41 @@ async def preset_run_ws(ws: WebSocket) -> None:
         try:
             while True:
                 msg = await ws.receive_json()
-                if isinstance(msg, dict) and msg.get("action") == "stop":
+                if not isinstance(msg, dict):
+                    continue
+                action = msg.get("action")
+                if action == "stop":
+                    # Push to pending_action too so a paused phase resumes
+                    # cleanly with a stop verdict, then trip the stop event.
+                    try: pending_action.put_nowait("stop")
+                    except Exception: pass
                     stop.set()
                     return
+                if action == "continue":
+                    try: pending_action.put_nowait("continue")
+                    except Exception: pass
         except WebSocketDisconnect:
+            try: pending_action.put_nowait("stop")
+            except Exception: pass
             stop.set()
         except Exception:
+            try: pending_action.put_nowait("stop")
+            except Exception: pass
             stop.set()
 
     listener: asyncio.Task | None = None
+    # For v2 stop_on_critical: when the engine pauses, we await a JSON
+    # control message from the client ("continue" or "stop") and forward
+    # the decision back to the engine via wait_action.
+    pending_action: asyncio.Queue[str] = asyncio.Queue()
+
+    async def wait_action() -> str:
+        # Block until the stop-listener receives an explicit action.
+        try:
+            return await pending_action.get()
+        except Exception:
+            return "stop"
+
     try:
         init = await ws.receive_json()
         preset_id = str(init.get("preset", "")).strip()
@@ -162,7 +188,10 @@ async def preset_run_ws(ws: WebSocket) -> None:
                 # Client gone — flip stop so the engine winds down gracefully.
                 stop.set()
 
-        await preset_engine.run_preset(preset_id, target, emit, stop, mode=mode)
+        await preset_engine.run_preset(
+            preset_id, target, emit, stop,
+            mode=mode, wait_action=wait_action,
+        )
     except WebSocketDisconnect:
         stop.set()
     except Exception as exc:

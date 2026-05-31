@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 import uuid
 from pathlib import Path
@@ -46,49 +47,36 @@ class PresetError(Exception):
 # Schema
 # ─────────────────────────────────────────────────────────────────────────────
 
-REQUIRED_FIELDS = {"id", "name", "steps"}
-ALLOWED_TARGET_TYPES = {"domain", "ip", "cidr", "url", "host", "local"}
+REQUIRED_FIELDS = {"id", "name"}     # `steps` OR `phases` required (see _validate)
+ALLOWED_TARGET_TYPES = {"domain", "ip", "cidr", "url", "host", "local",
+                        "email", "org"}
 ALLOWED_CATEGORIES = {
     "passive_recon", "local_posture", "surface_inventory", "web_app",
     "engagement_attack", "custom",
 }
 ALLOWED_MODES = {"lab", "engagement", "either"}
+ALLOWED_RISK_LEVELS = {"passive", "low", "medium", "high", "critical"}
 
 
 def _validate(d: dict[str, Any]) -> None:
-    """Schema check. All new guided fields (category, mode_required, per-step
-    rationale/success/approval) are optional, so legacy `.mhp` files written
-    before the guided redesign keep loading without modification.
+    """Schema check. Accepts two schemas:
+
+    v1 (legacy): top-level `steps` flat array.
+    v2 (phases): top-level `phases` array of {id, name, rate_limit, steps}.
+
+    Guided fields (category, mode_required, rationale, success, approval,
+    output_keys, condition, feed_to, on_finding) are all optional, so legacy
+    `.mhp` files keep loading and v2 files only need to fill what they use.
     """
     missing = REQUIRED_FIELDS - d.keys()
     if missing:
         raise PresetError(f"preset missing required fields: {sorted(missing)}")
-    if not isinstance(d["steps"], list) or not d["steps"]:
-        raise PresetError("preset must have a non-empty `steps` array")
-    seen_ids: set[str] = set()
-    for i, s in enumerate(d["steps"]):
-        if not isinstance(s, dict):
-            raise PresetError(f"step #{i} is not an object")
-        if "id" not in s or "tool" not in s:
-            raise PresetError(f"step #{i} missing `id` or `tool`")
-        if s["id"] in seen_ids:
-            raise PresetError(f"duplicate step id: {s['id']!r}")
-        seen_ids.add(s["id"])
-        if s["tool"] not in _TOOL_ADAPTERS:
-            raise PresetError(
-                f"step #{i} ({s['id']!r}): unknown tool {s['tool']!r}. "
-                f"Known tools: {sorted(_TOOL_ADAPTERS)}",
-            )
-        # Guided fields — type-check but don't require.
-        for field in ("rationale", "success"):
-            if field in s and not isinstance(s[field], str):
-                raise PresetError(
-                    f"step #{i} ({s['id']!r}): `{field}` must be a string",
-                )
-        if "approval" in s and not isinstance(s["approval"], bool):
-            raise PresetError(
-                f"step #{i} ({s['id']!r}): `approval` must be a boolean",
-            )
+    has_phases = isinstance(d.get("phases"), list) and d["phases"]
+    has_steps  = isinstance(d.get("steps"),  list) and d["steps"]
+    if not has_phases and not has_steps:
+        raise PresetError(
+            "preset must have a non-empty `phases` (v2) or `steps` (v1) array",
+        )
     if d.get("target_type") and d["target_type"] not in ALLOWED_TARGET_TYPES:
         raise PresetError(f"unknown target_type: {d['target_type']!r}")
     if d.get("category") and d["category"] not in ALLOWED_CATEGORIES:
@@ -97,6 +85,61 @@ def _validate(d: dict[str, Any]) -> None:
         raise PresetError(
             f"unknown mode_required: {d['mode_required']!r} "
             f"(expected one of {sorted(ALLOWED_MODES)})",
+        )
+    if d.get("risk_level") and d["risk_level"] not in ALLOWED_RISK_LEVELS:
+        raise PresetError(f"unknown risk_level: {d['risk_level']!r}")
+
+    if has_phases:
+        seen_step_ids: set[str] = set()
+        seen_phase_ids: set[Any] = set()
+        for pi, ph in enumerate(d["phases"]):
+            if not isinstance(ph, dict):
+                raise PresetError(f"phase #{pi} is not an object")
+            if "id" not in ph:
+                raise PresetError(f"phase #{pi} missing `id`")
+            if ph["id"] in seen_phase_ids:
+                raise PresetError(f"duplicate phase id: {ph['id']!r}")
+            seen_phase_ids.add(ph["id"])
+            ph_steps = ph.get("steps") or []
+            if not isinstance(ph_steps, list) or not ph_steps:
+                raise PresetError(
+                    f"phase #{pi} ({ph['id']!r}): `steps` must be non-empty"
+                )
+            for si, s in enumerate(ph_steps):
+                _validate_step(s, where=f"phase #{pi} step #{si}",
+                               seen_ids=seen_step_ids)
+    else:
+        seen_step_ids = set()
+        for si, s in enumerate(d["steps"]):
+            _validate_step(s, where=f"step #{si}", seen_ids=seen_step_ids)
+
+
+def _validate_step(s: Any, *, where: str, seen_ids: set[str]) -> None:
+    if not isinstance(s, dict):
+        raise PresetError(f"{where} is not an object")
+    if "id" not in s or "tool" not in s:
+        raise PresetError(f"{where} missing `id` or `tool`")
+    if s["id"] in seen_ids:
+        raise PresetError(f"duplicate step id: {s['id']!r}")
+    seen_ids.add(s["id"])
+    if s["tool"] not in _TOOL_ADAPTERS:
+        raise PresetError(
+            f"{where} ({s['id']!r}): unknown tool {s['tool']!r}. "
+            f"Known tools include: {sorted(_TOOL_ADAPTERS)[:10]} … "
+            f"(+{len(_TOOL_ADAPTERS)-10} more)",
+        )
+    for field in ("rationale", "success", "display_name", "condition"):
+        if field in s and s[field] is not None and not isinstance(s[field], str):
+            raise PresetError(f"{where} ({s['id']!r}): `{field}` must be a string or null")
+    for field in ("output_keys", "feed_to"):
+        if field in s and not isinstance(s[field], list):
+            raise PresetError(f"{where} ({s['id']!r}): `{field}` must be a list")
+    if "approval" in s and not isinstance(s["approval"], bool):
+        raise PresetError(f"{where} ({s['id']!r}): `approval` must be a boolean")
+    if "on_finding" in s and s["on_finding"] not in (None, "continue", "pause", "stop"):
+        raise PresetError(
+            f"{where} ({s['id']!r}): `on_finding` must be one of "
+            f"continue|pause|stop|null"
         )
 
 
@@ -132,14 +175,24 @@ def list_presets() -> list[dict[str, Any]]:
                **_load_dir(USER_DIR, "user")}
     summaries: list[dict[str, Any]] = []
     for p in presets.values():
+        phases = p.get("phases") or []
+        step_count = (sum(len(ph.get("steps") or []) for ph in phases)
+                      if phases else len(p.get("steps") or []))
         summaries.append({
             "id": p["id"], "name": p["name"],
             "description": p.get("description", ""),
             "target_type": p.get("target_type", "domain"),
             "category": p.get("category", "custom"),
             "mode_required": p.get("mode_required", "either"),
+            "risk_level": p.get("risk_level", "low"),
+            "estimated_duration": p.get("estimated_duration", ""),
+            "requires_auth": bool(p.get("requires_auth", False)),
+            "stop_on_critical": bool(p.get("stop_on_critical", False)),
+            "report_template": p.get("report_template", ""),
             "author": p.get("author", ""),
-            "step_count": len(p["steps"]),
+            "phase_count": len(phases),
+            "step_count": step_count,
+            "schema": "v2" if phases else "v1",
             "builtin": p["_builtin"],
         })
     summaries.sort(key=lambda s: (not s["builtin"], s["category"], s["name"]))
@@ -197,6 +250,19 @@ class _LocalWS:
         self._stop = stop_event
         self._out: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         self.closed = False
+        # Routers now read mode + engagement id via get_mode(ws)/get_engagement_id(ws)
+        # which expect an HTTPConnection-like surface. The engine runs adapters
+        # in-process; we use loopback defaults so scope checks behave like a
+        # local request without a mode header (= Lab) and let the handshake
+        # dict carry mode/engagement_id when needed.
+        self.headers: dict[str, str] = {}
+        self.query_params: dict[str, str] = {}
+        # FastAPI WebSocket exposes `.client` as a (host, port) namedtuple;
+        # the auth dependency checks `client.host in _LOOPBACK_HOSTS`.
+        class _C:
+            host = "127.0.0.1"
+            port = 0
+        self.client = _C()
 
     async def accept(self) -> None:  # noqa: D401
         return None
@@ -598,6 +664,495 @@ _TOOL_ADAPTERS: dict[str, Callable[..., Awaitable[dict[str, Any]]]] = {
 }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# v2 phase-based runner — feed-forward, conditions, rate limit, auto-promote
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# v1 (legacy) presets are a flat `steps` array, executed sequentially.
+# v2 presets group steps into `phases`. Each phase:
+#   * runs sequentially within itself
+#   * has a `rate_limit` (req/s)
+#   * passes a phase-scoped output dict forward to later phases
+#
+# Steps declare `output_keys` to publish into the feed-forward context.
+# Later steps reference those values via `{phase_N.step_id.key}` templates
+# in `options`/`targets`.
+#
+# Steps support `condition` (simple expression); if false, step is skipped.
+#
+# Step results matching `_FINDING_RULES` auto-promote into finding events.
+# Preset-level `stop_on_critical: true` pauses the run on a critical finding
+# until the client sends {"action":"continue"} or {"action":"stop"}.
+
+# ── Finding auto-promotion rules ───────────────────────────────────────────
+
+# Each rule: (predicate, severity, title_template). Predicate runs over the
+# step-result summary dict. title_template is a format string interpolated
+# with summary values.
+_FINDING_RULES: list[tuple[Callable[[dict[str, Any]], bool], str, str]] = [
+    (lambda s: bool(s.get("subdomain_takeover") or s.get("takeover_found")
+                    or (isinstance(s.get("vulnerable_subdomains"), list)
+                        and len(s["vulnerable_subdomains"]) > 0)),
+     "critical", "Subdomain takeover candidate"),
+    (lambda s: bool(s.get("default_creds")
+                    or (isinstance(s.get("default_creds_found"), list)
+                        and len(s["default_creds_found"]) > 0)),
+     "critical", "Default credentials accepted"),
+    (lambda s: bool(s.get("sqli_detected") or s.get("sqli_found")
+                    or (isinstance(s.get("injectable_params"), list)
+                        and len(s["injectable_params"]) > 0)),
+     "critical", "SQL injection detected"),
+    (lambda s: bool(s.get("xss_detected") or s.get("reflected_xss")
+                    or s.get("stored_xss") or s.get("dom_xss")),
+     "high", "Cross-site scripting detected"),
+    (lambda s: bool(s.get("imds_exposed") or s.get("imds_accessible")
+                    or s.get("credentials_exposed")),
+     "critical", "Cloud metadata service exposed"),
+    (lambda s: bool(s.get("public_s3_bucket")
+                    or (isinstance(s.get("public_buckets"), list)
+                        and len(s["public_buckets"]) > 0)),
+     "high", "Public S3 bucket"),
+    (lambda s: bool(s.get("breach_found")
+                    or int(s.get("breached_accounts") or 0) > 0
+                    or int(s.get("breach_count") or 0) > 0),
+     "high", "Domain found in breach corpus"),
+    (lambda s: bool(s.get("tls_expired") or s.get("expired")),
+     "medium", "TLS certificate expired"),
+    (lambda s: bool(s.get("cmdi_found") or s.get("cmdi_detected")),
+     "critical", "Command injection detected"),
+    (lambda s: bool(s.get("lfi_found")
+                    or (isinstance(s.get("files_read"), list)
+                        and len(s["files_read"]) > 0)),
+     "high", "Local file inclusion"),
+    (lambda s: bool(s.get("ssrf_found") or s.get("internal_access")),
+     "high", "Server-side request forgery"),
+    (lambda s: bool(s.get("axfr_succeeded") or s.get("zone_transfer_success")),
+     "high", "DNS zone transfer succeeded"),
+    (lambda s: int(s.get("ms17_010") or 0) > 0 or s.get("eternalblue"),
+     "critical", "MS17-010 (EternalBlue) candidate"),
+    (lambda s: bool(s.get("null_session") or s.get("null_session_allowed")),
+     "medium", "SMB null session allowed"),
+    (lambda s: bool(s.get("admin_panel_exposed")
+                    or (isinstance(s.get("admin_panels"), list)
+                        and len(s["admin_panels"]) > 0)),
+     "medium", "Admin panel exposed"),
+]
+
+
+async def _maybe_promote_findings(
+    summary: dict[str, Any], step_id: str, tool: str, emit: EmitFn,
+) -> list[dict[str, Any]]:
+    """Run the auto-promote rules over `summary`. Returns the list of
+    promoted findings (also emitted as `finding` events).
+    """
+    promoted: list[dict[str, Any]] = []
+    for predicate, severity, title in _FINDING_RULES:
+        try:
+            if predicate(summary):
+                finding = {
+                    "type": "finding", "step": step_id, "tool": tool,
+                    "severity": severity, "title": title,
+                    "detail": _short_evidence(summary),
+                    "auto_promoted": True,
+                }
+                await emit(finding)
+                promoted.append(finding)
+        except Exception:
+            # A bad rule shouldn't kill the run.
+            pass
+    return promoted
+
+
+def _short_evidence(summary: dict[str, Any], limit: int = 240) -> str:
+    """One-line evidence string for an auto-promoted finding."""
+    try:
+        as_json = json.dumps(summary, default=str)
+    except Exception:
+        as_json = str(summary)
+    return as_json[:limit]
+
+
+# ── Phase context + template expansion ────────────────────────────────────
+
+class _PhaseContext:
+    """Phase-scoped output store: {phase_N: {step_id: {output_key: value}}}.
+
+    Steps publish to it via `record(phase_idx, step_id, summary, output_keys)`.
+    Later steps reference values via `{phase_N.step_id.key}` templates that
+    `expand_value` resolves against this store.
+    """
+
+    _REF_RE = re.compile(r"\{phase_(\d+)\.([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)\}")
+
+    def __init__(self) -> None:
+        # outer key is "phase_<N>" string for readable serialization
+        self._data: dict[str, dict[str, dict[str, Any]]] = {}
+
+    def record(
+        self, phase_idx: int, step_id: str,
+        summary: dict[str, Any], output_keys: list[str],
+    ) -> dict[str, Any]:
+        """Extract declared output_keys from summary; if none declared,
+        store the whole summary so condition lookups still work.
+        """
+        key = f"phase_{phase_idx}"
+        bucket = self._data.setdefault(key, {})
+        if output_keys:
+            published = {k: summary.get(k) for k in output_keys}
+        else:
+            published = dict(summary)
+        bucket[step_id] = published
+        return published
+
+    def lookup(self, phase_n: int, step_id: str, key: str) -> Any:
+        return (self._data.get(f"phase_{phase_n}", {})
+                          .get(step_id, {})
+                          .get(key))
+
+    def snapshot(self) -> dict[str, Any]:
+        return json.loads(json.dumps(self._data, default=str))
+
+    def expand_value(self, value: Any) -> Any:
+        """Walk arbitrary JSON-ish structure and expand `{phase_N.step.key}`
+        templates inside strings. Returns a deep-copied/expanded value.
+        """
+        if isinstance(value, str):
+            return self._expand_string(value)
+        if isinstance(value, dict):
+            return {k: self.expand_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self.expand_value(v) for v in value]
+        return value
+
+    def _expand_string(self, s: str) -> Any:
+        # Whole-string reference returns the raw value (preserves lists/dicts).
+        m = self._REF_RE.fullmatch(s.strip())
+        if m:
+            return self.lookup(int(m.group(1)), m.group(2), m.group(3))
+        # Embedded refs interpolated as strings.
+        def repl(match: re.Match[str]) -> str:
+            v = self.lookup(int(match.group(1)), match.group(2), match.group(3))
+            return "" if v is None else str(v)
+        return self._REF_RE.sub(repl, s)
+
+
+# ── Condition evaluator ────────────────────────────────────────────────────
+
+# Simple, safe-by-construction expression evaluator. No eval(), no AST exec.
+# Grammar:
+#   expr      := and_expr ('or' and_expr)*
+#   and_expr  := cmp ('and' cmp)*
+#   cmp       := term (op term)?
+#   op        := '==' | '!=' | '>=' | '<=' | '>' | '<' | 'contains'
+#   term      := literal | ref | list_literal
+#   ref       := phase_N.step_id.key
+#   literal   := true | false | null | number | "quoted string"
+
+_OPS = ["==", "!=", ">=", "<=", ">", "<", "contains"]
+_REF_BARE_RE = re.compile(r"^phase_(\d+)\.([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+)$")
+_NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
+
+
+def _parse_term(t: str, ctx: _PhaseContext) -> Any:
+    t = t.strip()
+    if not t:
+        return None
+    low = t.lower()
+    if low == "true":  return True
+    if low == "false": return False
+    if low in ("null", "none"): return None
+    if _NUM_RE.match(t):
+        return float(t) if "." in t else int(t)
+    if (t.startswith('"') and t.endswith('"')) or (
+        t.startswith("'") and t.endswith("'")):
+        return t[1:-1]
+    m = _REF_BARE_RE.match(t)
+    if m:
+        return ctx.lookup(int(m.group(1)), m.group(2), m.group(3))
+    # Bracketed list literal: [1, 2, "x"]
+    if t.startswith("[") and t.endswith("]"):
+        inner = t[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_term(p, ctx) for p in _split_top_level(inner, ",")]
+    # Fallback: treat as bare string (allows simple identifier compares).
+    return t
+
+
+def _split_top_level(s: str, sep: str) -> list[str]:
+    """Split `s` on `sep` ignoring quoted/bracketed regions."""
+    out: list[str] = []
+    depth = 0
+    quote: str | None = None
+    cur = []
+    for ch in s:
+        if quote:
+            cur.append(ch)
+            if ch == quote: quote = None
+            continue
+        if ch in ('"', "'"):
+            quote = ch; cur.append(ch); continue
+        if ch in "([{": depth += 1; cur.append(ch); continue
+        if ch in ")]}": depth -= 1; cur.append(ch); continue
+        if depth == 0 and s[len(out)*len(sep):].startswith(sep) and ch == sep[0]:
+            # Simple single-char separator path.
+            if sep == ch:
+                out.append("".join(cur)); cur = []; continue
+        cur.append(ch)
+    out.append("".join(cur))
+    return out
+
+
+def _eval_compare(lhs: Any, op: str, rhs: Any) -> bool:
+    try:
+        if op == "==":  return lhs == rhs
+        if op == "!=":  return lhs != rhs
+        if op == ">":   return float(lhs) >  float(rhs)
+        if op == "<":   return float(lhs) <  float(rhs)
+        if op == ">=": return float(lhs) >= float(rhs)
+        if op == "<=": return float(lhs) <= float(rhs)
+        if op == "contains":
+            if isinstance(lhs, str):
+                return str(rhs) in lhs
+            if isinstance(lhs, (list, tuple, set, dict)):
+                return rhs in lhs
+            return False
+    except (TypeError, ValueError):
+        return False
+    return False
+
+
+def _eval_cmp(s: str, ctx: _PhaseContext) -> bool:
+    s = s.strip()
+    # Find the rightmost top-level operator. We scan longest-first so
+    # ">=" doesn't get split as ">" + "=".
+    for op in _OPS:
+        # ' contains ' has spaces; the others may or may not.
+        if op == "contains":
+            idx = _find_keyword(s, " contains ")
+            if idx < 0: continue
+            lhs = s[:idx]; rhs = s[idx + len(" contains "):]
+            return _eval_compare(_parse_term(lhs, ctx), op, _parse_term(rhs, ctx))
+        idx = _find_op(s, op)
+        if idx < 0: continue
+        lhs = s[:idx]; rhs = s[idx + len(op):]
+        return _eval_compare(_parse_term(lhs, ctx), op, _parse_term(rhs, ctx))
+    # No operator: truthy on the lone term.
+    return bool(_parse_term(s, ctx))
+
+
+def _find_op(s: str, op: str) -> int:
+    """Top-level scan for an operator (ignoring quotes and brackets)."""
+    depth = 0; quote: str | None = None
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if quote:
+            if ch == quote: quote = None
+            i += 1; continue
+        if ch in ('"', "'"):
+            quote = ch; i += 1; continue
+        if ch in "([{": depth += 1; i += 1; continue
+        if ch in ")]}": depth -= 1; i += 1; continue
+        if depth == 0 and s[i:i+len(op)] == op:
+            return i
+        i += 1
+    return -1
+
+
+def _find_keyword(s: str, kw: str) -> int:
+    """Like _find_op but for a keyword with spaces."""
+    return _find_op(s, kw)
+
+
+def _eval_condition(expr: str | None, ctx: _PhaseContext) -> bool:
+    """Evaluate a condition expression. None or '' => True (no condition)."""
+    if not expr:
+        return True
+    expr = expr.strip()
+    if not expr:
+        return True
+    # Top-level OR splits first.
+    or_parts = _split_keyword(expr, " or ")
+    for p in or_parts:
+        # AND splits within an OR clause.
+        and_parts = _split_keyword(p, " and ")
+        if all(_eval_cmp(a, ctx) for a in and_parts):
+            return True
+    return False
+
+
+def _split_keyword(s: str, kw: str) -> list[str]:
+    out: list[str] = []
+    rest = s
+    while True:
+        idx = _find_op(rest, kw)
+        if idx < 0:
+            out.append(rest)
+            return out
+        out.append(rest[:idx])
+        rest = rest[idx + len(kw):]
+
+
+# ── Per-phase rate limiter ─────────────────────────────────────────────────
+
+class _RateLimit:
+    """Simple token bucket. `rate` is requests/sec (positive). 0 or None
+    means unlimited.
+    """
+    def __init__(self, rate: float) -> None:
+        self.rate = float(rate or 0)
+        self._last = time.monotonic()
+        self._interval = (1.0 / self.rate) if self.rate > 0 else 0.0
+
+    async def wait(self) -> None:
+        if self._interval <= 0:
+            return
+        now = time.monotonic()
+        elapsed = now - self._last
+        if elapsed < self._interval:
+            await asyncio.sleep(self._interval - elapsed)
+        self._last = time.monotonic()
+
+
+# ── Internal / placeholder tool adapters ──────────────────────────────────
+#
+# Phase-based presets reference tools (js_analysis, ioc_correlate,
+# generate_report, evil_twin_check, cve_lookup, etc.) whose backends
+# don't exist yet. Rather than block preset authoring on those routers,
+# we register them as `_INTERNAL_TOOLS` placeholders that emit a single
+# `step_progress` event noting the planned work and return an empty
+# summary. Schema validation passes; runs surface the gap explicitly.
+
+_PLACEHOLDER_TOOLS = {
+    # report + correlation
+    "generate_report", "ioc_correlate",
+    # web exploit family not yet adapter-wrapped
+    "xss", "sqli", "cmdi", "lfi", "ssrf", "idor", "xxe", "ssti",
+    "http_smuggling", "oauth_check", "cors",
+    # active scan / network
+    "nmap", "nmap_vuln", "nmap_full", "nmap_smb",
+    "lan_scan", "ping_sweep", "local_disco",
+    "smb_enum", "smb_null", "ldap_enum", "ldap_full", "ldap_anon",
+    "fingerprint",
+    # AD attack
+    "kerberoast", "asrep_roast", "bloodhound", "password_spray",
+    "ad_spray", "default_creds", "crack_spns",
+    "acl_abuse", "delegation_abuse", "gpo_analysis",
+    # web extras
+    "graphql", "jwt_check", "security_headers", "cookie_analysis",
+    "waf_detection", "open_redirect",
+    # OSINT
+    "asn", "wayback", "breach", "breach_check", "breach_domain",
+    "email_harvest", "dorks", "dork_generator",
+    "shodan", "shodan_host", "shodan_self",
+    "urlscan", "github_dorks", "github_leak",
+    "people_enum", "profile_finder", "typosquat",
+    # cloud
+    "s3_scan", "ssrf_imds", "imds_v2_check",
+    "aws_iam", "aws_s3", "aws_ec2", "aws_lambda", "aws_rds", "cloudtrail",
+    "sg_analysis", "iam_analysis", "s3_analysis",
+    # container / k8s
+    "processes", "env_check", "docker_socket", "privileged_check",
+    "host_path_abuse", "k8s_api_enum", "secret_dump",
+    # wifi / physical
+    "wifi_integrity", "wifi_scan", "bluetooth_recon", "bt_recon",
+    "evil_twin_check", "wpa_capture",
+    "gateway_analysis", "dns_spoof_check",
+    # network + recon
+    "find_dcs", "dns_internal", "permutation",
+    "subdomain_enum", "takeover", "reverse_ip",
+    "email_sec", "mx_trace", "webmail_discovery",
+    # hash / creds
+    "hash_cracker",
+    # exploit-db / cve
+    "searchsploit", "cve_lookup",
+    # misc
+    "users_audit", "posture", "ids_check", "ids_snapshot", "tcpdump_sample",
+    "port_scanner_external", "http_probe_auth", "http_probe_full",
+    "js_analysis",
+}
+
+
+def _make_placeholder(tool: str) -> Callable[..., Awaitable[dict[str, Any]]]:
+    async def adapter(target: str, options: dict[str, Any],
+                      context: dict[str, Any], emit: EmitFn,
+                      stop_event: asyncio.Event) -> dict[str, Any]:
+        await emit({
+            "type": "step_progress", "step": tool,
+            "msg": f"placeholder: {tool!r} adapter not yet implemented; "
+                   f"step will produce no real data",
+        })
+        return {}
+    return adapter
+
+
+for _t in _PLACEHOLDER_TOOLS:
+    _TOOL_ADAPTERS.setdefault(_t, _make_placeholder(_t))
+
+
+# ── Generic HTTP adapters ──────────────────────────────────────────────────
+#
+# Lets phase-based presets reference any registered FastAPI route without
+# needing a typed adapter. Options:
+#   path:    backend path with {target} placeholder, e.g. "/whois/{target}"
+#   method:  GET (default) or POST
+#   query:   dict of query params
+#   body:    dict for POST body
+#   keys:    keys to pull out of the response into the summary
+#
+# Example step:
+#   {"tool":"http_get",
+#    "options":{"path":"/ct/search/{target}",
+#               "keys":["subdomains","total_records"]}}
+
+async def _adapter_http_get(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    return await _http_call("GET", target, options, emit)
+
+
+async def _adapter_http_post(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    return await _http_call("POST", target, options, emit)
+
+
+async def _http_call(method: str, target: str, options: dict[str, Any],
+                     emit: EmitFn) -> dict[str, Any]:
+    import httpx
+    path = str(options.get("path") or "").replace("{target}", target)
+    if not path:
+        raise PresetError(f"{method.lower()}: missing `path` option")
+    if not path.startswith("/"):
+        path = "/" + path
+    base = os.environ.get("NT_BACKEND_BASE") or "http://127.0.0.1:8765"
+    url = f"{base}{path}"
+    query = options.get("query") or {}
+    body = options.get("body") or {}
+    keys = options.get("keys") or []
+    headers = {"X-MHP-Mode": "lab"}  # engine runs internally; safer default
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            if method == "GET":
+                r = await c.get(url, params=query, headers=headers)
+            else:
+                r = await c.post(url, params=query, json=body, headers=headers)
+    except Exception as exc:
+        raise PresetError(f"{method} {path}: {type(exc).__name__}: {exc}") from exc
+    try:
+        data = r.json() if r.content else {}
+    except Exception:
+        data = {"raw": r.text[:4000]}
+    summary = {k: data.get(k) for k in keys} if keys else dict(data)
+    summary["_status"] = r.status_code
+    return summary
+
+
+_TOOL_ADAPTERS.setdefault("http_get",  _adapter_http_get)
+_TOOL_ADAPTERS.setdefault("http_post", _adapter_http_post)
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
@@ -614,6 +1169,7 @@ async def run_preset(
     *,
     mode: str = "lab",
     approve_step: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None,
+    wait_action: Callable[[], Awaitable[str]] | None = None,
 ) -> None:
     """Execute a preset, streaming events via `emit`.
 
@@ -628,9 +1184,12 @@ async def run_preset(
 
     `approve_step` is an optional async callback invoked once per step
     with `approval: true`. It receives `(step_id, step_dict)` and must
-    return True/False. The default of `None` auto-approves — the WS
-    runner in `routers/presets.py` wires this to a UI confirmation prompt
-    when the user wants per-step gating.
+    return True/False. The default of `None` auto-approves.
+
+    `wait_action` is an optional async callback used by v2 (phase) presets
+    when `stop_on_critical: true` and a critical finding fires mid-run.
+    It should return one of "continue" or "stop". Default of `None`
+    auto-continues (no pause).
     """
     preset = get_preset(preset_id)
     if not preset:
@@ -653,6 +1212,13 @@ async def run_preset(
                 f"(currently {mode})"
             ),
         })
+        return
+
+    # v2 presets (top-level `phases`) get the multi-phase orchestrator.
+    if preset.get("phases"):
+        await _run_phases(preset, target, emit, stop_event,
+                          mode=mode, approve_step=approve_step,
+                          wait_action=wait_action)
         return
 
     steps = preset["steps"]
@@ -741,4 +1307,209 @@ async def run_preset(
         "elapsed": round(time.monotonic() - t0, 2),
         "findings_total": findings_total,
         "stopped": stopped,
+    })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v2 phase orchestrator
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _run_phases(
+    preset: dict[str, Any],
+    target: str,
+    emit: EmitFn,
+    stop_event: asyncio.Event,
+    *,
+    mode: str,
+    approve_step: Callable[[str, dict[str, Any]], Awaitable[bool]] | None,
+    wait_action: Callable[[], Awaitable[str]] | None,
+) -> None:
+    """Phase-based runner. Streams the same shape of events as the legacy
+    runner plus phase_start / phase_complete / phase_skipped / step_skipped
+    / critical_finding."""
+    phases = preset["phases"]
+    stop_on_critical = bool(preset.get("stop_on_critical", False))
+    t0 = time.monotonic()
+    findings_total = 0
+    ctx = _PhaseContext()
+
+    async def counted_emit(ev: dict[str, Any]) -> None:
+        nonlocal findings_total
+        if ev.get("type") == "finding":
+            findings_total += 1
+        await emit(ev)
+
+    total_steps = sum(len(ph.get("steps") or []) for ph in phases)
+    await counted_emit({
+        "type": "preset_start",
+        "preset": preset["id"], "target": target,
+        "category": preset.get("category", "custom"),
+        "risk_level": preset.get("risk_level", "low"),
+        "mode_required": preset.get("mode_required", "either"),
+        "schema": "v2",
+        "phase_count": len(phases),
+        "step_count": total_steps,
+        "estimated_duration": preset.get("estimated_duration", ""),
+        "stop_on_critical": stop_on_critical,
+    })
+
+    stopped = False
+    for phase in phases:
+        if stop_event.is_set():
+            stopped = True
+            break
+
+        phase_idx = phase["id"]
+        phase_name = phase.get("name", f"Phase {phase_idx}")
+        steps = phase.get("steps") or []
+        rate = float(phase.get("rate_limit") or 0)
+        phase_cond = phase.get("condition")
+
+        # Phase-level condition: skip the whole phase if false.
+        if not _eval_condition(phase_cond, ctx):
+            await counted_emit({
+                "type": "phase_skipped", "phase": phase_idx, "name": phase_name,
+                "reason": f"phase condition false: {phase_cond!r}",
+            })
+            continue
+
+        await counted_emit({
+            "type": "phase_start",
+            "phase": phase_idx, "name": phase_name,
+            "description": phase.get("description", ""),
+            "rate_limit": rate, "step_count": len(steps),
+        })
+
+        limiter = _RateLimit(rate)
+        phase_findings = 0
+        phase_start_t = time.monotonic()
+
+        for i, step in enumerate(steps):
+            if stop_event.is_set():
+                stopped = True
+                break
+
+            sid  = step["id"]
+            tool = step["tool"]
+            opts_raw = step.get("options", {}) or {}
+            condition = step.get("condition")
+            output_keys = list(step.get("output_keys") or [])
+            on_finding = step.get("on_finding")  # continue | pause | stop
+            needs_approval = bool(step.get("approval", False))
+            display_name = step.get("display_name") or sid
+
+            # Conditional skip
+            if not _eval_condition(condition, ctx):
+                await counted_emit({
+                    "type": "step_skipped",
+                    "phase": phase_idx, "step": sid, "tool": tool,
+                    "reason": f"condition not met: {condition!r}",
+                })
+                continue
+
+            await counted_emit({
+                "type": "step_start",
+                "phase": phase_idx, "step": sid, "tool": tool, "index": i,
+                "display_name": display_name,
+                "rationale": step.get("rationale", ""),
+                "success":   step.get("success", ""),
+                "approval":  needs_approval,
+            })
+
+            if needs_approval and approve_step is not None:
+                try:
+                    ok = await approve_step(sid, step)
+                except Exception:
+                    ok = False
+                if not ok:
+                    await counted_emit({
+                        "type": "step_done",
+                        "phase": phase_idx, "step": sid,
+                        "status": "skipped", "elapsed": 0.0,
+                        "detail": "approval declined",
+                    })
+                    continue
+
+            await limiter.wait()
+            opts = ctx.expand_value(opts_raw) or {}
+            adapter = _TOOL_ADAPTERS.get(tool)
+            s_start = time.monotonic()
+            try:
+                if adapter is None:
+                    raise PresetError(f"no adapter for tool {tool!r}")
+                summary = await adapter(target, opts, ctx.snapshot(),
+                                        counted_emit, stop_event)
+                if not isinstance(summary, dict):
+                    summary = {"result": summary}
+                ctx.record(phase_idx, sid, summary, output_keys)
+                await counted_emit({
+                    "type": "step_result",
+                    "phase": phase_idx, "step": sid, "summary": summary,
+                })
+
+                promoted = await _maybe_promote_findings(
+                    summary, sid, tool, counted_emit,
+                )
+                phase_findings += len(promoted)
+
+                await counted_emit({
+                    "type": "step_done",
+                    "phase": phase_idx, "step": sid, "status": "ok",
+                    "elapsed": round(time.monotonic() - s_start, 2),
+                })
+
+                critical = any(f.get("severity") == "critical" for f in promoted)
+                # Pause hooks: per-preset stop_on_critical or per-step on_finding.
+                if critical and (stop_on_critical or on_finding == "pause"):
+                    await counted_emit({
+                        "type": "critical_finding",
+                        "phase": phase_idx, "step": sid,
+                        "finding": promoted[0], "paused": True,
+                    })
+                    decision = "continue"
+                    if wait_action is not None:
+                        try:
+                            decision = (await wait_action()) or "continue"
+                        except Exception:
+                            decision = "stop"
+                    if decision == "stop":
+                        stopped = True
+                        break
+                elif on_finding == "stop" and promoted:
+                    stopped = True
+                    break
+
+            except asyncio.CancelledError:
+                stopped = True
+                await counted_emit({
+                    "type": "step_done",
+                    "phase": phase_idx, "step": sid, "status": "stopped",
+                    "elapsed": round(time.monotonic() - s_start, 2),
+                })
+                break
+            except Exception as e:
+                await counted_emit({
+                    "type": "step_done",
+                    "phase": phase_idx, "step": sid, "status": "error",
+                    "elapsed": round(time.monotonic() - s_start, 2),
+                    "detail": f"{type(e).__name__}: {e}"[:300],
+                })
+                continue
+
+        await counted_emit({
+            "type": "phase_complete",
+            "phase": phase_idx, "name": phase_name,
+            "findings": phase_findings,
+            "duration_seconds": round(time.monotonic() - phase_start_t, 2),
+        })
+
+        if stopped:
+            break
+
+    await counted_emit({
+        "type": "done",
+        "elapsed": round(time.monotonic() - t0, 2),
+        "findings_total": findings_total,
+        "stopped": stopped,
+        "schema": "v2",
     })
