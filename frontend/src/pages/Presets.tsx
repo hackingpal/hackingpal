@@ -1,66 +1,117 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, authFetch, openWs } from "../api";
 
+// ── Types ────────────────────────────────────────────────────────────────────
+
 type PresetSummary = {
   id: string; name: string; description: string;
   target_type: string; author: string;
-  step_count: number; builtin: boolean;
+  category: string;
+  mode_required: string;
+  risk_level: "passive" | "low" | "medium" | "high" | "critical";
+  estimated_duration: string;
+  requires_auth: boolean;
+  stop_on_critical: boolean;
+  report_template: string;
+  step_count: number;
+  phase_count: number;
+  schema: "v1" | "v2";
+  builtin: boolean;
 };
 
-type PresetStep = {
+type V1Step = {
   id: string; tool: string;
+  display_name?: string;
   options?: Record<string, unknown>;
-  feed_output_to?: string[];
-  condition?: unknown;
+  rationale?: string; success?: string; approval?: boolean;
+};
+
+type V2Step = V1Step & {
+  output_keys?: string[];
+  feed_to?: string[];
+  condition?: string | null;
+  on_finding?: "continue" | "pause" | "stop" | null;
+};
+
+type V2Phase = {
+  id: number; name: string; description?: string;
+  rate_limit?: number;
+  condition?: string | null;
+  steps: V2Step[];
 };
 
 type PresetFull = PresetSummary & {
-  steps: PresetStep[];
+  steps?: V1Step[];
+  phases?: V2Phase[];
 };
 
 type Severity = "critical" | "high" | "medium" | "low" | "info";
 const ALL_SEV: Severity[] = ["critical", "high", "medium", "low", "info"];
 
 type Finding = {
-  step: string; severity: Severity;
+  step: string; tool: string; severity: Severity;
   title: string; detail: string;
+  ts: number;
+  auto_promoted?: boolean;
 };
 
-type StepStatus = "pending" | "running" | "ok" | "error" | "stopped";
+type StepStatus = "pending" | "running" | "ok" | "error" | "stopped" | "skipped";
 
 type StepState = {
-  id: string; tool: string;
+  id: string; tool: string; phase?: number;
   status: StepStatus;
   elapsed?: number;
-  detail?: string;     // populated on error
-  progress?: string;   // latest step_progress msg
+  detail?: string;
+  progress?: string;
   summary?: Record<string, unknown>;
+  display_name?: string;
 };
 
-const SEV_STYLES: Record<Severity, { dot: string; text: string; bg: string }> = {
-  critical: { dot: "bg-red-500",    text: "text-red-500",    bg: "bg-red-500/15 border-red-500/40" },
-  high:     { dot: "bg-orange-500", text: "text-orange-500", bg: "bg-orange-500/15 border-orange-500/40" },
-  medium:   { dot: "bg-yellow-500", text: "text-yellow-500", bg: "bg-yellow-500/15 border-yellow-500/40" },
-  low:      { dot: "bg-blue-400",   text: "text-blue-400",   bg: "bg-blue-400/15 border-blue-400/30" },
-  info:     { dot: "bg-gray-400",   text: "text-gray-400",   bg: "bg-gray-400/10 border-divider" },
+type PhaseStatus = "pending" | "running" | "done" | "skipped";
+
+type PhaseState = {
+  id: number; name: string; status: PhaseStatus;
+  findings: number;
+  duration_seconds?: number;
+  step_count: number;
+};
+
+// ── Style maps ───────────────────────────────────────────────────────────────
+
+const SEV_STYLES: Record<Severity, { dot: string; text: string; bg: string; border: string }> = {
+  critical: { dot: "bg-red-500",    text: "text-red-500",    bg: "bg-red-500/15",    border: "border-red-500/40" },
+  high:     { dot: "bg-orange-500", text: "text-orange-500", bg: "bg-orange-500/15", border: "border-orange-500/40" },
+  medium:   { dot: "bg-yellow-500", text: "text-yellow-500", bg: "bg-yellow-500/15", border: "border-yellow-500/40" },
+  low:      { dot: "bg-blue-400",   text: "text-blue-400",   bg: "bg-blue-400/15",   border: "border-blue-400/30" },
+  info:     { dot: "bg-gray-400",   text: "text-gray-400",   bg: "bg-gray-400/10",   border: "border-divider" },
+};
+
+const RISK_STYLES: Record<PresetSummary["risk_level"], { text: string; border: string; label: string }> = {
+  passive:  { text: "text-gray-400",   border: "border-gray-400/40",   label: "PASSIVE" },
+  low:      { text: "text-green-400",  border: "border-green-400/40",  label: "LOW" },
+  medium:   { text: "text-yellow-400", border: "border-yellow-400/40", label: "MEDIUM" },
+  high:     { text: "text-orange-400", border: "border-orange-400/40", label: "HIGH" },
+  critical: { text: "text-red-500",    border: "border-red-500/40",    label: "CRITICAL" },
 };
 
 const STATUS_ICON: Record<StepStatus, string> = {
-  pending: "○",
-  running: "◐",
-  ok:      "●",
-  error:   "✕",
-  stopped: "■",
+  pending: "○", running: "◐", ok: "●",
+  error: "✕", stopped: "■", skipped: "⤳",
 };
 
 const STATUS_COLOR: Record<StepStatus, string> = {
-  pending: "text-ink-dim",
-  running: "text-amber",
-  ok:      "text-phos",
-  error:   "text-danger",
-  stopped: "text-ink-muted",
+  pending: "text-ink-dim", running: "text-amber", ok: "text-phos",
+  error: "text-danger", stopped: "text-ink-muted", skipped: "text-ink-muted",
 };
 
+const PHASE_STATUS_DOT: Record<PhaseStatus, string> = {
+  pending: "bg-ink-dim",
+  running: "bg-amber animate-pulse",
+  done:    "bg-phos",
+  skipped: "bg-ink-muted",
+};
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function Presets() {
   const [library, setLibrary] = useState<PresetSummary[]>([]);
@@ -69,14 +120,20 @@ export default function Presets() {
   const [authorized, setAuthorized] = useState(false);
   const [running, setRunning] = useState(false);
   const [stepStates, setStepStates] = useState<StepState[]>([]);
+  const [phaseStates, setPhaseStates] = useState<PhaseState[]>([]);
+  const [activePhase, setActivePhase] = useState<number | null>(null);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [doneSummary, setDoneSummary] = useState("");
   const [wsError, setWsError] = useState("");
+  const [pausedFinding, setPausedFinding] = useState<Finding | null>(null);
+  const [sortBySev, setSortBySev] = useState(true);
   const wsRef = useRef<WebSocket | null>(null);
 
   const [showBuilder, setShowBuilder] = useState(false);
   const [builderJson, setBuilderJson] = useState<string>("");
   const [builderError, setBuilderError] = useState("");
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async function refreshLibrary() {
     try {
@@ -89,7 +146,7 @@ export default function Presets() {
 
   useEffect(() => { void refreshLibrary(); }, []);
 
-  // Close any in-flight preset run if the user navigates away.
+  // Close any in-flight run on unmount.
   useEffect(() => () => {
     try { wsRef.current?.close(); } catch { /* ignore */ }
     wsRef.current = null;
@@ -99,16 +156,41 @@ export default function Presets() {
     try {
       const full = await api<PresetFull>(`/presets/${encodeURIComponent(p.id)}`);
       setSelected(full);
-      setStepStates(full.steps.map((s) => ({
-        id: s.id, tool: s.tool, status: "pending",
-      })));
+      initRunState(full);
       setFindings([]);
       setDoneSummary("");
       setWsError("");
+      setPausedFinding(null);
     } catch (e) {
       setWsError(e instanceof Error ? e.message : String(e));
     }
   }
+
+  function initRunState(full: PresetFull) {
+    if (full.phases?.length) {
+      const phases = full.phases.map((ph): PhaseState => ({
+        id: ph.id, name: ph.name, status: "pending",
+        findings: 0, step_count: ph.steps.length,
+      }));
+      setPhaseStates(phases);
+      setActivePhase(phases[0]?.id ?? null);
+      const steps = full.phases.flatMap((ph) => ph.steps.map((s): StepState => ({
+        id: s.id, tool: s.tool, phase: ph.id, status: "pending",
+        display_name: s.display_name,
+      })));
+      setStepStates(steps);
+    } else {
+      setPhaseStates([]);
+      setActivePhase(null);
+      const steps = (full.steps ?? []).map((s): StepState => ({
+        id: s.id, tool: s.tool, status: "pending",
+        display_name: s.display_name,
+      }));
+      setStepStates(steps);
+    }
+  }
+
+  // ── WS ────────────────────────────────────────────────────────────────────
 
   function start() {
     if (!selected || !target.trim() || !authorized || running) return;
@@ -116,9 +198,8 @@ export default function Presets() {
     setRunning(true);
     setDoneSummary("");
     setFindings([]);
-    setStepStates(selected.steps.map((s) => ({
-      id: s.id, tool: s.tool, status: "pending",
-    })));
+    setPausedFinding(null);
+    initRunState(selected);
 
     const ws = openWs("/ws/preset-run");
     wsRef.current = ws;
@@ -132,25 +213,43 @@ export default function Presets() {
       try { ev = JSON.parse(msgEv.data); } catch { return; }
       handleEvent(ev);
     };
-    ws.onerror = () => {
-      setWsError("WebSocket error");
-    };
+    ws.onerror = () => setWsError("WebSocket error");
     ws.onclose = () => {
       setRunning(false);
       wsRef.current = null;
     };
   }
 
-  function stop() {
+  function sendAction(action: "stop" | "continue") {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    try { ws.send(JSON.stringify({ action: "stop" })); } catch { /* ignore */ }
+    try { ws.send(JSON.stringify({ action })); } catch { /* ignore */ }
+    if (action === "continue") setPausedFinding(null);
   }
+
+  // ── Event router ──────────────────────────────────────────────────────────
 
   function handleEvent(ev: any) {
     const t = ev.type;
     if (t === "preset_start") {
-      // no-op; UI already initialized in start()
+      // initialized in start()
+    } else if (t === "phase_start") {
+      const pid: number = ev.phase;
+      setActivePhase(pid);
+      setPhaseStates((ps) => ps.map((p) =>
+        p.id === pid ? { ...p, status: "running" } : p));
+    } else if (t === "phase_complete") {
+      const pid: number = ev.phase;
+      setPhaseStates((ps) => ps.map((p) =>
+        p.id === pid ? {
+          ...p, status: "done",
+          findings: ev.findings ?? p.findings,
+          duration_seconds: ev.duration_seconds,
+        } : p));
+    } else if (t === "phase_skipped") {
+      const pid: number = ev.phase;
+      setPhaseStates((ps) => ps.map((p) =>
+        p.id === pid ? { ...p, status: "skipped" } : p));
     } else if (t === "step_start") {
       setStepStates((s) => s.map((x) =>
         x.id === ev.step ? { ...x, status: "running" } : x));
@@ -160,6 +259,9 @@ export default function Presets() {
     } else if (t === "step_result") {
       setStepStates((s) => s.map((x) =>
         x.id === ev.step ? { ...x, summary: ev.summary } : x));
+    } else if (t === "step_skipped") {
+      setStepStates((s) => s.map((x) =>
+        x.id === ev.step ? { ...x, status: "skipped", detail: ev.reason } : x));
     } else if (t === "step_done") {
       setStepStates((s) => s.map((x) =>
         x.id === ev.step ? {
@@ -169,10 +271,23 @@ export default function Presets() {
     } else if (t === "finding") {
       const sev: Severity = (ALL_SEV as string[]).includes(ev.severity)
         ? ev.severity as Severity : "info";
-      setFindings((f) => [...f, {
-        step: ev.step || "", severity: sev,
-        title: ev.title || "", detail: ev.detail || "",
-      }]);
+      const f: Finding = {
+        step: ev.step || "", tool: ev.tool || "",
+        severity: sev, title: ev.title || "",
+        detail: ev.detail || "", ts: Date.now(),
+        auto_promoted: ev.auto_promoted,
+      };
+      setFindings((cur) => [...cur, f]);
+    } else if (t === "critical_finding") {
+      const sev: Severity = "critical";
+      const inner = ev.finding || {};
+      const f: Finding = {
+        step: inner.step || ev.step || "", tool: inner.tool || "",
+        severity: sev, title: inner.title || "Critical finding",
+        detail: inner.detail || "", ts: Date.now(),
+        auto_promoted: true,
+      };
+      setPausedFinding(f);
     } else if (t === "done") {
       setDoneSummary(
         `Completed in ${ev.elapsed}s · ${ev.findings_total} findings`
@@ -183,7 +298,8 @@ export default function Presets() {
     }
   }
 
-  // ── Derived counts ────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
+
   const sevCounts = useMemo(() => {
     const c: Record<Severity, number> = {
       critical: 0, high: 0, medium: 0, low: 0, info: 0,
@@ -194,8 +310,25 @@ export default function Presets() {
 
   const totalSteps = stepStates.length || 1;
   const doneSteps = stepStates.filter((s) =>
-    s.status === "ok" || s.status === "error" || s.status === "stopped").length;
+    s.status === "ok" || s.status === "error"
+    || s.status === "stopped" || s.status === "skipped").length;
   const progressPct = Math.round((doneSteps / totalSteps) * 100);
+
+  const sortedFindings = useMemo(() => {
+    if (!sortBySev) return [...findings].sort((a, b) => b.ts - a.ts);
+    const rank = (s: Severity) => ALL_SEV.indexOf(s);
+    return [...findings].sort((a, b) => {
+      const r = rank(a.severity) - rank(b.severity);
+      return r !== 0 ? r : b.ts - a.ts;
+    });
+  }, [findings, sortBySev]);
+
+  const stepsForActivePhase = useMemo(() => {
+    if (activePhase == null) return stepStates;
+    return stepStates.filter((s) => s.phase === activePhase);
+  }, [stepStates, activePhase]);
+
+  // ── Persistence (custom presets) ──────────────────────────────────────────
 
   async function saveCustom() {
     setBuilderError("");
@@ -238,21 +371,24 @@ export default function Presets() {
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  const isV2 = !!selected?.phases?.length;
+
   return (
     <div className="h-full flex flex-col">
       <header className="px-4 pt-4 pb-2">
         <h2 className="text-[15px] font-bold text-ink-primary tracking-wide">PLAYBOOKS</h2>
         <p className="text-[11px] text-ink-dim">
-          Composed assessments — each step calls a tool in-process, streams
-          findings into one panel. Built-ins are read-only; save your own
-          via <span className="text-amber">Build Custom Preset</span>.
+          Multi-phase assessments with feed-forward, conditions, and auto-promoted
+          findings. Built-ins are read-only; save your own via{" "}
+          <span className="text-amber">Build Custom Preset</span>.
         </p>
       </header>
 
       <div className="flex-1 min-h-0 grid grid-cols-12 gap-3 px-4 pb-3 overflow-hidden">
 
         {/* ── LEFT: library ──────────────────────────────────────────── */}
-        <div className="col-span-4 flex flex-col min-h-0">
+        <div className="col-span-3 flex flex-col min-h-0">
           <div className="text-[11px] text-ink-muted tracking-wider mb-1">LIBRARY</div>
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
             {library.length === 0 && (
@@ -260,6 +396,7 @@ export default function Presets() {
             )}
             {library.map((p) => {
               const isSel = selected?.id === p.id;
+              const rs = RISK_STYLES[p.risk_level] ?? RISK_STYLES.low;
               return (
                 <div key={p.id}
                      onClick={() => void select(p)}
@@ -268,22 +405,32 @@ export default function Presets() {
                          ? "bg-bg-card border-accent"
                          : "bg-bg-card border-divider hover:border-ink-muted")}>
                   <div className="flex items-center gap-2">
-                    <span className="text-[12px] font-bold text-ink-primary">{p.name}</span>
-                    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5
-                                     rounded border border-divider text-ink-muted">
-                      {p.target_type}
-                    </span>
+                    <span className="text-[12px] font-bold text-ink-primary truncate">{p.name}</span>
                     {p.builtin
-                      ? <span className="ml-auto text-[9px] text-phos">BUILT-IN</span>
+                      ? <span className="ml-auto text-[9px] text-phos shrink-0">BUILT-IN</span>
                       : (
                         <button onClick={(e) => { e.stopPropagation(); void deletePreset(p); }}
                                 className="ml-auto text-[10px] text-ink-dim hover:text-danger"
                                 title="Delete user preset">✕</button>
                       )}
                   </div>
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    <span className={"text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border " + rs.border + " " + rs.text}>
+                      {rs.label}
+                    </span>
+                    <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-divider text-ink-muted">
+                      {p.target_type}
+                    </span>
+                    {p.schema === "v2" && (
+                      <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-accent/40 text-accent">
+                        {p.phase_count}Φ
+                      </span>
+                    )}
+                  </div>
                   <div className="text-[11px] text-ink-muted mt-1 line-clamp-2">{p.description}</div>
                   <div className="text-[10px] text-ink-dim mt-1">
-                    {p.step_count} step{p.step_count === 1 ? "" : "s"} · {p.author}
+                    {p.step_count} step{p.step_count === 1 ? "" : "s"}
+                    {p.estimated_duration && <> · ~{p.estimated_duration}</>}
                   </div>
                 </div>
               );
@@ -296,8 +443,8 @@ export default function Presets() {
           </button>
         </div>
 
-        {/* ── RIGHT: runner ──────────────────────────────────────────── */}
-        <div className="col-span-8 flex flex-col min-h-0">
+        {/* ── MIDDLE: runner ─────────────────────────────────────────── */}
+        <div className="col-span-6 flex flex-col min-h-0">
           {!selected ? (
             <div className="flex-1 flex items-center justify-center text-[12px] text-ink-dim italic
                             border border-divider rounded">
@@ -305,163 +452,248 @@ export default function Presets() {
             </div>
           ) : (
             <>
-              {/* Header: name + counts */}
+              {/* Header */}
               <div className="bg-bg-card border border-divider rounded p-3 mb-2">
-                <div className="flex items-center gap-3 mb-2">
+                <div className="flex items-center gap-2 mb-2 flex-wrap">
                   <span className="text-[13px] font-bold text-ink-primary">{selected.name}</span>
-                  <span className="text-[10px] text-ink-dim">{selected.description}</span>
-                  <span className="ml-auto flex gap-2 text-[11px]">
-                    {ALL_SEV.map((sev) => sevCounts[sev] > 0 && (
-                      <span key={sev} className={"flex items-center gap-1 " + SEV_STYLES[sev].text}>
-                        <span className={"inline-block w-2 h-2 rounded-full " + SEV_STYLES[sev].dot} />
-                        {sevCounts[sev]}
+                  {(() => {
+                    const rs = RISK_STYLES[selected.risk_level] ?? RISK_STYLES.low;
+                    return (
+                      <span className={"text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded border " + rs.border + " " + rs.text}>
+                        {rs.label}
                       </span>
-                    ))}
-                  </span>
+                    );
+                  })()}
+                  {selected.estimated_duration && (
+                    <span className="text-[10px] text-ink-dim">~{selected.estimated_duration}</span>
+                  )}
                 </div>
-                {/* Target + auth + start/stop */}
+                <div className="text-[11px] text-ink-muted mb-2">{selected.description}</div>
                 <div className="flex items-center gap-2">
                   <input value={target} onChange={(e) => setTarget(e.target.value)}
                          disabled={running}
                          placeholder={selected.target_type === "url"
                            ? "https://target.example.com"
-                           : "target.example.com / 1.2.3.4 / 10.0.0.0/24"}
+                           : selected.target_type === "ip" ? "10.0.0.1"
+                           : selected.target_type === "cidr" ? "10.0.0.0/24"
+                           : "target.example.com"}
                          className="flex-1 bg-bg-base border border-divider rounded px-2 py-1.5
                                     text-[12px] font-mono focus:outline-none focus:border-accent" />
                   <label className="flex items-center gap-1 text-[11px] text-ink-muted cursor-pointer">
                     <input type="checkbox" checked={authorized}
                            onChange={(e) => setAuthorized(e.target.checked)}
                            disabled={running} />
-                    I have authorization to test this target
+                    Authorized
                   </label>
                   {!running ? (
                     <button onClick={start}
                             disabled={!target.trim() || !authorized}
-                            className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
-                                       disabled:opacity-40 disabled:cursor-not-allowed">
-                      Start
+                            className="px-3 py-1.5 rounded border border-accent text-[12px]
+                                       text-accent hover:bg-accent hover:text-bg-base disabled:opacity-40">
+                      Run
                     </button>
                   ) : (
-                    <button onClick={stop}
-                            className="px-3 py-1.5 rounded bg-bg-base border border-danger
-                                       text-danger text-[12px]">
+                    <button onClick={() => sendAction("stop")}
+                            className="px-3 py-1.5 rounded border border-danger text-[12px]
+                                       text-danger hover:bg-danger hover:text-bg-base">
                       Stop
                     </button>
                   )}
                 </div>
-                {/* Progress bar */}
-                {stepStates.length > 0 && (
+                {(running || doneSummary) && (
                   <div className="mt-2">
-                    <div className="h-1 bg-bg-base border border-divider rounded overflow-hidden">
+                    <div className="h-1 bg-bg-base rounded overflow-hidden">
                       <div className="h-full bg-accent transition-all"
                            style={{ width: `${progressPct}%` }} />
                     </div>
-                    <div className="flex items-center gap-3 text-[10px] text-ink-dim mt-1">
-                      <span>{doneSteps}/{totalSteps} steps</span>
-                      {doneSummary && <span className="text-phos">{doneSummary}</span>}
-                      {wsError && <span className="text-danger">⚠ {wsError}</span>}
+                    <div className="text-[10px] text-ink-dim mt-1">
+                      {doneSummary || `${doneSteps}/${totalSteps} steps`}
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Steps + findings split */}
-              <div className="flex-1 min-h-0 grid grid-cols-12 gap-2">
-                {/* Steps */}
-                <div className="col-span-5 bg-bg-card border border-divider rounded p-2
-                                overflow-y-auto">
-                  <div className="text-[10px] text-ink-muted tracking-wider mb-1">STEPS</div>
-                  {stepStates.map((s) => (
-                    <div key={s.id} className="py-1.5 border-b border-divider last:border-b-0">
-                      <div className="flex items-center gap-2 text-[12px]">
-                        <span className={"w-4 text-center " + STATUS_COLOR[s.status]}>
-                          {STATUS_ICON[s.status]}
-                        </span>
-                        <span className="font-mono text-ink-primary">{s.id}</span>
-                        <span className="text-[10px] text-ink-dim">{s.tool}</span>
-                        {s.elapsed !== undefined && (
-                          <span className="ml-auto text-[10px] text-ink-dim tabular-nums">
-                            {s.elapsed}s
+              {/* Critical-finding pause banner */}
+              {pausedFinding && (
+                <div className={"border rounded p-3 mb-2 " + SEV_STYLES.critical.bg + " " + SEV_STYLES.critical.border}>
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className={"inline-block w-2 h-2 rounded-full " + SEV_STYLES.critical.dot} />
+                    <span className={"text-[11px] font-bold uppercase tracking-wider " + SEV_STYLES.critical.text}>
+                      Critical finding — paused
+                    </span>
+                  </div>
+                  <div className="text-[12px] text-ink-primary mb-1">{pausedFinding.title}</div>
+                  <div className="text-[10px] text-ink-muted mb-2 font-mono break-all">{pausedFinding.detail}</div>
+                  <div className="flex gap-2">
+                    <button onClick={() => sendAction("continue")}
+                            className="px-3 py-1 rounded border border-phos text-[11px] text-phos hover:bg-phos hover:text-bg-base">
+                      Continue
+                    </button>
+                    <button onClick={() => sendAction("stop")}
+                            className="px-3 py-1 rounded border border-danger text-[11px] text-danger hover:bg-danger hover:text-bg-base">
+                      Stop
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Phase tabs (v2 only) */}
+              {isV2 && phaseStates.length > 0 && (
+                <div className="flex items-center gap-1 mb-2 border-b border-divider overflow-x-auto pb-1">
+                  {phaseStates.map((ph) => {
+                    const isActive = activePhase === ph.id;
+                    return (
+                      <button key={ph.id}
+                              onClick={() => setActivePhase(ph.id)}
+                              className={"flex items-center gap-1.5 px-2 py-1 rounded-t text-[11px] " +
+                                "border-b-2 transition shrink-0 " +
+                                (isActive
+                                  ? "border-accent text-ink-primary"
+                                  : "border-transparent text-ink-muted hover:text-ink-primary")}>
+                        <span className={"inline-block w-1.5 h-1.5 rounded-full " + PHASE_STATUS_DOT[ph.status]} />
+                        <span className="font-bold">P{ph.id}</span>
+                        <span className="truncate max-w-[120px]">{ph.name}</span>
+                        {ph.findings > 0 && (
+                          <span className="text-[9px] px-1 rounded bg-accent/20 text-accent">
+                            {ph.findings}
                           </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Steps list */}
+              <div className="flex-1 min-h-0 overflow-y-auto bg-bg-card border border-divider rounded p-2">
+                {stepsForActivePhase.length === 0 && (
+                  <div className="text-[11px] text-ink-dim italic text-center py-4">
+                    {isV2 ? "No steps in this phase." : "No steps."}
+                  </div>
+                )}
+                {stepsForActivePhase.map((s) => (
+                  <div key={s.id} className="flex items-start gap-2 py-1.5 border-b border-divider/50 last:border-b-0">
+                    <span className={"font-mono text-[14px] leading-none mt-0.5 " + STATUS_COLOR[s.status]}>
+                      {STATUS_ICON[s.status]}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[12px] font-bold text-ink-primary">
+                          {s.display_name || s.id}
+                        </span>
+                        <span className="text-[10px] font-mono text-ink-dim">{s.tool}</span>
+                        {s.elapsed != null && (
+                          <span className="ml-auto text-[10px] text-ink-dim font-mono">{s.elapsed}s</span>
                         )}
                       </div>
                       {s.progress && s.status === "running" && (
-                        <div className="text-[10px] text-ink-muted ml-6">{s.progress}</div>
+                        <div className="text-[10px] text-amber mt-0.5">{s.progress}</div>
                       )}
                       {s.detail && (
-                        <div className="text-[10px] text-danger ml-6">⚠ {s.detail}</div>
+                        <div className="text-[10px] text-danger mt-0.5 font-mono break-words">{s.detail}</div>
                       )}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ))}
 
-                {/* Findings */}
-                <div className="col-span-7 bg-bg-card border border-divider rounded p-2
-                                overflow-y-auto">
-                  <div className="text-[10px] text-ink-muted tracking-wider mb-1">
-                    FINDINGS ({findings.length})
-                  </div>
-                  {findings.length === 0 && (
-                    <div className="text-[11px] text-ink-dim italic">
-                      No findings yet — start a run.
+                {/* Phase summary row */}
+                {isV2 && activePhase != null && (() => {
+                  const ph = phaseStates.find((p) => p.id === activePhase);
+                  if (!ph || (ph.status !== "done" && ph.status !== "skipped")) return null;
+                  return (
+                    <div className="mt-2 pt-2 border-t border-divider text-[10px] text-ink-muted italic">
+                      Phase {ph.id} {ph.status === "skipped" ? "skipped" : `complete`}
+                      {ph.status === "done" && <> — {ph.findings} finding{ph.findings === 1 ? "" : "s"}, {ph.duration_seconds}s</>}
                     </div>
-                  )}
-                  <div className="space-y-1.5">
-                    {findings.map((f, i) => (
-                      <div key={i} className={"rounded border p-1.5 " + SEV_STYLES[f.severity].bg}>
-                        <div className="flex items-center gap-2 text-[11px]">
-                          <span className={"inline-block w-1.5 h-1.5 rounded-full " + SEV_STYLES[f.severity].dot} />
-                          <span className={"font-bold uppercase tracking-wider text-[10px] " + SEV_STYLES[f.severity].text}>
-                            {f.severity}
-                          </span>
-                          <span className="text-ink-primary font-bold">{f.title}</span>
-                          <span className="ml-auto text-[9px] text-ink-dim font-mono">{f.step}</span>
-                        </div>
-                        {f.detail && (
-                          <div className="text-[11px] text-ink-muted mt-0.5">{f.detail}</div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                  );
+                })()}
               </div>
             </>
           )}
         </div>
+
+        {/* ── RIGHT: findings panel ──────────────────────────────────── */}
+        <div className="col-span-3 flex flex-col min-h-0">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[11px] text-ink-muted tracking-wider">FINDINGS</div>
+            <button onClick={() => setSortBySev((v) => !v)}
+                    className="text-[10px] text-ink-dim hover:text-ink-primary">
+              {sortBySev ? "sort: severity" : "sort: newest"}
+            </button>
+          </div>
+          {/* Severity counters */}
+          <div className="flex gap-2 mb-2 text-[11px]">
+            {ALL_SEV.map((sev) => sevCounts[sev] > 0 && (
+              <span key={sev} className={"flex items-center gap-1 " + SEV_STYLES[sev].text}>
+                <span className={"inline-block w-2 h-2 rounded-full " + SEV_STYLES[sev].dot} />
+                {sevCounts[sev]}
+              </span>
+            ))}
+            {findings.length === 0 && (
+              <span className="text-[11px] text-ink-dim italic">none yet</span>
+            )}
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
+            {sortedFindings.map((f, i) => {
+              const ss = SEV_STYLES[f.severity];
+              return (
+                <div key={i} className={"border rounded p-2 " + ss.bg + " " + ss.border}>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className={"text-[9px] uppercase tracking-wider font-bold " + ss.text}>
+                      {f.severity}
+                    </span>
+                    {f.tool && (
+                      <span className="text-[9px] font-mono text-ink-dim">{f.tool}</span>
+                    )}
+                    {f.auto_promoted && (
+                      <span className="ml-auto text-[8px] text-ink-dim uppercase">auto</span>
+                    )}
+                  </div>
+                  <div className="text-[12px] text-ink-primary">{f.title}</div>
+                  {f.detail && (
+                    <div className="text-[10px] text-ink-muted mt-0.5 font-mono break-all line-clamp-2">
+                      {f.detail}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
 
-      {/* ── Custom preset builder (minimal JSON editor for v1) ──────── */}
+      {wsError && (
+        <div className="px-4 pb-2 text-[11px] text-danger">{wsError}</div>
+      )}
+
+      {/* Builder modal */}
       {showBuilder && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-          <div className="bg-bg-card border border-divider rounded p-4 w-[640px] max-h-[80vh] flex flex-col">
-            <div className="flex items-center gap-3 mb-2">
-              <h3 className="text-[13px] font-bold text-ink-primary">BUILD CUSTOM PRESET</h3>
-              <button onClick={() => { setShowBuilder(false); setBuilderError(""); }}
-                      className="ml-auto text-[11px] text-ink-dim hover:text-ink-primary">close</button>
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6"
+             onClick={() => setShowBuilder(false)}>
+          <div className="bg-bg-card border border-divider rounded p-4 max-w-2xl w-full"
+               onClick={(e) => e.stopPropagation()}>
+            <div className="text-[13px] font-bold text-ink-primary mb-2">Build Custom Preset</div>
+            <div className="text-[11px] text-ink-muted mb-2">
+              Paste a valid `.mhp` JSON definition. Supports both v1 (flat steps)
+              and v2 (phases) schemas.
             </div>
-            <p className="text-[11px] text-ink-muted mb-2">
-              Paste a preset JSON. The schema is the same as built-in <code className="text-amber">.mhp</code> files;
-              drag-and-drop builder is on the roadmap.
-            </p>
             <textarea value={builderJson}
                       onChange={(e) => setBuilderJson(e.target.value)}
-                      spellCheck={false}
-                      placeholder='{"id":"my_recon","name":"My Recon","target_type":"domain","steps":[{"id":"w","tool":"whois"}]}'
-                      className="flex-1 min-h-[280px] bg-bg-base border border-divider rounded p-2
-                                 text-[11px] font-mono text-ink-primary
-                                 focus:outline-none focus:border-accent" />
+                      rows={16}
+                      className="w-full bg-bg-base border border-divider rounded p-2
+                                 text-[11px] font-mono focus:outline-none focus:border-accent"
+                      placeholder='{"id":"my_preset","name":"...","target_type":"domain","steps":[...]}' />
             {builderError && (
-              <div className="text-[11px] text-danger mt-1">⚠ {builderError}</div>
+              <div className="text-[11px] text-danger mt-1">{builderError}</div>
             )}
-            <div className="flex items-center gap-2 mt-2">
-              <button onClick={saveCustom} disabled={!builderJson.trim()}
-                      className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
-                                 disabled:opacity-40 disabled:cursor-not-allowed">
-                Save
-              </button>
-              <button onClick={() => { setShowBuilder(false); setBuilderError(""); }}
-                      className="px-3 py-1.5 rounded border border-divider text-[12px] text-ink-primary">
+            <div className="flex justify-end gap-2 mt-2">
+              <button onClick={() => setShowBuilder(false)}
+                      className="px-3 py-1.5 rounded border border-divider text-[12px] text-ink-muted">
                 Cancel
+              </button>
+              <button onClick={() => void saveCustom()}
+                      className="px-3 py-1.5 rounded border border-accent text-[12px] text-accent hover:bg-accent hover:text-bg-base">
+                Save
               </button>
             </div>
           </div>
