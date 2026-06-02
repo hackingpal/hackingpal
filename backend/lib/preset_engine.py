@@ -1665,6 +1665,250 @@ _TOOL_ADAPTERS["idor"]           = _adapter_idor
 _TOOL_ADAPTERS["idor_own"]       = _adapter_idor
 
 
+# ── Batch 3 real adapters — AD attack family ───────────────────────────────
+#
+# These need real AD credentials at runtime, which the playbook authors
+# either hard-code in the step's `options.creds` or feed forward from an
+# earlier step (password_spray.valid_creds → kerberoast.creds). When
+# creds are missing the adapter emits a `step_progress` note and returns
+# an empty summary — the playbook keeps moving instead of erroring.
+
+
+def _need_creds(tool: str, options: dict[str, Any]) -> dict[str, Any] | None:
+    """Pull a creds dict from options or return None if incomplete."""
+    creds = options.get("creds")
+    if not isinstance(creds, dict):
+        return None
+    if not creds.get("dc_host"):
+        return None
+    if not creds.get("username"):
+        # Anonymous flows (ldap_anon, smb_null) handled separately.
+        return None
+    if not (creds.get("password") or creds.get("nt_hash")):
+        return None
+    return creds
+
+
+async def _adapter_kerberoast(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    creds = _need_creds("kerberoast", options)
+    if not creds:
+        await emit({
+            "type": "step_progress", "step": "kerberoast",
+            "msg": "skipped: needs creds (creds.dc_host + creds.username + "
+                   "creds.password/nt_hash) in options",
+        })
+        return {"spn_accounts": [], "ticket_hashes": [], "hashes": [],
+                "privileged_spns": [], "skipped": True}
+    from routers import kerberos_roast as r
+    class _Req:
+        class _C: host = "127.0.0.1"; port = 0
+        client = _C()
+        headers: dict[str, str] = {}
+        query_params: dict[str, str] = {}
+    body = r.KerberoastBody(
+        creds=r.CredsModel(**creds),
+        spn_filter=str(options.get("spn_filter") or ""),
+        confirm_auth=True, confirm=True,
+        engagement_id=str(options.get("engagement_id") or "") or None,
+    )
+    try:
+        result = await asyncio.to_thread(r.kerberoast, body, _Req())
+    except Exception as e:
+        raise PresetError(f"kerberoast: {e}") from e
+    hashes = result.get("hashes", []) or []
+    return {
+        "spn_accounts": [t.get("sam") for t in (result.get("targets") or [])],
+        "ticket_hashes": [h.get("hash") for h in hashes if h.get("hash")],
+        "hashes": hashes,
+        "privileged_spns": [h.get("sam") for h in hashes
+                            if "admin" in str(h.get("sam","")).lower()],
+        "account_count": len(hashes),
+    }
+
+
+async def _adapter_asrep_roast(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    # AS-REP needs a domain but not necessarily a password — it targets
+    # users with DONT_REQUIRE_PREAUTH set. We still require dc_host +
+    # username + (password|nt_hash) here because the router's bind reads
+    # the user list via LDAP.
+    creds = _need_creds("asrep_roast", options)
+    if not creds:
+        await emit({
+            "type": "step_progress", "step": "asrep_roast",
+            "msg": "skipped: needs creds in options",
+        })
+        return {"vulnerable_accounts": [], "hashes": [], "account_count": 0,
+                "skipped": True}
+    from routers import kerberos_roast as r
+    body = r.AsrepBody(
+        creds=r.CredsModel(**creds),
+        users=list(options.get("users") or []),
+        confirm_auth=True,
+        engagement_id=str(options.get("engagement_id") or "") or None,
+    )
+    try:
+        result = await asyncio.to_thread(r.asrep_roast, body)
+    except Exception as e:
+        raise PresetError(f"asrep_roast: {e}") from e
+    hashes = result.get("hashes", []) or []
+    return {
+        "vulnerable_accounts": [h.get("sam") for h in hashes if h.get("sam")],
+        "hashes": [h.get("hash") for h in hashes if h.get("hash")],
+        "account_count": len(hashes),
+    }
+
+
+async def _adapter_bloodhound(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    # BloodHound runs an async impacket job. Adapter starts the run and
+    # polls until done, complete, or timeout.
+    creds = _need_creds("bloodhound", options)
+    if not creds:
+        await emit({
+            "type": "step_progress", "step": "bloodhound",
+            "msg": "skipped: needs creds in options",
+        })
+        return {"attack_paths": [], "da_path_length": 0,
+                "kerberoastable_das": [],
+                "unconstrained_delegation": [], "acl_abuses": [],
+                "skipped": True}
+    from routers import bloodhound_ingest as r
+    class _Req:
+        class _C: host = "127.0.0.1"; port = 0
+        client = _C()
+        headers: dict[str, str] = {}
+        query_params: dict[str, str] = {}
+    body = r.IngestBody(
+        creds=r.CredsModel(**creds),
+        methods=list(options.get("methods") or ["Default"]),
+        confirm_auth=True,
+        engagement_id=str(options.get("engagement_id") or "") or None,
+    )
+    try:
+        started = await asyncio.to_thread(r.start_run, body, _Req())
+    except Exception as e:
+        raise PresetError(f"bloodhound: {e}") from e
+    job = started.get("job") or {}
+    jid = job.get("id")
+    if not jid:
+        return {"attack_paths": [], "skipped": True}
+
+    # Poll up to ~10 minutes.
+    deadline = time.monotonic() + 600.0
+    state = job.get("state", "queued")
+    while state in ("queued", "running") and not stop_event.is_set():
+        if time.monotonic() > deadline:
+            await emit({"type": "step_progress", "step": "bloodhound",
+                        "msg": "polling timeout (10m); job still running"})
+            break
+        await asyncio.sleep(5)
+        try:
+            cur = await asyncio.to_thread(r.get_job, jid)
+        except Exception:
+            cur = {}
+        state = cur.get("state", state)
+        if cur:
+            job = cur
+            await emit({"type": "step_progress", "step": "bloodhound",
+                        "msg": f"state={state}, files={job.get('file_count',0)}"})
+
+    return {
+        "attack_paths": [],          # parsing the BH zip is a future enhancement
+        "da_path_length": 0,
+        "shortest_path_length": 0,
+        "da_path": [],
+        "kerberoastable_das": [],
+        "unconstrained_delegation": [],
+        "acl_abuses": [],
+        "job_id": jid,
+        "job_state": state,
+        "file_count": job.get("file_count", 0),
+    }
+
+
+async def _adapter_ad_spray(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    # ad_spray needs dc_host + users + passwords. dc_host can come from
+    # an explicit creds dict; users come from feed-forward (ldap_enum.users
+    # or asrep_roast.vulnerable_accounts); passwords come from breach data
+    # or step options.
+    creds_raw = options.get("creds") or {}
+    if not isinstance(creds_raw, dict):
+        creds_raw = {}
+    dc_host = creds_raw.get("dc_host") or options.get("dc_host") or target
+    users = options.get("users") or options.get("targets") or []
+    if not isinstance(users, list): users = [str(users)]
+    passwords = options.get("passwords") or []
+    if not isinstance(passwords, list): passwords = [str(passwords)]
+
+    if not dc_host or not users or not passwords:
+        await emit({
+            "type": "step_progress", "step": "ad_spray",
+            "msg": "skipped: needs dc_host + users[] + passwords[] in options",
+        })
+        return {"valid_credentials": [], "valid_creds": [],
+                "accounts": [], "locked_accounts": [], "skipped": True}
+
+    from routers import ad_spray as r
+    init = {
+        "creds": {**creds_raw, "dc_host": dc_host,
+                  "username": creds_raw.get("username", ""),
+                  "password": creds_raw.get("password", ""),
+                  "nt_hash":  creds_raw.get("nt_hash", "")},
+        "users": users,
+        "passwords": passwords,
+        "delay_sec": float(options.get("delay_sec", 0.5)),
+        "max_lockouts": int(options.get("max_lockouts", 0)),
+        "acknowledge_unknown_threshold":
+            bool(options.get("acknowledge_unknown_threshold", False)),
+        "confirm_auth": True,
+        "engagement_id": options.get("engagement_id"),
+    }
+
+    successes: list[dict[str, str]] = []
+    locked = 0
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal locked
+        t = ev.get("type")
+        if t == "attempt":
+            status = ev.get("status")
+            if status == "success":
+                successes.append({"user": ev.get("user"),
+                                  "password_index": ev.get("password_index")})
+            elif status == "locked":
+                locked += 1
+        elif t == "progress":
+            await emit({"type": "step_progress", "step": "ad_spray",
+                        "msg": f"{ev.get('done',0)}/{ev.get('total',0)} "
+                               f"success={ev.get('success',0)} "
+                               f"locked={ev.get('locked',0)}"})
+        elif t == "error":
+            raise PresetError(f"ad_spray: {ev.get('detail','')}")
+
+    await _drive_ws(r.spray_ws, init, emit, stop_event, on_event=on_event)
+    return {
+        "valid_credentials": successes,
+        "valid_creds": successes,
+        "accounts": [s["user"] for s in successes],
+        "locked_accounts": locked,
+        "success_count": len(successes),
+    }
+
+
+_TOOL_ADAPTERS["kerberoast"]      = _adapter_kerberoast
+_TOOL_ADAPTERS["asrep_roast"]     = _adapter_asrep_roast
+_TOOL_ADAPTERS["bloodhound"]      = _adapter_bloodhound
+_TOOL_ADAPTERS["ad_spray"]        = _adapter_ad_spray
+_TOOL_ADAPTERS["password_spray"]  = _adapter_ad_spray
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
