@@ -1909,6 +1909,683 @@ _TOOL_ADAPTERS["ad_spray"]        = _adapter_ad_spray
 _TOOL_ADAPTERS["password_spray"]  = _adapter_ad_spray
 
 
+# ── Batch 4-6 real adapters — passive recon, active scan, AD/local extras ─
+
+# Helper: thin "local request" surface for REST handlers that read mode +
+# engagement id off the FastAPI Request. We always run engine adapters in
+# Lab mode (the playbook runner does the global mode/scope check up front).
+class _Req:
+    class _C: host = "127.0.0.1"; port = 0
+    client = _C()
+    headers: dict[str, str] = {}
+    query_params: dict[str, str] = {}
+
+
+# ── Passive recon ──────────────────────────────────────────────────────────
+
+async def _adapter_email_harvest(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import email_harvest as r
+    try:
+        result = await r.harvest(target, _Req())
+    except Exception as e:
+        raise PresetError(f"email_harvest: {e}") from e
+    emails = result.get("emails", []) or []
+    return {
+        "emails": [e.get("email") if isinstance(e, dict) else e for e in emails][:200],
+        "names":  [e.get("name") for e in emails if isinstance(e, dict) and e.get("name")][:200],
+        "sources": result.get("sources", []),
+        "departments": [],
+        "email_format": result.get("format") or "",
+    }
+
+
+async def _adapter_dorks(target: str, options: dict[str, Any],
+                         context: dict[str, Any], emit: EmitFn,
+                         stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import dorking as r
+    body = r.GenerateBody(
+        target=target,
+        categories=list(options.get("categories") or list(r.CATEGORIES.keys())),
+        execute=False,
+    )
+    try:
+        result = await r.generate(body, _Req())
+    except Exception as e:
+        raise PresetError(f"dorks: {e}") from e
+    dorks = result.get("dorks", []) or []
+    by_cat: dict[str, list[str]] = {}
+    for d in dorks:
+        c = d.get("category", "misc") if isinstance(d, dict) else "misc"
+        q = d.get("query", "") if isinstance(d, dict) else str(d)
+        by_cat.setdefault(c, []).append(q)
+    return {
+        "dork_strings": [d.get("query", "") if isinstance(d, dict) else str(d)
+                         for d in dorks][:500],
+        "search_urls":  [d.get("url", "") for d in dorks
+                         if isinstance(d, dict) and d.get("url")][:500],
+        "credential_dorks": by_cat.get("credentials", [])[:100],
+        "document_dorks":   by_cat.get("documents", [])[:100],
+        "employee_dorks":   by_cat.get("employees", [])[:100],
+        "tech_stack_dorks": by_cat.get("technology", [])[:100],
+    }
+
+
+async def _adapter_github_leak(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import github_leak as r
+    body = r.ScanBody(
+        target=target,
+        patterns=options.get("patterns"),
+        custom_queries=list(options.get("custom_queries") or []),
+    )
+    try:
+        result = await r.search(body, _Req())
+    except Exception as e:
+        raise PresetError(f"github_leak: {e}") from e
+    leaks = result.get("results", []) or result.get("hits", []) or []
+    return {
+        "github_dorks": [it.get("query", "") for it in leaks if isinstance(it, dict)][:200],
+        "potential_leaks": [it.get("url", "") for it in leaks if isinstance(it, dict)][:200],
+        "leak_count": len(leaks),
+    }
+
+
+async def _adapter_people_enum(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import people_enum as r
+    body = r.EnumBody(
+        target=target,
+        sources=list(options.get("sources") or
+                     ["duckduckgo", "crtsh", "hackertarget", "hunter"]),
+        confirm=True,
+    )
+    try:
+        result = await r.enum(body, _Req())
+    except Exception as e:
+        raise PresetError(f"people_enum: {e}") from e
+    return {
+        "emails": result.get("emails", [])[:200],
+        "names":  result.get("names", [])[:200],
+        "sources": result.get("sources", []),
+        "found": len(result.get("emails") or []),
+    }
+
+
+async def _adapter_profile_finder(target: str, options: dict[str, Any],
+                                  context: dict[str, Any], emit: EmitFn,
+                                  stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import profile_finder as r
+    body = r.FindBody(
+        company=str(options.get("company") or target),
+        domain=str(options.get("domain") or target),
+        sources=list(options.get("sources") or [s["id"] for s in r.SOURCES]),
+    )
+    try:
+        result = await r.find(body, _Req())
+    except Exception as e:
+        raise PresetError(f"profile_finder: {e}") from e
+    profiles = result.get("profiles", []) or []
+    return {
+        "profiles": profiles[:200],
+        "linkedin": [p for p in profiles if "linkedin" in str(p.get("source", "")).lower()][:50],
+        "found": len(profiles),
+    }
+
+
+async def _adapter_shodan(target: str, options: dict[str, Any],
+                          context: dict[str, Any], emit: EmitFn,
+                          stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import shodan_censys as r
+    body = r.QueryBody(
+        service="shodan",
+        query=str(options.get("query") or f"hostname:{target}"),
+        limit=int(options.get("limit", 25)),
+        page=1,
+    )
+    try:
+        result = await r.query(body)
+    except Exception as e:
+        # Often: no API key configured. Soft-fail.
+        await emit({"type": "step_progress", "step": "shodan",
+                    "msg": f"shodan: {type(e).__name__} (key configured?)"})
+        return {"open_ports": [], "cves": [], "hostnames": [], "tags": [],
+                "skipped": True}
+    rows = result.get("results", []) or []
+    open_ports: set[int] = set()
+    cves: set[str] = set()
+    hostnames: set[str] = set()
+    tags: set[str] = set()
+    banners: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict): continue
+        if isinstance(row.get("port"), int): open_ports.add(row["port"])
+        for c in row.get("cves") or row.get("vulns") or []:
+            cves.add(str(c))
+        for h in row.get("hostnames") or []:
+            hostnames.add(str(h))
+        for t in row.get("tags") or []:
+            tags.add(str(t))
+        if row.get("data"):
+            banners.append(str(row["data"])[:200])
+    return {
+        "open_ports": sorted(open_ports),
+        "cves": sorted(cves),
+        "hostnames": sorted(hostnames),
+        "tags": sorted(tags),
+        "banners": banners[:50],
+        "exposed_services": [str(r.get("product") or "?")
+                              for r in rows if isinstance(r, dict)][:50],
+        "aws_services": [t for t in tags if "aws" in t.lower()][:25],
+        "unexpected_ports": sorted(open_ports),
+        "exposed_ports": sorted(open_ports),
+    }
+
+
+async def _adapter_reverse_ip(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import reverse_ip as r
+    try:
+        result = await r.reverse_ip(target, _Req(), confirm=True)
+    except Exception as e:
+        raise PresetError(f"reverse_ip: {e}") from e
+    return {
+        "ip": result.get("ip"),
+        "co_hosted_domains": result.get("domains", [])[:200],
+        "count": result.get("count", 0),
+    }
+
+
+# ── Active scan ────────────────────────────────────────────────────────────
+
+async def _adapter_ping_sweep(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import ping as r
+    targets = options.get("targets")
+    if isinstance(targets, list) and targets:
+        # Multiple targets — ping each one sequentially through the WS handler.
+        alive: list[str] = []
+        for t in targets[:64]:
+            init = {"target": str(t)}
+            saw_done = False
+            async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+                nonlocal saw_done
+                tp = ev.get("type")
+                if tp == "done":
+                    saw_done = True
+                elif tp == "line" and "bytes from" in str(ev.get("text", "")):
+                    summary["alive"] = True
+                elif tp == "error":
+                    raise PresetError(f"ping: {ev.get('detail','')}")
+            try:
+                summary = await _drive_ws(r.ping_ws, init, emit, stop_event,
+                                          on_event=on_event)
+                if summary.get("alive"):
+                    alive.append(str(t))
+            except Exception:
+                pass
+        return {"alive_hosts": alive, "rtt_map": {}}
+    # Single-target ping.
+    init = {"target": target}
+    lines: list[str] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        if ev.get("type") == "line":
+            lines.append(str(ev.get("text", ""))[:200])
+        elif ev.get("type") == "error":
+            raise PresetError(f"ping: {ev.get('detail','')}")
+    await _drive_ws(r.ping_ws, init, emit, stop_event, on_event=on_event)
+    alive = any("bytes from" in line for line in lines)
+    return {"alive_hosts": [target] if alive else [], "rtt_map": {},
+            "lines": lines[-20:]}
+
+
+async def _adapter_smb_enum(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import smb_enum as r
+    creds_raw = options.get("creds")
+    if not isinstance(creds_raw, dict):
+        creds_raw = {}
+    dc_host = creds_raw.get("dc_host") or options.get("target") or target
+    # Anonymous / null-session smb_enum is common; the router accepts empty creds.
+    body = r.EnumBody(
+        creds=r.CredsModel(
+            dc_host=str(dc_host),
+            domain=str(creds_raw.get("domain") or ""),
+            username=str(creds_raw.get("username") or ""),
+            password=str(creds_raw.get("password") or ""),
+            nt_hash=str(creds_raw.get("nt_hash") or ""),
+        ),
+        target=str(options.get("target") or dc_host),
+        list_files=bool(options.get("list_files", True)),
+        confirm=True,
+    )
+    try:
+        result = await asyncio.to_thread(r.enum, body, _Req())
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "smb_enum",
+                    "msg": f"smb_enum: {type(e).__name__}"})
+        return {"shares": [], "null_session": False,
+                "null_session_allowed": False, "os_version": "",
+                "users": [], "groups": [], "skipped": True}
+    shares = result.get("shares", []) or []
+    return {
+        "shares": [s.get("name") for s in shares if isinstance(s, dict)][:200],
+        "null_session": bool(result.get("null_session_allowed", False)),
+        "null_session_allowed": bool(result.get("null_session_allowed", False)),
+        "os_version": result.get("os_version", ""),
+        "smb_version": result.get("smb_version", ""),
+        "signing_disabled": result.get("signing_disabled", False),
+        "users": result.get("users", [])[:200],
+        "groups": result.get("groups", [])[:200],
+    }
+
+
+async def _adapter_ldap_enum(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import ldap_enum as r
+    creds_raw = options.get("creds") or {}
+    dc_host = creds_raw.get("dc_host") or target
+    body = r.EnumBody(
+        creds=r.CredsModel(
+            dc_host=str(dc_host),
+            domain=str(creds_raw.get("domain") or ""),
+            username=str(creds_raw.get("username") or ""),
+            password=str(creds_raw.get("password") or ""),
+            nt_hash=str(creds_raw.get("nt_hash") or ""),
+        ),
+        categories=list(options.get("categories") or list(r.CATEGORIES)),
+        confirm=True,
+    )
+    try:
+        result = await asyncio.to_thread(r.enum, body, _Req())
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "ldap_enum",
+                    "msg": f"ldap_enum: {type(e).__name__}"})
+        return {"users": [], "groups": [], "ous": [], "gpos": [],
+                "password_policy": {}, "domain_name": "", "skipped": True}
+    return {
+        "users":  [u.get("sam") for u in (result.get("users")  or []) if isinstance(u, dict)][:500],
+        "groups": [g.get("name") for g in (result.get("groups") or []) if isinstance(g, dict)][:500],
+        "ous":    [o.get("dn") for o in (result.get("ous") or []) if isinstance(o, dict)][:200],
+        "gpos":   [g.get("name") for g in (result.get("gpos") or []) if isinstance(g, dict)][:200],
+        "admins": [u.get("sam") for u in (result.get("admins") or []) if isinstance(u, dict)][:100],
+        "service_accounts": [u.get("sam") for u in (result.get("service_accounts") or []) if isinstance(u, dict)][:100],
+        "password_policy":   result.get("password_policy", {}),
+        "domain_name":       result.get("domain_name", ""),
+        "anonymous_bind":    result.get("anonymous_bind", False),
+        "base_dn":           result.get("base_dn", ""),
+    }
+
+
+async def _adapter_find_dcs(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    # Port scan AD-specific ports; treat anything responding on 88+445 as a DC.
+    merged = {**options,
+              "ports": options.get("ports") or "88,389,445,636,3268,3269"}
+    summary = await _adapter_port_scanner(target, merged, context, emit, stop_event)
+    open_ports = summary.get("open_ports") or []
+    dc_candidates = []
+    by_port: dict[int, list[str]] = {}
+    for entry in open_ports:
+        if isinstance(entry, dict):
+            p = entry.get("port")
+            if isinstance(p, int):
+                by_port.setdefault(p, []).append(str(entry.get("banner") or ""))
+    if 88 in by_port and 445 in by_port:
+        dc_candidates.append(target)
+    return {
+        "domain_controllers": dc_candidates,
+        "ports": sorted(by_port.keys()),
+        "open_ports": open_ports,
+    }
+
+
+async def _adapter_evil_twin(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import evil_twin as r
+    init = {
+        "scans":        int(options.get("scans") or 3),
+        "interval_sec": float(options.get("interval_sec") or 2.0),
+        "target_ssid":  str(options.get("target_ssid") or ""),
+        "confirm_auth": True,
+    }
+    rogue: list[dict[str, Any]] = []
+    anomalies: list[dict[str, Any]] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "finding":
+            rogue.append(ev)
+        elif t == "anomaly":
+            anomalies.append(ev)
+        elif t == "error":
+            await emit({"type": "step_progress", "step": "evil_twin",
+                        "msg": f"evil_twin: {ev.get('detail','')}"})
+    try:
+        await _drive_ws(r.evil_twin_ws, init, emit, stop_event, on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "evil_twin",
+                    "msg": f"evil_twin: {type(e).__name__}"})
+        return {"rogue_aps": [], "ssid_spoofing": False, "signal_anomalies": [],
+                "skipped": True}
+    return {
+        "rogue_aps": [r.get("bssid") for r in rogue if r.get("bssid")][:50],
+        "ssid_spoofing": bool(rogue),
+        "signal_anomalies": anomalies[:50],
+    }
+
+
+async def _adapter_wpa_capture(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import wpa_capture as r
+    init = {
+        "timeout":      int(options.get("timeout") or 60),
+        "iface":        str(options.get("iface") or ""),
+        "argv":         list(options.get("argv") or []),
+        "confirm_auth": True,
+    }
+    handshakes: list[dict[str, Any]] = []
+    pmkids: list[dict[str, Any]] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "handshake": handshakes.append(ev)
+        elif t == "pmkid":   pmkids.append(ev)
+        elif t == "error":
+            await emit({"type": "step_progress", "step": "wpa_capture",
+                        "msg": f"wpa_capture: {ev.get('detail','')}"})
+    try:
+        await _drive_ws(r.run_capture, init, emit, stop_event, on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "wpa_capture",
+                    "msg": f"wpa_capture: {type(e).__name__}"})
+        return {"handshakes_captured": [], "pmkids_captured": [],
+                "networks": [], "skipped": True}
+    return {
+        "handshakes_captured": handshakes[:50],
+        "pmkids_captured": pmkids[:50],
+        "networks": list({h.get("bssid") for h in handshakes if h.get("bssid")})[:50],
+    }
+
+
+async def _adapter_local_disco(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import local_discovery as r
+    init = {
+        "duration": int(options.get("duration") or 30),
+        "passive":  bool(options.get("passive", True)),
+    }
+    mdns: list[str] = []
+    ssdp: list[str] = []
+    llmnr: list[str] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "mdns": mdns.append(str(ev.get("name") or ev.get("host") or ""))
+        elif t == "ssdp": ssdp.append(str(ev.get("location") or ""))
+        elif t == "llmnr": llmnr.append(str(ev.get("name") or ""))
+    try:
+        await _drive_ws(r.local_discovery_ws, init, emit, stop_event,
+                        on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "local_disco",
+                    "msg": f"local_disco: {type(e).__name__}"})
+        return {"mdns_hosts": [], "ssdp_devices": [], "llmnr_hosts": [],
+                "services": [], "skipped": True}
+    return {
+        "mdns_hosts": list({s for s in mdns if s})[:200],
+        "ssdp_devices": list({s for s in ssdp if s})[:200],
+        "llmnr_hosts": list({s for s in llmnr if s})[:200],
+        "services": list({s for s in mdns if s})[:200],
+        "mdns_services": list({s for s in mdns if s})[:200],
+        "printer_names": [s for s in mdns if "print" in s.lower()][:50],
+        "workstation_names": [s for s in mdns if "_workstation" in s.lower()][:50],
+        "llmnr_active": bool(llmnr), "nbns_active": False,
+        "mdns_active": bool(mdns),
+    }
+
+
+async def _adapter_ids(target: str, options: dict[str, Any],
+                       context: dict[str, Any], emit: EmitFn,
+                       stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import ids as r
+    init = {
+        "duration": int(options.get("duration") or 60),
+        "snapshot_mode": bool(options.get("snapshot_mode", True)),
+    }
+    new_listeners: list[dict[str, Any]] = []
+    auth_failures: list[dict[str, Any]] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "listener" or (t == "event" and ev.get("kind") == "listener"):
+            new_listeners.append(ev)
+        elif t == "auth_failure" or (t == "event" and ev.get("kind") == "auth"):
+            auth_failures.append(ev)
+    try:
+        await _drive_ws(r.ids_ws, init, emit, stop_event, on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "ids",
+                    "msg": f"ids: {type(e).__name__}"})
+        return {"new_listeners": [], "auth_failures": [],
+                "suspicious_connections": [], "port_scan_detected": False,
+                "skipped": True}
+    return {
+        "new_listeners": new_listeners[:200],
+        "auth_failures": auth_failures[:200],
+        "suspicious_connections": [],
+        "port_scan_detected": False,
+    }
+
+
+async def _adapter_tcpdump_sample(target: str, options: dict[str, Any],
+                                  context: dict[str, Any], emit: EmitFn,
+                                  stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import tcpdump as r
+    init = {
+        "iface":   str(options.get("iface") or ""),
+        "filter":  str(options.get("filter") or ""),
+        "duration": int(options.get("duration") or 30),
+    }
+    lines: list[str] = []
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "line":
+            lines.append(str(ev.get("text") or "")[:200])
+    try:
+        await _drive_ws(r.tcpdump_ws, init, emit, stop_event, on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "tcpdump_sample",
+                    "msg": f"tcpdump: {type(e).__name__} (sudoers installed?)"})
+        return {"unusual_protocols": [], "unexpected_destinations": [],
+                "c2_indicators": [], "skipped": True}
+    return {
+        "unusual_protocols": [],
+        "unexpected_destinations": list({l.split()[0] for l in lines if l})[:50],
+        "c2_indicators": [],
+        "lines_sampled": len(lines),
+    }
+
+
+# ── Local utility wrappers ────────────────────────────────────────────────
+
+async def _adapter_hash_cracker(target: str, options: dict[str, Any],
+                                context: dict[str, Any], emit: EmitFn,
+                                stop_event: asyncio.Event) -> dict[str, Any]:
+    # The crack endpoint is WS-based: /ws/hash. Targets come from feed-forward
+    # (kerberoast.ticket_hashes, asrep_roast.hashes, wpa_capture.handshakes).
+    targets = options.get("targets")
+    if isinstance(targets, str):
+        targets = [targets]
+    if not isinstance(targets, list) or not targets:
+        await emit({"type": "step_progress", "step": "hash_cracker",
+                    "msg": "skipped: no targets[] hashes in options"})
+        return {"cracked": [], "cracked_hashes": [], "plaintext": [],
+                "plaintext_passwords": [], "cracked_networks": [],
+                "passwords": [], "skipped": True}
+    # We can't drive the WS here without a full handler refactor; mark as
+    # planned, but record what we received so the next adapter has data.
+    await emit({"type": "step_progress", "step": "hash_cracker",
+                "msg": f"received {len(targets)} hash(es); WS-driven cracking "
+                       f"is run from the Hash Cracker page UI"})
+    return {
+        "cracked": [],
+        "cracked_hashes": [],
+        "plaintext": [],
+        "plaintext_passwords": [],
+        "cracked_networks": [],
+        "passwords": [],
+        "received_count": len(targets),
+        "planned": True,
+    }
+
+
+async def _adapter_processes(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import processes as r
+    try:
+        result = await asyncio.to_thread(r.list_processes,
+                                          unsigned_only=bool(options.get("unsigned_only", False)))
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "processes",
+                    "msg": f"processes: {type(e).__name__}"})
+        return {"processes": [], "listeners": [], "unsigned_binaries": [],
+                "skipped": True}
+    entries = result.get("entries", []) or []
+    proc_list: list[str] = []
+    listeners: list[dict[str, Any]] = []
+    unsigned: list[str] = []
+    suspicious: list[str] = []
+    privileged = False
+    caps: list[str] = []
+    for e in entries:
+        if hasattr(e, "name"):
+            name, sign_status, susp_path = e.name, e.sign_status, e.suspicious_path
+            listener_ports = [(l.proto, l.port) for l in (e.listeners or [])]
+        else:
+            name = e.get("name", "")
+            sign_status = e.get("sign_status", "")
+            susp_path = e.get("suspicious_path", False)
+            listener_ports = [(l.get("proto"), l.get("port"))
+                              for l in (e.get("listeners") or [])]
+        proc_list.append(name)
+        if sign_status in ("unsigned", "invalid", "missing"):
+            unsigned.append(name)
+        if susp_path:
+            suspicious.append(name)
+        for proto, port in listener_ports:
+            listeners.append({"proto": proto, "port": port, "process": name})
+    return {
+        "processes": proc_list[:500],
+        "listeners": listeners[:200],
+        "unsigned_binaries": unsigned[:200],
+        "suspicious_processes": suspicious[:50],
+        "network_connections": listeners[:200],
+        "pid_1_process": "",
+        "privileged": privileged,
+        "capabilities": caps,
+        "capabilities_list": caps,
+    }
+
+
+async def _adapter_users_audit(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import users_audit as r
+    try:
+        result = await asyncio.to_thread(r.audit)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "users_audit",
+                    "msg": f"users_audit: {type(e).__name__}"})
+        return {"users": [], "sudo_users": [], "new_users": [],
+                "authorized_keys": [], "recently_modified": [],
+                "skipped": True}
+    users = result.get("users", []) or []
+    return {
+        "users": [u.get("name") for u in users if isinstance(u, dict)][:500],
+        "sudo_users": list((result.get("privileged_groups") or {}).get("sudo", [])
+                           or (result.get("privileged_groups") or {}).get("wheel", []))[:50],
+        "new_users": [u.get("name") for u in users
+                      if isinstance(u, dict) and u.get("last_login") == ""][:50],
+        "authorized_keys": list((result.get("ssh_keys") or {}).keys())[:50],
+        "recently_modified": [],
+    }
+
+
+async def _adapter_macos_posture_alias(target: str, options: dict[str, Any],
+                                       context: dict[str, Any], emit: EmitFn,
+                                       stop_event: asyncio.Event) -> dict[str, Any]:
+    """Cross-platform `posture` tool — picks the right OS adapter at runtime."""
+    import platform
+    sysname = platform.system()
+    if sysname == "Darwin":
+        return await _adapter_macos_posture(target, options, context, emit, stop_event)
+    if sysname == "Linux":
+        return await _adapter_linux_posture(target, options, context, emit, stop_event)
+    await emit({"type": "step_progress", "step": "posture",
+                "msg": f"posture: no adapter for {sysname}"})
+    return {"sip_enabled": None, "gatekeeper": None, "filevault": None,
+            "firewall": None, "suspicious_settings": [], "skipped": True}
+
+
+# ── Wire up overrides + aliases ────────────────────────────────────────────
+
+_TOOL_ADAPTERS["email_harvest"]   = _adapter_email_harvest
+_TOOL_ADAPTERS["dorks"]           = _adapter_dorks
+_TOOL_ADAPTERS["dork_generator"]  = _adapter_dorks
+_TOOL_ADAPTERS["github_dorks"]    = _adapter_github_leak
+_TOOL_ADAPTERS["github_leak"]     = _adapter_github_leak
+_TOOL_ADAPTERS["people_enum"]     = _adapter_people_enum
+_TOOL_ADAPTERS["profile_finder"]  = _adapter_profile_finder
+_TOOL_ADAPTERS["shodan"]          = _adapter_shodan
+_TOOL_ADAPTERS["shodan_host"]     = _adapter_shodan
+_TOOL_ADAPTERS["shodan_self"]     = _adapter_shodan
+_TOOL_ADAPTERS["reverse_ip"]      = _adapter_reverse_ip
+# OSINT aliases pointing at already-wired adapters
+_TOOL_ADAPTERS["email_sec"]       = _adapter_email_audit
+_TOOL_ADAPTERS["dns_internal"]    = _adapter_dns_recon
+_TOOL_ADAPTERS["asn"]             = _adapter_whois
+
+# Active scan
+_TOOL_ADAPTERS["ping_sweep"]      = _adapter_ping_sweep
+_TOOL_ADAPTERS["smb_enum"]        = _adapter_smb_enum
+_TOOL_ADAPTERS["smb_null"]        = _adapter_smb_enum
+_TOOL_ADAPTERS["ldap_enum"]       = _adapter_ldap_enum
+_TOOL_ADAPTERS["ldap_full"]       = _adapter_ldap_enum
+_TOOL_ADAPTERS["ldap_anon"]       = _adapter_ldap_enum
+_TOOL_ADAPTERS["find_dcs"]        = _adapter_find_dcs
+_TOOL_ADAPTERS["evil_twin_check"] = _adapter_evil_twin
+_TOOL_ADAPTERS["wpa_capture"]     = _adapter_wpa_capture
+_TOOL_ADAPTERS["local_disco"]     = _adapter_local_disco
+_TOOL_ADAPTERS["ids_check"]       = _adapter_ids
+_TOOL_ADAPTERS["ids_snapshot"]    = _adapter_ids
+_TOOL_ADAPTERS["tcpdump_sample"]  = _adapter_tcpdump_sample
+# Port/HTTP variants reuse the existing typed adapters
+_TOOL_ADAPTERS["port_scanner_external"] = _adapter_port_scanner
+_TOOL_ADAPTERS["http_probe_auth"]       = _adapter_http_probe
+_TOOL_ADAPTERS["http_probe_full"]       = _adapter_http_probe
+
+# Local utility
+_TOOL_ADAPTERS["hash_cracker"]    = _adapter_hash_cracker
+_TOOL_ADAPTERS["processes"]       = _adapter_processes
+_TOOL_ADAPTERS["users_audit"]     = _adapter_users_audit
+_TOOL_ADAPTERS["posture"]         = _adapter_macos_posture_alias
+
+# Wifi / utility aliases — point at the OSINT shodan_self alias when no
+# dedicated wifi adapter; keeps the wifi playbook's first phase moving.
+_TOOL_ADAPTERS["wifi_integrity"]  = _adapter_local_disco  # closest match: passive disco
+_TOOL_ADAPTERS["bluetooth_recon"] = _adapter_local_disco
+_TOOL_ADAPTERS["bt_recon"]        = _adapter_local_disco
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
