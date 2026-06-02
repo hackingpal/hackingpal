@@ -1153,6 +1153,272 @@ _TOOL_ADAPTERS.setdefault("http_get",  _adapter_http_get)
 _TOOL_ADAPTERS.setdefault("http_post", _adapter_http_post)
 
 
+# ── Batch 1 real adapters (override placeholders) ──────────────────────────
+#
+# Each adapter calls the router's existing handler in-process and pulls a
+# small summary dict of the most useful fields. Real fields means real
+# `output_keys` resolve against ctx, so downstream phases can feed-forward
+# from these tools instead of hitting placeholders.
+
+
+async def _adapter_breach(target: str, options: dict[str, Any],
+                          context: dict[str, Any], emit: EmitFn,
+                          stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import breach as r
+    try:
+        result = await r.domain_breaches(target)
+    except Exception as e:
+        raise PresetError(f"breach: {e}") from e
+    breaches = result.get("breaches", []) or []
+    data_types: set[str] = set()
+    for b in breaches:
+        for d in b.get("data_classes") or []:
+            data_types.add(d)
+    if breaches:
+        await emit({
+            "type": "finding", "step": "breach",
+            "severity": "high",
+            "title": f"{len(breaches)} breach record(s) for {target}",
+            "detail": ", ".join(b.get("name", "?") for b in breaches[:6]),
+        })
+    return {
+        "breach_found": bool(breaches),
+        "breach_count": len(breaches),
+        "breached_accounts": len(breaches),  # alias for promotion rules
+        "breaches": [b.get("name") for b in breaches],
+        "data_types": sorted(data_types),
+        "exposed_data_types": sorted(data_types),
+    }
+
+
+async def _adapter_wayback(target: str, options: dict[str, Any],
+                           context: dict[str, Any], emit: EmitFn,
+                           stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import wayback as r
+    try:
+        result = await r.urls(target, limit=500, since_days=None)
+    except TypeError:
+        # Older signature: positional or without keyword args.
+        try:
+            result = await r.urls(target)
+        except Exception as e:
+            raise PresetError(f"wayback: {e}") from e
+    except Exception as e:
+        raise PresetError(f"wayback: {e}") from e
+    urls = result.get("urls", []) or []
+    js = [u for u in urls if isinstance(u, str) and u.lower().endswith(".js")]
+    api = [u for u in urls if isinstance(u, str)
+           and ("/api/" in u.lower() or u.lower().endswith(".json")
+                or "graphql" in u.lower())]
+    interesting = [u for u in urls if isinstance(u, str)
+                   and any(k in u.lower() for k in
+                           ("admin", "config", ".env", "backup", "debug",
+                            "private", "internal"))]
+    return {
+        "total_urls": len(urls),
+        "interesting_urls": interesting[:200],
+        "js_files": js[:200],
+        "api_endpoints": api[:200],
+        "endpoints": urls[:200],
+        "forgotten_endpoints": interesting[:50],
+    }
+
+
+async def _adapter_urlscan(target: str, options: dict[str, Any],
+                           context: dict[str, Any], emit: EmitFn,
+                           stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import urlscan as r
+    try:
+        result = await r.search(target)
+    except Exception as e:
+        raise PresetError(f"urlscan: {e}") from e
+    rows = result.get("results", []) or []
+    techs = sorted({t for row in rows for t in (row.get("technologies") or [])})
+    malicious = [row for row in rows if row.get("malicious")]
+    return {
+        "screenshots": [row.get("screenshot_url") for row in rows if row.get("screenshot_url")][:50],
+        "technologies": techs,
+        "history": rows[:50],
+        "malicious_indicators": [row.get("url") for row in malicious][:25],
+        "malicious_flags": len(malicious),
+        "third_party_scripts": techs[:25],
+        "cdn_providers": [t for t in techs if "cdn" in t.lower()][:10],
+    }
+
+
+async def _adapter_takeover(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import takeover as r
+    # Build a minimal Request-like surface for the handler's get_mode/eid
+    # reads — same trick the _LocalWS shim uses.
+    class _Req:
+        class _C:
+            host = "127.0.0.1"; port = 0
+        client = _C()
+        headers: dict[str, str] = {}
+        query_params: dict[str, str] = {}
+    try:
+        result = await r.takeover_check(
+            fqdn=target, request=_Req(), confirm=True, confirm_auth=True,
+        )
+    except Exception as e:
+        raise PresetError(f"takeover: {e}") from e
+    verdict = result.get("verdict") or ""
+    vulnerable = verdict in ("vulnerable", "dangling")
+    if vulnerable:
+        await emit({
+            "type": "finding", "step": "takeover",
+            "severity": "critical" if verdict == "vulnerable" else "high",
+            "title": f"Subdomain takeover {verdict}: {target}",
+            "detail": result.get("evidence", "")[:300],
+        })
+    return {
+        "subdomain_takeover": vulnerable,
+        "takeover_found": vulnerable,
+        "vulnerable_subdomains": [target] if vulnerable else [],
+        "takeover_candidates": [target] if vulnerable else [],
+        "service": result.get("service"),
+        "cname_chain": result.get("cname_chain", []),
+        "verdict": verdict,
+    }
+
+
+async def _adapter_lan_scan(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import lan_scan as r
+    init = {"network": options.get("network") or target or ""}
+    hosts: list[dict[str, Any]] = []
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "host":
+            hosts.append({
+                "ip": ev.get("ip"),
+                "hostname": ev.get("hostname"),
+                "mac": ev.get("mac"),
+            })
+        elif t == "progress":
+            await emit({"type": "step_progress", "step": "lan_scan",
+                        "msg": f"{ev.get('done',0)}/{ev.get('total',0)} probed"})
+        elif t == "error":
+            raise PresetError(f"lan_scan: {ev.get('detail','')}")
+
+    await _drive_ws(r.lan_scan_ws, init, emit, stop_event, on_event=on_event)
+    return {
+        "hosts": hosts,
+        "ips": [h["ip"] for h in hosts if h.get("ip")],
+        "macs": [h["mac"] for h in hosts if h.get("mac")],
+        "vendors": [],
+        "alive_hosts": [h["ip"] for h in hosts if h.get("ip")],
+    }
+
+
+async def _adapter_subdomain_enum(target: str, options: dict[str, Any],
+                                  context: dict[str, Any], emit: EmitFn,
+                                  stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import subdomain_enum as r
+    init = {
+        "domain": target,
+        "sources": options.get("sources") or ["crtsh", "hackertarget", "otx"],
+        "permutations": bool(options.get("permutations", False)),
+        "confirm_auth": True,
+    }
+    subdomains: set[str] = set()
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "found":
+            n = ev.get("name")
+            if n: subdomains.add(n)
+        elif t == "source_done":
+            await emit({"type": "step_progress", "step": "subdomain_enum",
+                        "msg": f"{ev.get('source')}: {ev.get('count',0)}"})
+        elif t == "error":
+            raise PresetError(f"subdomain_enum: {ev.get('detail','')}")
+
+    await _drive_ws(r.subdom_ws, init, emit, stop_event, on_event=on_event)
+    subs = sorted(subdomains)
+    return {
+        "subdomains": subs,
+        "total_found": len(subs),
+        "found": len(subs),
+    }
+
+
+async def _adapter_nmap(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import nmap as r
+    targets = options.get("targets") or [target]
+    if isinstance(targets, str):
+        targets = [targets]
+    init = {
+        "opts": {"targets": [str(t) for t in targets if t]},
+        "preset": options.get("preset"),
+        "scripts": options.get("scripts") or [],
+        "script_args": options.get("script_args") or "",
+        "ports": options.get("ports") or "",
+        "confirm": True,
+    }
+    report_summary: dict[str, Any] = {}
+    vulnerabilities: list[str] = []
+    cves: set[str] = set()
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "done":
+            rep = ev.get("report") or {}
+            report_summary.update({
+                "hosts_up": rep.get("hosts_up", 0),
+                "hosts_total": rep.get("hosts_total", 0),
+                "elapsed": rep.get("elapsed", 0),
+            })
+            for h in rep.get("hosts", []) or []:
+                for s in h.get("host_scripts", []) or []:
+                    out = (s.get("output") or "")[:400]
+                    if "VULNERABLE" in out or "CVE-" in out:
+                        vulnerabilities.append(f"{h.get('ip')}: {s.get('id')}")
+                    for tok in out.split():
+                        if tok.startswith("CVE-"):
+                            cves.add(tok.rstrip(",.;:"))
+                for p in h.get("ports", []) or []:
+                    for s in p.get("scripts", []) or []:
+                        out = (s.get("output") or "")[:400]
+                        if "VULNERABLE" in out or "CVE-" in out:
+                            vulnerabilities.append(
+                                f"{h.get('ip')}:{p.get('port')}: {s.get('id')}"
+                            )
+                        for tok in out.split():
+                            if tok.startswith("CVE-"):
+                                cves.add(tok.rstrip(",.;:"))
+        elif t == "error":
+            raise PresetError(f"nmap: {ev.get('detail','')}")
+
+    await _drive_ws(r.nmap_ws, init, emit, stop_event, on_event=on_event)
+    return {
+        **report_summary,
+        "vulnerabilities": vulnerabilities,
+        "cves": sorted(cves),
+    }
+
+
+# Override the placeholder entries with the real adapters.
+_TOOL_ADAPTERS["breach"]         = _adapter_breach
+_TOOL_ADAPTERS["breach_check"]   = _adapter_breach
+_TOOL_ADAPTERS["breach_domain"]  = _adapter_breach
+_TOOL_ADAPTERS["wayback"]        = _adapter_wayback
+_TOOL_ADAPTERS["urlscan"]        = _adapter_urlscan
+_TOOL_ADAPTERS["takeover"]       = _adapter_takeover
+_TOOL_ADAPTERS["lan_scan"]       = _adapter_lan_scan
+_TOOL_ADAPTERS["subdomain_enum"] = _adapter_subdomain_enum
+_TOOL_ADAPTERS["nmap"]           = _adapter_nmap
+_TOOL_ADAPTERS["nmap_vuln"]      = _adapter_nmap
+_TOOL_ADAPTERS["nmap_full"]      = _adapter_nmap
+_TOOL_ADAPTERS["nmap_smb"]       = _adapter_nmap
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
