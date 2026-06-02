@@ -1404,6 +1404,241 @@ async def _adapter_nmap(target: str, options: dict[str, Any],
     }
 
 
+# ── Batch 2 real adapters — web exploit family ─────────────────────────────
+#
+# Shared pattern: pull `url`/`method`/`body`/`headers`/`cookies` from
+# options (fall back to `target` as the URL), call the WS handler via
+# _drive_ws, count `finding` events, and emit the summary fields the v2
+# bundles declare in `output_keys` (reflected_xss, sqli_detected,
+# injectable_params, etc.) so the finding-promotion rules trigger.
+
+def _web_init_from(target: str, options: dict[str, Any],
+                   default_marker: str = "FUZZ") -> dict[str, Any]:
+    url = str(options.get("url") or target or "").strip()
+    # If a feed-forward `targets` list was passed (from http_probe.paths_found,
+    # for example), use the first entry as the URL.
+    if not url:
+        targets = options.get("targets")
+        if isinstance(targets, list) and targets:
+            url = str(targets[0])
+    # Best-effort marker injection: if the URL doesn't include the marker,
+    # append `?q=FUZZ` so the run doesn't immediately fail validation.
+    if url and default_marker not in url and "?" not in url:
+        url = url + "?q=" + default_marker
+    elif url and default_marker not in url:
+        url = url + "&q=" + default_marker
+    return {
+        "url": url,
+        "method":  str(options.get("method") or "GET").upper(),
+        "body":    str(options.get("body") or ""),
+        "headers": dict(options.get("headers") or {}),
+        "cookies": dict(options.get("cookies") or {}),
+        "allow_private": bool(options.get("allow_private", False)),
+        "rate_per_sec":  int(options.get("rate_per_sec") or 5),
+        "confirm_auth":  True,  # playbook runner already gates this
+    }
+
+
+async def _adapter_xss(target: str, options: dict[str, Any],
+                       context: dict[str, Any], emit: EmitFn,
+                       stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import xss as r
+    init = _web_init_from(target, options)
+    findings_count = 0
+    contexts: set[str] = set()
+    confirmed = 0
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count, confirmed
+        t = ev.get("type")
+        if t == "finding":
+            findings_count += 1
+            if ev.get("confirmed"): confirmed += 1
+            c = ev.get("context")
+            if c: contexts.add(str(c))
+        elif t == "error":
+            raise PresetError(f"xss: {ev.get('detail','')}")
+
+    await _drive_ws(r.xss_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    return {
+        "xss_detected": detected,
+        "reflected_xss": detected,
+        "stored_xss": False,  # the router only does reflection probing
+        "dom_xss": False,
+        "contexts": sorted(contexts),
+        "confirmed": confirmed,
+        "finding_count": findings_count,
+    }
+
+
+async def _adapter_sqli(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import sqli as r
+    init = _web_init_from(target, options)
+    init["exploit"] = bool(options.get("exploit", False))
+    findings_count = 0
+    methods_hit: set[str] = set()
+    dbms_detected: str | None = None
+    injectable: set[str] = set()
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count, dbms_detected
+        t = ev.get("type")
+        if t == "finding":
+            findings_count += 1
+            m = ev.get("method")
+            if m: methods_hit.add(str(m))
+            p = ev.get("parameter") or ev.get("param")
+            if p: injectable.add(str(p))
+        elif t == "done":
+            dbms_detected = ev.get("dbms")
+        elif t == "error":
+            raise PresetError(f"sqli: {ev.get('detail','')}")
+
+    await _drive_ws(r.sqli_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    return {
+        "sqli_detected": detected,
+        "sqli_found": detected,
+        "injectable_params": sorted(injectable),
+        "dbms": dbms_detected,
+        "version": None,
+        "blind_sqli": "boolean" in methods_hit or "time" in methods_hit,
+        "union_sqli": "union" in methods_hit,
+        "methods": sorted(methods_hit),
+    }
+
+
+async def _adapter_cmdi(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import cmdi as r
+    init = _web_init_from(target, options)
+    init["exploit"] = bool(options.get("exploit", False))
+    findings_count = 0
+    modes_hit: set[str] = set()
+    last_output = ""
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count, last_output
+        t = ev.get("type")
+        if t == "finding":
+            findings_count += 1
+            m = ev.get("mode")
+            if m: modes_hit.add(str(m))
+            ev_out = ev.get("evidence") or ev.get("output")
+            if ev_out: last_output = str(ev_out)[:400]
+        elif t == "error":
+            raise PresetError(f"cmdi: {ev.get('detail','')}")
+
+    await _drive_ws(r.cmdi_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    return {
+        "cmdi_found": detected,
+        "cmdi_detected": detected,
+        "os": "unknown",
+        "output": last_output,
+        "modes": sorted(modes_hit),
+    }
+
+
+async def _adapter_lfi(target: str, options: dict[str, Any],
+                       context: dict[str, Any], emit: EmitFn,
+                       stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import lfi as r
+    init = _web_init_from(target, options)
+    init["exploit"] = bool(options.get("exploit", False))
+    findings_count = 0
+    files_read: list[str] = []
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count
+        t = ev.get("type")
+        if t == "finding":
+            findings_count += 1
+            hit = ev.get("hit") or ev.get("evidence")
+            if hit: files_read.append(str(hit)[:120])
+        elif t == "error":
+            raise PresetError(f"lfi: {ev.get('detail','')}")
+
+    await _drive_ws(r.lfi_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    return {
+        "lfi_found": detected,
+        "files_read": files_read[:50],
+        "files_accessible": files_read[:50],
+    }
+
+
+async def _adapter_ssrf(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import ssrf as r
+    init = _web_init_from(target, options)
+    init["exploit"] = bool(options.get("exploit", False))
+    findings_count = 0
+    clouds: set[str] = set()
+    internal_hit = False
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count, internal_hit
+        t = ev.get("type")
+        if t == "finding":
+            findings_count += 1
+            cl = ev.get("hit")
+            if cl: clouds.add(str(cl))
+            if "loopback" in str(ev.get("evidence", "")).lower():
+                internal_hit = True
+        elif t == "done":
+            for cl in ev.get("clouds", []) or []:
+                clouds.add(str(cl))
+        elif t == "error":
+            raise PresetError(f"ssrf: {ev.get('detail','')}")
+
+    await _drive_ws(r.ssrf_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    imds = any(c in {"aws", "azure", "gcp", "imds"} for c in clouds)
+    return {
+        "ssrf_found": detected,
+        "internal_access": internal_hit,
+        "imds_access": imds,
+        "imds_accessible": imds,
+        "imds_exposed": imds,
+        "credentials_exposed": imds and detected,
+        "internal_hosts": sorted(clouds),
+        "cloud_metadata": sorted(clouds),
+    }
+
+
+async def _adapter_idor(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import idor as r
+    init = _web_init_from(target, options)
+    exposed_ids: list[str] = []
+    findings_count = 0
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        nonlocal findings_count
+        t = ev.get("type")
+        if t == "finding" or t == "row":
+            findings_count += 1
+            obj = ev.get("id") or ev.get("identifier")
+            if obj: exposed_ids.append(str(obj))
+        elif t == "error":
+            raise PresetError(f"idor: {ev.get('detail','')}")
+
+    await _drive_ws(r.idor_ws, init, emit, stop_event, on_event=on_event)
+    detected = findings_count > 0
+    return {
+        "idor_found": detected,
+        "exposed_ids": exposed_ids[:100],
+        "exposed_objects": exposed_ids[:100],
+    }
+
+
 # Override the placeholder entries with the real adapters.
 _TOOL_ADAPTERS["breach"]         = _adapter_breach
 _TOOL_ADAPTERS["breach_check"]   = _adapter_breach
@@ -1417,6 +1652,17 @@ _TOOL_ADAPTERS["nmap"]           = _adapter_nmap
 _TOOL_ADAPTERS["nmap_vuln"]      = _adapter_nmap
 _TOOL_ADAPTERS["nmap_full"]      = _adapter_nmap
 _TOOL_ADAPTERS["nmap_smb"]       = _adapter_nmap
+
+# Web exploit family
+_TOOL_ADAPTERS["xss"]            = _adapter_xss
+_TOOL_ADAPTERS["xss_passive"]    = _adapter_xss
+_TOOL_ADAPTERS["sqli"]           = _adapter_sqli
+_TOOL_ADAPTERS["cmdi"]           = _adapter_cmdi
+_TOOL_ADAPTERS["lfi"]            = _adapter_lfi
+_TOOL_ADAPTERS["ssrf"]           = _adapter_ssrf
+_TOOL_ADAPTERS["ssrf_imds"]      = _adapter_ssrf
+_TOOL_ADAPTERS["idor"]           = _adapter_idor
+_TOOL_ADAPTERS["idor_own"]       = _adapter_idor
 
 
 def known_tools() -> list[str]:
