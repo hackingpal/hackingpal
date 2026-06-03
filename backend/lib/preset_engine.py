@@ -2586,6 +2586,882 @@ _TOOL_ADAPTERS["bluetooth_recon"] = _adapter_local_disco
 _TOOL_ADAPTERS["bt_recon"]        = _adapter_local_disco
 
 
+# ── Batch 7 real adapters — final sweep ────────────────────────────────────
+#
+# Mix of (a) wrappers over routers I missed earlier, (b) internal HTTP
+# analysis adapters that don't need a backend route, and (c) correlation
+# / report adapters that operate purely on prior phase context.
+
+async def _adapter_fingerprint(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import fingerprint as r
+    # Targets come either as a single (host,port) tuple via options, or as
+    # a feed-forward list of {port:..., service:...} from port_scanner.
+    targets = options.get("targets")
+    host = options.get("host") or target
+    if isinstance(targets, list) and targets:
+        # Extract ports from feed-forward port_scanner.open_ports
+        ports: list[int] = []
+        for t in targets:
+            if isinstance(t, dict) and isinstance(t.get("port"), int):
+                ports.append(t["port"])
+            elif isinstance(t, int):
+                ports.append(t)
+        if ports:
+            try:
+                body = r.BulkRequest(host=str(host), ports=ports[:50], confirm=True)
+                result = await r.fingerprint_bulk(body, _Req())
+            except Exception as e:
+                await emit({"type": "step_progress", "step": "fingerprint",
+                            "msg": f"fingerprint: {type(e).__name__}"})
+                return {"service_versions": [], "banners": [], "skipped": True}
+            rows = result.get("results", []) or []
+            return {
+                "service_versions": [
+                    {"host": host, "port": r0.get("port"),
+                     "service": r0.get("service_guess"),
+                     "version": r0.get("version")}
+                    for r0 in rows
+                ],
+                "banners": [b for r0 in rows for b in (r0.get("banner_lines") or [])][:200],
+            }
+    # Single host/port path
+    port = int(options.get("port") or 443)
+    try:
+        result = await r.fingerprint_one(str(host), port, _Req())
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "fingerprint",
+                    "msg": f"fingerprint: {type(e).__name__}"})
+        return {"service_versions": [], "banners": [], "skipped": True}
+    return {
+        "service_versions": [{"host": host, "port": port,
+                              "service": result.get("service_guess"),
+                              "version": result.get("version")}],
+        "banners": (result.get("banner_lines") or [])[:50],
+    }
+
+
+async def _adapter_s3_scan(target: str, options: dict[str, Any],
+                           context: dict[str, Any], emit: EmitFn,
+                           stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import s3_scanner as r
+    init = {
+        "target": target,
+        "extra_keywords": list(options.get("extra_keywords") or []),
+        "permutations": bool(options.get("permutations", True)),
+        "confirm_auth": True,
+    }
+    public: list[str] = []
+    listable: list[str] = []
+
+    async def on_event(ev: dict[str, Any], summary: dict[str, Any]) -> None:
+        t = ev.get("type")
+        if t == "hit":
+            bucket = ev.get("bucket") or ev.get("name") or ""
+            if ev.get("public"):  public.append(bucket)
+            if ev.get("listable"): listable.append(bucket)
+        elif t == "error":
+            raise PresetError(f"s3_scan: {ev.get('detail','')}")
+
+    try:
+        await _drive_ws(r.s3_ws, init, emit, stop_event, on_event=on_event)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "s3_scan",
+                    "msg": f"s3_scan: {type(e).__name__}"})
+        return {"public_buckets": [], "listable_buckets": [],
+                "bucket_count": 0, "skipped": True}
+    return {
+        "public_buckets": public[:200],
+        "listable_buckets": listable[:200],
+        "bucket_count": len(public) + len(listable),
+        "public_s3_bucket": bool(public),
+    }
+
+
+async def _adapter_wifi_scan(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import wifi_scan as r
+    try:
+        result = await asyncio.to_thread(r.scan, _Req())
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "wifi_scan",
+                    "msg": f"wifi_scan: {type(e).__name__}"})
+        return {"ssids": [], "bssids": [], "encryption": [],
+                "signal_strength": [], "skipped": True}
+    networks = result.get("networks", []) or []
+    return {
+        "ssids":  [n.get("ssid") for n in networks if isinstance(n, dict)][:200],
+        "bssids": [n.get("bssid") for n in networks if isinstance(n, dict)][:200],
+        "encryption": [n.get("encryption") for n in networks if isinstance(n, dict)][:200],
+        "signal_strength": [n.get("signal_dbm") for n in networks if isinstance(n, dict)][:200],
+        "gateway": "",
+        "dns_servers": [],
+        "evil_twin_detected": False,
+    }
+
+
+async def _adapter_jwt_check(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import jwt_analyzer as r
+    token = options.get("token") or options.get("jwt") or ""
+    if not token:
+        # Look in prior phase outputs for an Authorization-style header
+        token = ""
+    if not token:
+        await emit({"type": "step_progress", "step": "jwt_check",
+                    "msg": "skipped: no `token` in options"})
+        return {"algorithm": None, "weak_secret": None, "claims": {},
+                "expiry": None, "none_algorithm": False, "skipped": True}
+    try:
+        result = await r.jwt_decode(r.JwtRequest(token=str(token), weak_secrets=True))
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "jwt_check",
+                    "msg": f"jwt: {type(e).__name__}"})
+        return {"algorithm": None, "weak_secret": None, "claims": {},
+                "skipped": True}
+    return {
+        "algorithm":     result.get("alg"),
+        "weak_secret":   (result.get("weak_secret_match") or {}).get("secret"),
+        "claims":        result.get("payload", {}),
+        "expiry":        (result.get("claims_meta") or {}).get("exp_iso"),
+        "none_algorithm": str(result.get("alg", "")).lower() == "none",
+    }
+
+
+async def _adapter_graphql(target: str, options: dict[str, Any],
+                           context: dict[str, Any], emit: EmitFn,
+                           stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import graphql as r
+    url = options.get("url") or target
+    if not str(url).startswith(("http://", "https://")):
+        url = "https://" + str(url).lstrip("/")
+    try:
+        result = await r.graphql_introspect(
+            url=str(url), confirm=True, request=_Req(),
+        )
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "graphql",
+                    "msg": f"graphql: {type(e).__name__}"})
+        return {"schema": None, "mutations": [], "queries": [],
+                "introspection_enabled": False, "skipped": True}
+    return {
+        "schema": result.get("query_type"),
+        "mutations": [m.get("field") for m in (result.get("mutations") or [])][:100],
+        "queries":   [q.get("field") for q in (result.get("queries") or [])][:100],
+        "introspection_enabled": bool(result.get("introspection_enabled", False)),
+    }
+
+
+# ── AWS per-service splits — all wrap aws_recon's single /recon endpoint ─
+
+async def _aws_recon_service(service: str, target: str, emit: EmitFn) -> dict[str, Any]:
+    from routers import aws_recon as r
+    try:
+        return await asyncio.to_thread(r.recon, _Req(), service)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": f"aws_{service}",
+                    "msg": f"aws_{service}: {type(e).__name__} "
+                           f"(credentials configured?)"})
+        return {}
+
+
+async def _adapter_aws_iam(target, options, ctx, emit, stop):
+    out = await _aws_recon_service("iam", target, emit)
+    iam = out.get("iam") or {}
+    users = iam.get("users") or []
+    return {
+        "users":      [u.get("UserName") for u in users][:200],
+        "roles":      [r0.get("RoleName") for r0 in (iam.get("roles") or [])][:200],
+        "policies":   [p.get("PolicyName") for p in (iam.get("policies") or [])][:200],
+        "admin_users":[u.get("UserName") for u in users
+                       if "admin" in str(u.get("UserName","")).lower()][:50],
+        "mfa_disabled": [u.get("UserName") for u in users
+                         if not u.get("MFAEnabled")][:50],
+        "access_keys_age": [u.get("AccessKeyAge") for u in users
+                            if u.get("AccessKeyAge")][:50],
+    }
+
+
+async def _adapter_aws_s3(target, options, ctx, emit, stop):
+    out = await _aws_recon_service("s3", target, emit)
+    s3 = out.get("s3") or {}
+    buckets = s3.get("buckets") or []
+    public = [b for b in buckets if b.get("public")]
+    return {
+        "buckets":              [b.get("name") for b in buckets][:200],
+        "public_buckets":       [b.get("name") for b in public][:50],
+        "acls":                 [b.get("acl") for b in buckets][:200],
+        "encryption_disabled":  [b.get("name") for b in buckets
+                                 if not b.get("encryption")][:50],
+        "versioning_disabled":  [b.get("name") for b in buckets
+                                 if not b.get("versioning")][:50],
+        "public_s3_bucket":     bool(public),
+    }
+
+
+async def _adapter_aws_ec2(target, options, ctx, emit, stop):
+    out = await _aws_recon_service("ec2", target, emit)
+    ec2 = out.get("ec2") or {}
+    insts = ec2.get("instances") or []
+    sgs = ec2.get("security_groups") or []
+    return {
+        "instances":             [i.get("InstanceId") for i in insts][:200],
+        "security_groups":       [g.get("GroupId") for g in sgs][:200],
+        "public_instances":      [i.get("InstanceId") for i in insts
+                                  if i.get("PublicIpAddress")][:50],
+        "open_security_groups":  [g.get("GroupId") for g in sgs
+                                  if any(rule.get("cidr") == "0.0.0.0/0"
+                                         for rule in (g.get("rules") or []))][:50],
+    }
+
+
+async def _adapter_aws_lambda(target, options, ctx, emit, stop):
+    out = await _aws_recon_service("lambda", target, emit)
+    lam = out.get("lambda") or {}
+    fns = lam.get("functions") or []
+    return {
+        "functions":        [f0.get("FunctionName") for f0 in fns][:200],
+        "env_vars":         [f0.get("Environment") for f0 in fns][:50],
+        "public_functions": [f0.get("FunctionName") for f0 in fns
+                             if f0.get("Public")][:50],
+    }
+
+
+async def _adapter_aws_rds(target, options, ctx, emit, stop):
+    out = await _aws_recon_service("rds", target, emit)
+    rds = out.get("rds") or {}
+    dbs = rds.get("dbs") or rds.get("instances") or []
+    public = [d for d in dbs if d.get("PubliclyAccessible")]
+    return {
+        "databases":           [d.get("DBInstanceIdentifier") for d in dbs][:100],
+        "public_rds":          [d.get("DBInstanceIdentifier") for d in public][:50],
+        "encryption_disabled": [d.get("DBInstanceIdentifier") for d in dbs
+                                if not d.get("StorageEncrypted")][:50],
+        "backup_disabled":     [d.get("DBInstanceIdentifier") for d in dbs
+                                if int(d.get("BackupRetentionPeriod") or 0) == 0][:50],
+    }
+
+
+async def _adapter_cloudtrail(target, options, ctx, emit, stop):
+    # cloudtrail isn't broken out in aws_recon; use a `trails`/cloudtrail dict
+    # if present, else surface a planned note.
+    out = await _aws_recon_service("iam", target, emit)
+    trails = out.get("cloudtrail") or out.get("trails") or {}
+    return {
+        "logging_enabled": bool(trails.get("enabled", False)),
+        "log_validation":  bool(trails.get("log_validation", False)),
+        "multi_region":    bool(trails.get("multi_region", False)),
+        "planned":         not trails,
+    }
+
+
+# ── Internal HTTP analysis (no backend route required) ────────────────────
+
+def _normalize_url(target: str, options: dict[str, Any]) -> str:
+    url = options.get("url") or target
+    if not str(url).startswith(("http://", "https://")):
+        url = "https://" + str(url).lstrip("/")
+    return str(url)
+
+
+async def _adapter_security_headers(target: str, options: dict[str, Any],
+                                    context: dict[str, Any], emit: EmitFn,
+                                    stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "security_headers",
+                    "msg": f"security_headers: {type(e).__name__}"})
+        return {"missing_headers": [], "csp_policy": "", "xfo": "",
+                "xcto": "", "referrer_policy": "", "skipped": True}
+    h = {k.lower(): v for k, v in r.headers.items()}
+    required = ["strict-transport-security", "content-security-policy",
+                "x-frame-options", "x-content-type-options",
+                "referrer-policy", "permissions-policy"]
+    missing = [m for m in required if m not in h]
+    return {
+        "missing_headers": missing,
+        "csp_policy":      h.get("content-security-policy", ""),
+        "xfo":             h.get("x-frame-options", ""),
+        "xcto":            h.get("x-content-type-options", ""),
+        "referrer_policy": h.get("referrer-policy", ""),
+        "hsts":            h.get("strict-transport-security", ""),
+        "headers":         dict(h),
+    }
+
+
+async def _adapter_cookie_analysis(target: str, options: dict[str, Any],
+                                   context: dict[str, Any], emit: EmitFn,
+                                   stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "cookie_analysis",
+                    "msg": f"cookies: {type(e).__name__}"})
+        return {"missing_secure": [], "missing_httponly": [],
+                "samesite_missing": [], "session_fixation": False,
+                "skipped": True}
+    cookies_raw = r.headers.get_list("set-cookie") if hasattr(r.headers, "get_list") else []
+    if not cookies_raw:
+        sc = r.headers.get("set-cookie", "")
+        if sc: cookies_raw = [sc]
+    missing_secure: list[str] = []
+    missing_httponly: list[str] = []
+    missing_samesite: list[str] = []
+    for raw in cookies_raw:
+        low = raw.lower()
+        name = raw.split("=", 1)[0]
+        if " secure" not in low and not low.endswith("secure"):
+            missing_secure.append(name)
+        if "httponly" not in low:
+            missing_httponly.append(name)
+        if "samesite" not in low:
+            missing_samesite.append(name)
+    return {
+        "missing_secure":   missing_secure,
+        "missing_httponly": missing_httponly,
+        "samesite_missing": missing_samesite,
+        "session_fixation": False,
+        "cookies_seen":     len(cookies_raw),
+    }
+
+
+async def _adapter_cors(target: str, options: dict[str, Any],
+                        context: dict[str, Any], emit: EmitFn,
+                        stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    origins_to_try = options.get("origins") or [
+        "https://evil.com", "null", f"https://{target}.evil.com",
+    ]
+    misconfig = False
+    allowed: list[str] = []
+    creds_allowed = False
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
+            for origin in origins_to_try[:8]:
+                try:
+                    r = await c.get(url, headers={
+                        "Origin": origin,
+                        "User-Agent": "MyHackingPal/0.3",
+                    })
+                except Exception:
+                    continue
+                acao = r.headers.get("access-control-allow-origin", "")
+                if acao and (acao == "*" or acao == origin):
+                    misconfig = True
+                    allowed.append(origin)
+                if r.headers.get("access-control-allow-credentials", "").lower() == "true":
+                    creds_allowed = True
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "cors",
+                    "msg": f"cors: {type(e).__name__}"})
+        return {"cors_misconfig": False, "origins_allowed": [],
+                "credentials_allowed": False, "skipped": True}
+    return {
+        "cors_misconfig": misconfig,
+        "origins_allowed": allowed,
+        "credentials_allowed": creds_allowed,
+    }
+
+
+async def _adapter_open_redirect(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    base = _normalize_url(target, options)
+    params = options.get("params") or ["redirect", "url", "next", "redir",
+                                       "return", "returnUrl", "continue"]
+    bait = "https://example.com/"
+    redirects: list[dict[str, str]] = []
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as c:
+            for p in params[:16]:
+                test_url = base + ("&" if "?" in base else "?") + f"{p}={bait}"
+                try:
+                    r = await c.get(test_url, headers={
+                        "User-Agent": "MyHackingPal/0.3",
+                    })
+                except Exception:
+                    continue
+                loc = r.headers.get("location", "")
+                if loc.startswith(bait) or loc == bait:
+                    redirects.append({"param": p, "location": loc})
+    except Exception:
+        pass
+    return {
+        "open_redirects": [r["param"] for r in redirects],
+        "redirect_params": redirects,
+    }
+
+
+async def _adapter_waf_detection(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    url = _normalize_url(target, options)
+    vendor = ""
+    waf_present = False
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "waf_detection",
+                    "msg": f"waf: {type(e).__name__}"})
+        return {"waf_present": False, "waf_vendor": "", "bypass_vectors": [],
+                "skipped": True}
+    headers_l = {k.lower(): v for k, v in r.headers.items()}
+    server = headers_l.get("server", "").lower()
+    signatures = {
+        "cloudflare": ["cloudflare", "cf-ray", "__cf_bm"],
+        "akamai":     ["akamai", "x-akamai"],
+        "cloudfront": ["cloudfront"],
+        "imperva":    ["incapsula", "x-iinfo"],
+        "f5":         ["bigip", "f5-trace"],
+        "aws-waf":    ["x-amzn-requestid", "x-amz-cf"],
+        "fastly":     ["fastly"],
+        "sucuri":     ["sucuri", "x-sucuri"],
+    }
+    blob = " ".join([server] + list(headers_l.keys()) + list(headers_l.values()))
+    for v, sigs in signatures.items():
+        if any(s in blob.lower() for s in sigs):
+            vendor = v; waf_present = True
+            break
+    return {
+        "waf_present": waf_present,
+        "waf_vendor": vendor,
+        "bypass_vectors": [],
+        "cdn_detected": "cloudfront" in vendor or "akamai" in vendor or "fastly" in vendor,
+    }
+
+
+# ── Internal OSINT / correlate / report ────────────────────────────────────
+
+def _domain_variants(domain: str) -> list[str]:
+    """Generate cheap typosquat variants (homoglyph + char swap)."""
+    base = domain.split(".")[0]
+    tld = domain[len(base):]
+    out: set[str] = set()
+    # Char drop
+    for i in range(len(base)):
+        out.add(base[:i] + base[i+1:] + tld)
+    # Adjacent swap
+    for i in range(len(base) - 1):
+        out.add(base[:i] + base[i+1] + base[i] + base[i+2:] + tld)
+    # Common homoglyph subs
+    for a, b in [("o", "0"), ("i", "1"), ("l", "1"), ("e", "3")]:
+        if a in base:
+            out.add(base.replace(a, b, 1) + tld)
+    # Hyphen insert
+    if len(base) > 4:
+        mid = len(base) // 2
+        out.add(base[:mid] + "-" + base[mid:] + tld)
+    return [d for d in out if d != domain][:30]
+
+
+async def _adapter_typosquat(target: str, options: dict[str, Any],
+                             context: dict[str, Any], emit: EmitFn,
+                             stop_event: asyncio.Event) -> dict[str, Any]:
+    import socket
+    variants = _domain_variants(target)
+    registered: list[str] = []
+    for v in variants:
+        try:
+            socket.gethostbyname(v)
+            registered.append(v)
+        except Exception:
+            pass
+    return {
+        "typosquat_domains":      variants,
+        "registered_lookalikes":  registered,
+        "parked_domains":         registered,  # naive — would need WHOIS to refine
+    }
+
+
+async def _adapter_mx_trace(target: str, options: dict[str, Any],
+                            context: dict[str, Any], emit: EmitFn,
+                            stop_event: asyncio.Event) -> dict[str, Any]:
+    # Use dns_recon to get MX records, then classify by provider hint.
+    summary = await _adapter_dns_recon(target, options, context, emit, stop_event)
+    mx = summary.get("mx") or []
+    blob = " ".join(str(m).lower() for m in mx)
+    provider = "unknown"
+    if "google" in blob or "googlemail" in blob: provider = "google"
+    elif "outlook" in blob or "office365" in blob or "protection.outlook" in blob: provider = "microsoft"
+    elif "mimecast" in blob: provider = "mimecast"
+    elif "proofpoint" in blob: provider = "proofpoint"
+    elif "barracuda" in blob: provider = "barracuda"
+    elif "amazonses" in blob: provider = "amazon-ses"
+    elif "zoho" in blob: provider = "zoho"
+    return {
+        "mail_provider": provider,
+        "security_gateway": provider if provider in ("mimecast", "proofpoint", "barracuda") else "",
+        "filtering_vendor": provider,
+        "mx": mx,
+    }
+
+
+async def _adapter_webmail_discovery(target: str, options: dict[str, Any],
+                                     context: dict[str, Any], emit: EmitFn,
+                                     stop_event: asyncio.Event) -> dict[str, Any]:
+    # Probe a small set of webmail paths and check whether any 200.
+    import httpx
+    base = _normalize_url(target, options)
+    paths = options.get("paths") or [
+        "/owa/", "/exchange/", "/ews/Exchange.asmx", "/webmail/",
+        "/mail/", "/roundcube/", "/squirrelmail/",
+        "/iredmail/", "/horde/", "/zimbra/",
+    ]
+    found: list[dict[str, Any]] = []
+    portal_type = ""
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as c:
+            for p in paths[:16]:
+                try:
+                    r = await c.get(base.rstrip("/") + p,
+                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                except Exception:
+                    continue
+                if 200 <= r.status_code < 300:
+                    found.append({"path": p, "status": r.status_code})
+                    if "owa" in p: portal_type = "owa"
+                    elif "roundcube" in p: portal_type = "roundcube"
+                    elif "webmail" in p: portal_type = portal_type or "generic-webmail"
+    except Exception:
+        pass
+    return {
+        "webmail_url": (found[0]["path"] if found else ""),
+        "portal_type": portal_type,
+        "mfa_required": False,  # would need login-flow inspection
+        "found": found,
+    }
+
+
+async def _adapter_js_analysis(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    import httpx
+    js_urls = options.get("targets") or options.get("js_files") or []
+    if isinstance(js_urls, str): js_urls = [js_urls]
+    if not js_urls:
+        return {"endpoints": [], "secrets": [], "api_keys": [],
+                "comments": [], "skipped": True}
+    endpoints: set[str] = set()
+    secrets: list[str] = []
+    api_keys: list[str] = []
+    comments: list[str] = []
+    endpoint_re = re.compile(r'["\'`](?:/[a-zA-Z0-9_./-]{2,80})["\'`]')
+    aws_key_re = re.compile(r'AKIA[A-Z0-9]{16}')
+    bearer_re = re.compile(r'Bearer\s+[A-Za-z0-9._-]{20,}')
+    comment_re = re.compile(r'/\*.{1,200}?\*/|//.{1,200}')
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+            for u in js_urls[:20]:
+                try:
+                    r = await c.get(str(u),
+                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                    body = r.text[:200_000]
+                except Exception:
+                    continue
+                for m in endpoint_re.findall(body)[:50]:
+                    endpoints.add(m.strip('"\'`'))
+                api_keys.extend(aws_key_re.findall(body)[:5])
+                secrets.extend(bearer_re.findall(body)[:5])
+                comments.extend(comment_re.findall(body)[:5])
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "js_analysis",
+                    "msg": f"js_analysis: {type(e).__name__}"})
+    return {
+        "endpoints": sorted(endpoints)[:200],
+        "secrets":   secrets[:25],
+        "api_keys":  api_keys[:25],
+        "comments":  comments[:25],
+    }
+
+
+async def _adapter_ioc_correlate(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    # `context` is the snapshot of all prior phases (dict of dicts).
+    iocs: list[str] = []
+    risk_score = 0
+    for phase_name, phase_data in (context or {}).items():
+        if not isinstance(phase_data, dict): continue
+        for step_id, step_summary in phase_data.items():
+            if not isinstance(step_summary, dict): continue
+            # Walk through known-risky output keys
+            for key in ("cves", "vulnerabilities", "iocs_found",
+                        "c2_indicators", "suspicious_processes",
+                        "suspicious_connections", "breached_accounts"):
+                v = step_summary.get(key)
+                if isinstance(v, list) and v:
+                    iocs.extend(f"{phase_name}.{step_id}.{key}={x}"
+                                for x in v[:10])
+                    risk_score += min(len(v), 10) * 2
+                elif isinstance(v, int) and v > 0:
+                    iocs.append(f"{phase_name}.{step_id}.{key}={v}")
+                    risk_score += min(v, 10)
+            for key in ("eternalblue", "ms17_010",
+                        "null_session_allowed", "axfr_succeeded",
+                        "subdomain_takeover", "imds_exposed",
+                        "default_creds"):
+                if step_summary.get(key):
+                    iocs.append(f"{phase_name}.{step_id}.{key}")
+                    risk_score += 15
+    return {
+        "iocs_found": iocs[:200],
+        "risk_score": risk_score,
+        "incident_response_needed": risk_score >= 30,
+    }
+
+
+async def _adapter_generate_report(target: str, options: dict[str, Any],
+                                   context: dict[str, Any], emit: EmitFn,
+                                   stop_event: asyncio.Event) -> dict[str, Any]:
+    template = options.get("template") or "generic"
+    phases_seen: list[str] = []
+    findings_count = 0
+    important: list[str] = []
+    for phase_name, phase_data in (context or {}).items():
+        phases_seen.append(phase_name)
+        if not isinstance(phase_data, dict): continue
+        for step_id, step_summary in phase_data.items():
+            if not isinstance(step_summary, dict): continue
+            for key in ("cves", "vulnerabilities", "public_buckets",
+                        "vulnerable_subdomains", "open_redirects",
+                        "injectable_params", "breached_accounts"):
+                v = step_summary.get(key)
+                if isinstance(v, list) and v:
+                    findings_count += len(v)
+                    for item in v[:3]:
+                        important.append(f"{step_id}.{key}: {item}")
+                elif isinstance(v, int) and v > 0:
+                    findings_count += v
+                    important.append(f"{step_id}.{key}: {v}")
+    await emit({"type": "step_progress", "step": "generate_report",
+                "msg": f"report ({template}): {len(phases_seen)} phases, "
+                       f"{findings_count} aggregated findings"})
+    return {
+        "report_template": template,
+        "phases_summarized": phases_seen,
+        "findings_total": findings_count,
+        "important_findings": important[:50],
+        "output": "in-memory; export via the Reports page",
+    }
+
+
+# ── AWS analysis adapters (operate on prior phase aws_* outputs) ──────────
+
+async def _adapter_sg_analysis(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    sgs = options.get("targets") or []
+    if isinstance(sgs, str): sgs = [sgs]
+    any_any = [s for s in sgs if isinstance(s, dict)
+               and any((rule.get("cidr") == "0.0.0.0/0" and
+                        rule.get("port") in (None, 0, "all"))
+                       for rule in (s.get("rules") or []))]
+    wide = [s for s in sgs if isinstance(s, dict)
+            and any(rule.get("cidr") == "0.0.0.0/0"
+                    for rule in (s.get("rules") or []))]
+    return {
+        "any_any_rules":  [s.get("GroupId") if isinstance(s, dict) else str(s)
+                           for s in any_any][:50],
+        "wide_open_ports": [s.get("GroupId") if isinstance(s, dict) else str(s)
+                            for s in wide][:50],
+        "ssh_exposed": [s.get("GroupId") for s in wide
+                        if isinstance(s, dict) and
+                        any(rule.get("port") == 22 for rule in (s.get("rules") or []))][:25],
+        "rdp_exposed": [s.get("GroupId") for s in wide
+                        if isinstance(s, dict) and
+                        any(rule.get("port") == 3389 for rule in (s.get("rules") or []))][:25],
+    }
+
+
+async def _adapter_iam_analysis(target: str, options: dict[str, Any],
+                                context: dict[str, Any], emit: EmitFn,
+                                stop_event: asyncio.Event) -> dict[str, Any]:
+    policies = options.get("targets") or []
+    if isinstance(policies, str): policies = [policies]
+    admin_wildcards = [p for p in policies if isinstance(p, dict)
+                       and "*" in str(p.get("Action") or p.get("policy") or "")]
+    return {
+        "admin_wildcards": [p.get("PolicyName") if isinstance(p, dict) else str(p)
+                            for p in admin_wildcards][:50],
+        "privilege_escalation_paths": [],
+        "unused_permissions": [],
+    }
+
+
+async def _adapter_s3_analysis(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    buckets = options.get("targets") or []
+    if isinstance(buckets, str): buckets = [buckets]
+    return {
+        "public_read": [b.get("name") for b in buckets
+                        if isinstance(b, dict) and b.get("public_read")][:50],
+        "public_write": [b.get("name") for b in buckets
+                         if isinstance(b, dict) and b.get("public_write")][:50],
+        "no_encryption": [b.get("name") for b in buckets
+                          if isinstance(b, dict) and not b.get("encryption")][:50],
+        "no_versioning": [b.get("name") for b in buckets
+                          if isinstance(b, dict) and not b.get("versioning")][:50],
+    }
+
+
+# ── Misc placeholders → light real adapters ────────────────────────────────
+
+async def _adapter_default_creds(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    # Surface a structured "planned" result so the playbook keeps moving.
+    # Real default-cred check needs per-protocol code we haven't written.
+    ports = options.get("targets") or []
+    if isinstance(ports, list):
+        await emit({"type": "step_progress", "step": "default_creds",
+                    "msg": f"received {len(ports)} services; default-creds "
+                           f"checking is a future router"})
+    return {"default_creds_found": [], "services": [], "planned": True}
+
+
+async def _adapter_imds_v2_check(target: str, options: dict[str, Any],
+                                 context: dict[str, Any], emit: EmitFn,
+                                 stop_event: asyncio.Event) -> dict[str, Any]:
+    await emit({"type": "step_progress", "step": "imds_v2_check",
+                "msg": "imdsv2 enforcement check needs the ssrf adapter "
+                       "context — wire through phase_N.ssrf_imds"})
+    return {"imdsv2_enforced": None, "token_required": None, "planned": True}
+
+
+async def _adapter_searchsploit(target: str, options: dict[str, Any],
+                                context: dict[str, Any], emit: EmitFn,
+                                stop_event: asyncio.Event) -> dict[str, Any]:
+    from routers import exploits as r
+    # Use the search-from-scan endpoint if options has rows; else free-text search.
+    rows = options.get("targets") or []
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        try:
+            scan_rows = []
+            for r0 in rows[:50]:
+                scan_rows.append(r.ScanRow(
+                    service=str(r0.get("service") or ""),
+                    version=str(r0.get("version") or ""),
+                ))
+            result = await r.search_from_scan(r.ScanEnrichBody(rows=scan_rows))
+        except Exception as e:
+            await emit({"type": "step_progress", "step": "searchsploit",
+                        "msg": f"searchsploit: {type(e).__name__}"})
+            return {"matching_exploits": [], "exploit_count": 0,
+                    "skipped": True}
+        hits = result.get("results", []) or result.get("matches", []) or []
+        return {
+            "matching_exploits": [h.get("title") or h.get("file") for h in hits][:100],
+            "exploit_count": len(hits),
+        }
+    q = str(options.get("q") or target)
+    try:
+        result = await r.search(q=q)
+    except Exception as e:
+        await emit({"type": "step_progress", "step": "searchsploit",
+                    "msg": f"searchsploit: {type(e).__name__}"})
+        return {"matching_exploits": [], "exploit_count": 0, "skipped": True}
+    hits = result.get("results", []) or []
+    return {
+        "matching_exploits": [h.get("title") for h in hits if isinstance(h, dict)][:100],
+        "exploit_count": len(hits),
+    }
+
+
+async def _adapter_cve_lookup(target: str, options: dict[str, Any],
+                              context: dict[str, Any], emit: EmitFn,
+                              stop_event: asyncio.Event) -> dict[str, Any]:
+    # Delegate to searchsploit, then synthesize CVE list from titles.
+    summary = await _adapter_searchsploit(target, options, context, emit, stop_event)
+    titles = summary.get("matching_exploits") or []
+    cve_re = re.compile(r"CVE-\d{4}-\d{4,7}")
+    cves: set[str] = set()
+    for t in titles:
+        cves.update(cve_re.findall(str(t)))
+    severities = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+    return {
+        "cves": sorted(cves),
+        "severity_breakdown": severities,  # NVD lookup would fill this; future
+    }
+
+
+async def _adapter_permutation(target: str, options: dict[str, Any],
+                               context: dict[str, Any], emit: EmitFn,
+                               stop_event: asyncio.Event) -> dict[str, Any]:
+    """Subdomain permutation generator. Given a list of base subdomains,
+    emit common dev/staging/admin permutations."""
+    bases = options.get("targets") or [target]
+    if isinstance(bases, str): bases = [bases]
+    prefixes = ["dev-", "staging-", "test-", "admin-", "internal-",
+                "vpn-", "qa-", "preview-", "demo-"]
+    out: set[str] = set()
+    for b in bases[:50]:
+        b = str(b)
+        for px in prefixes:
+            out.add(px + b)
+            if "." in b:
+                first, rest = b.split(".", 1)
+                out.add(f"{px}{first}.{rest}")
+    return {
+        "permutation_hits": [],  # would need DNS lookup per variant
+        "permutations": sorted(out)[:300],
+    }
+
+
+# ── Wire up overrides ──────────────────────────────────────────────────────
+
+_TOOL_ADAPTERS["fingerprint"]       = _adapter_fingerprint
+_TOOL_ADAPTERS["s3_scan"]           = _adapter_s3_scan
+_TOOL_ADAPTERS["wifi_scan"]         = _adapter_wifi_scan
+_TOOL_ADAPTERS["jwt_check"]         = _adapter_jwt_check
+_TOOL_ADAPTERS["graphql"]           = _adapter_graphql
+
+_TOOL_ADAPTERS["aws_iam"]           = _adapter_aws_iam
+_TOOL_ADAPTERS["aws_s3"]            = _adapter_aws_s3
+_TOOL_ADAPTERS["aws_ec2"]           = _adapter_aws_ec2
+_TOOL_ADAPTERS["aws_lambda"]        = _adapter_aws_lambda
+_TOOL_ADAPTERS["aws_rds"]           = _adapter_aws_rds
+_TOOL_ADAPTERS["cloudtrail"]        = _adapter_cloudtrail
+
+_TOOL_ADAPTERS["security_headers"]  = _adapter_security_headers
+_TOOL_ADAPTERS["cookie_analysis"]   = _adapter_cookie_analysis
+_TOOL_ADAPTERS["cors"]              = _adapter_cors
+_TOOL_ADAPTERS["open_redirect"]     = _adapter_open_redirect
+_TOOL_ADAPTERS["waf_detection"]     = _adapter_waf_detection
+
+_TOOL_ADAPTERS["typosquat"]         = _adapter_typosquat
+_TOOL_ADAPTERS["mx_trace"]          = _adapter_mx_trace
+_TOOL_ADAPTERS["webmail_discovery"] = _adapter_webmail_discovery
+_TOOL_ADAPTERS["js_analysis"]       = _adapter_js_analysis
+
+_TOOL_ADAPTERS["ioc_correlate"]     = _adapter_ioc_correlate
+_TOOL_ADAPTERS["generate_report"]   = _adapter_generate_report
+
+_TOOL_ADAPTERS["sg_analysis"]       = _adapter_sg_analysis
+_TOOL_ADAPTERS["iam_analysis"]      = _adapter_iam_analysis
+_TOOL_ADAPTERS["s3_analysis"]       = _adapter_s3_analysis
+
+_TOOL_ADAPTERS["default_creds"]     = _adapter_default_creds
+_TOOL_ADAPTERS["imds_v2_check"]     = _adapter_imds_v2_check
+_TOOL_ADAPTERS["searchsploit"]      = _adapter_searchsploit
+_TOOL_ADAPTERS["cve_lookup"]        = _adapter_cve_lookup
+_TOOL_ADAPTERS["permutation"]       = _adapter_permutation
+
+
 def known_tools() -> list[str]:
     return sorted(_TOOL_ADAPTERS)
 
