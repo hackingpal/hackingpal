@@ -19,8 +19,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +263,18 @@ async def brew_exec(ws: WebSocket) -> None:
             await ws.close(); return
 
         init = await ws.receive_json()
+
+        # Install/uninstall/upgrade is a state-changing local action — no remote
+        # target, but should attach to an engagement record under Engagement mode.
+        engagement_id = init.get("engagement_id") or get_engagement_id(ws)
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_engagement_present_ws(ws, engagement_id, mode):
+            stop.set()
+            return
+
         action = str(init.get("action", "")).strip()
         name   = str(init.get("name", "")).strip()
         cask   = bool(init.get("cask", False))

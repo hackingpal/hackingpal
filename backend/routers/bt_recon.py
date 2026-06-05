@@ -19,9 +19,11 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_DARWIN, require_unix
 
 router = APIRouter(prefix="/bt", tags=["bt-recon"], dependencies=[Depends(require_local_auth)])
@@ -261,7 +263,8 @@ def status() -> dict[str, Any]:
 
 
 @router.get("/devices")
-def devices() -> dict[str, Any]:
+def devices(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     require_unix(_BT_HINT)
     if IS_DARWIN:
         return _devices_mac()

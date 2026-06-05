@@ -21,9 +21,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 
 router = APIRouter(tags=["users"], dependencies=[Depends(require_local_auth)])
 
@@ -270,7 +272,8 @@ def _classify(users: list[dict[str, Any]],
 # ── public endpoint ──────────────────────────────────────────────────────────
 
 @router.get("/users/audit")
-def audit() -> dict[str, Any]:
+def audit(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     _require_linux()
     users = _parse_passwd()
     groups = _privileged_group_members()

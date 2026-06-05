@@ -36,13 +36,16 @@ import wave
 import zlib
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 
 from PIL import Image, ExifTags
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+from lib import scope
+from lib.mode import get_engagement_id, get_mode
 
 router = APIRouter(tags=["stego"])
 
@@ -578,6 +581,7 @@ async def capacity(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @router.post("/stego/embed")
 async def embed(
+    request: Request,
     file: UploadFile = File(...),
     payload_text: str | None = Form(None),
     payload_file: UploadFile | None = File(None),
@@ -586,6 +590,7 @@ async def embed(
     keep_filename: bool = Form(True),
 ) -> Response:
     """Embed a payload into the carrier file. Returns the stego bytes."""
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     if not payload_text and not payload_file:
         raise HTTPException(400, "must provide payload_text or payload_file")
     if payload_text and payload_file:
@@ -649,9 +654,11 @@ async def embed(
 
 @router.post("/stego/extract")
 async def extract(
+    request: Request,
     file: UploadFile = File(...),
     password: str | None = Form(None),
 ) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     raw = await file.read()
     fmt = _sniff_format(raw)
 
@@ -727,7 +734,8 @@ def _safe_text(data: bytes) -> str:
 
 
 @router.post("/stego/analyze")
-async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
+async def analyze(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     raw = await file.read()
     fmt = _sniff_format(raw)
     if fmt == "unknown":
@@ -814,8 +822,9 @@ async def analyze(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @router.post("/stego/strip-metadata")
-async def strip_metadata(file: UploadFile = File(...)) -> Response:
+async def strip_metadata(request: Request, file: UploadFile = File(...)) -> Response:
     """Re-encode the image with all EXIF/XMP/ICC stripped."""
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     raw = await file.read()
     fmt = _sniff_format(raw)
     if fmt not in ("png", "jpeg", "bmp"):

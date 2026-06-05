@@ -20,11 +20,13 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from lib import scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_WINDOWS
 
 logger = logging.getLogger(__name__)
@@ -50,7 +52,10 @@ class ExecResponse(BaseModel):
 
 
 @router.post("/exec", response_model=ExecResponse)
-def exec_cmd(req: ExecRequest) -> ExecResponse:
+def exec_cmd(req: ExecRequest, request: Request) -> ExecResponse:
+    # Arbitrary shell-out — we can't parse the command for targets, so just
+    # require an active engagement under Engagement mode. Lab mode passes through.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     cmd = req.command.strip()
     if not cmd:
         raise HTTPException(status_code=400, detail="empty command")

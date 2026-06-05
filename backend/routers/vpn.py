@@ -21,12 +21,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_DARWIN, require_unix
 
 logger = logging.getLogger(__name__)
@@ -168,10 +169,12 @@ def _toggle(direction: str) -> dict[str, Any]:
 
 
 @router.post("/vpn/start")
-def start() -> dict[str, Any]:
+def start(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     return _toggle("up")
 
 
 @router.post("/vpn/stop")
-def stop() -> dict[str, Any]:
+def stop(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     return _toggle("down")

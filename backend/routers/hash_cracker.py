@@ -26,10 +26,12 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -482,7 +484,8 @@ def _check_rockyou_compatible(algos: list[str]) -> None:
 
 
 @router.post("/hash/crack")
-def crack(req: CrackRequest) -> dict[str, Any]:
+def crack(req: CrackRequest, request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     h = req.hash.strip()
     if not h:
         raise HTTPException(status_code=400, detail="hash is required")
@@ -571,6 +574,17 @@ async def hash_crack_ws(ws: WebSocket) -> None:
 
     try:
         init = await ws.receive_json()
+
+        # Offline cracking is still an attributable evidence-producing action.
+        engagement_id = init.get("engagement_id") or get_engagement_id(ws)
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_engagement_present_ws(ws, engagement_id, mode):
+            stop.set()
+            return
+
         h = str(init.get("hash", "")).strip()
         algorithm = str(init.get("algorithm", "auto")).lower()[:MAX_ALGORITHM_LEN]
         use_builtin = bool(init.get("use_builtin", True))

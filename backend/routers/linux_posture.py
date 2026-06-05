@@ -29,9 +29,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import require_linux
 
 router = APIRouter(tags=["linux"], dependencies=[Depends(require_local_auth)])
@@ -396,7 +398,8 @@ def _classify(mac: dict[str, Any], fw: dict[str, Any],
 # ── public endpoint ──────────────────────────────────────────────────────────
 
 @router.get("/linux/posture")
-def linux_posture() -> dict[str, Any]:
+def linux_posture(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     require_linux("linux/posture is Linux-only; see /macos/posture (Mac) "
                   "or /windows/posture (Windows).")
 

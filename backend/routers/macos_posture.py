@@ -26,10 +26,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import require_darwin
 
 router = APIRouter(tags=["macos"], dependencies=[Depends(require_local_auth)])
@@ -116,7 +117,8 @@ def _xprotect() -> dict[str, Any]:
 
 
 @router.get("/macos/posture")
-async def macos_posture() -> dict[str, Any]:
+async def macos_posture(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     require_darwin("macos/posture is macOS-only; see /linux/posture (Linux) "
                    "or /windows/posture (Windows).")
 

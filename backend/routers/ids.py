@@ -22,9 +22,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, ids
+from lib import hids_notify, ids, scope
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, ws_error
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +72,25 @@ async def ids_ws(ws: WebSocket) -> None:
     listener = asyncio.create_task(listen_for_stop())
 
     try:
-        # Optional handshake (allows future config — currently empty)
+        # Optional handshake — may carry `engagement_id` / `mode` overrides.
+        init: dict[str, Any] = {}
         try:
-            await asyncio.wait_for(ws.receive_json(), timeout=0.5)
+            raw = await asyncio.wait_for(ws.receive_json(), timeout=0.5)
+            if isinstance(raw, dict):
+                init = raw
         except Exception:
             pass
+
+        # IDS watches local listeners + auth log — no remote target. Require an
+        # engagement under Engagement mode so detections attach to a record.
+        engagement_id = init.get("engagement_id") or get_engagement_id(ws)
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_engagement_present_ws(ws, engagement_id, mode):
+            stop.set()
+            return
 
         baseline = await loop.run_in_executor(None, ids.listening_snapshot)
         unknown  = sum(1 for e in baseline if e[4] not in ids.KNOWN_LISTENERS)

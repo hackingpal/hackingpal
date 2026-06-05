@@ -14,11 +14,13 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from lib import scope
 from lib.auth import require_local_auth
 
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from pydantic import BaseModel, Field
 
 from .settings import keychain_get_named
@@ -49,7 +51,11 @@ class QueryBody(BaseModel):
 
 
 @router.post("/query")
-async def query(body: QueryBody) -> dict[str, Any]:
+async def query(body: QueryBody, request: Request) -> dict[str, Any]:
+    # Shodan/Censys queries are arbitrary search strings (`port:22`, `org:Acme`,
+    # bare IPs) — no single target to scope-match. Require an active engagement
+    # under Engagement mode so the recon is attributable; Lab mode passes through.
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     if body.service == "shodan":
         return await _shodan(body.query, body.limit, body.page)
     return await _censys(body.query, body.limit, body.page)

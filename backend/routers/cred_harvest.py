@@ -35,7 +35,10 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+
+from lib import scope
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +323,8 @@ def _check_env_files() -> list[dict[str, Any]]:
 # ── Entry point ─────────────────────────────────────────────────────────────
 
 @router.get("/scan")
-def scan() -> dict[str, Any]:
+def scan(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     findings: list[dict[str, Any]] = []
     sources: dict[str, Any] = {
         "aws":       _check_aws(findings),

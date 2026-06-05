@@ -18,9 +18,11 @@ import subprocess
 import sys
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 
 router = APIRouter(tags=["firewall"], dependencies=[Depends(require_local_auth)])
 
@@ -154,7 +156,8 @@ def _parse_iptables(text: str) -> list[dict[str, Any]]:
 # ── public endpoint ──────────────────────────────────────────────────────────
 
 @router.get("/firewall/rules")
-def rules() -> dict[str, Any]:
+def rules(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     _require_linux()
 
     nft = shutil.which("nft")

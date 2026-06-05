@@ -30,10 +30,12 @@ import zipfile
 from collections import defaultdict, deque
 from typing import Any
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from lib import scope
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +186,11 @@ def _classify_file(name: str) -> str | None:
 
 @router.post("/load")
 async def load_zip(
+    request: Request,
     file: UploadFile = File(...),
     confirm_auth: bool = Form(False),
 ) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     if not confirm_auth:
         raise HTTPException(
             403,
@@ -247,7 +251,8 @@ def status() -> dict[str, Any]:
 
 
 @router.post("/clear")
-def clear() -> dict[str, bool]:
+def clear(request: Request) -> dict[str, bool]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     global _graph
     _graph = Graph()
     return {"cleared": True}

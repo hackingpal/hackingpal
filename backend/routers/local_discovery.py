@@ -19,8 +19,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify
+from lib import hids_notify, scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 
 router = APIRouter(tags=["local-discovery"], dependencies=[Depends(require_local_auth)])
 
@@ -227,6 +228,18 @@ async def local_discovery_ws(ws: WebSocket) -> None:
     await ws.accept()
     try:
         init = await ws.receive_json()
+
+        # LAN discovery broadcasts on the active interface; "target" is the
+        # local segment, which we don't try to scope-match. Just require an
+        # engagement under Engagement mode so the sweep is attributable.
+        engagement_id = init.get("engagement_id") or get_engagement_id(ws)
+        init_mode = str(init.get("mode", "")).strip().lower()
+        mode = "engagement" if init_mode == "engagement" else (
+            "lab" if init_mode == "lab" else get_mode(ws)
+        )
+        if not await scope.enforce_engagement_present_ws(ws, engagement_id, mode):
+            return
+
         protocols = init.get("protocols") or ["mdns", "ssdp", "llmnr"]
         duration = float(init.get("duration", 8))
         duration = max(2.0, min(duration, 30.0))

@@ -26,9 +26,11 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
+from lib import scope
 from lib.auth import require_local_auth
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_WINDOWS, require_windows
 
 router = APIRouter(tags=["windows"], dependencies=[Depends(require_local_auth)])
@@ -368,7 +370,8 @@ def _classify(bl: dict, dfd: dict, uac: dict, fw: dict, ss: dict,
 
 
 @router.get("/windows/posture")
-def windows_posture() -> dict[str, Any]:
+def windows_posture(request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     require_windows("windows/posture is Windows-only; see /macos/posture (Mac) "
                     "or /linux/posture (Linux).")
 

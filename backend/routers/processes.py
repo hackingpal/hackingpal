@@ -19,12 +19,13 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import psutil
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from lib import forensics, hids_notify, ids as ids_lib   # reuse the lsof snapshot
+from lib import forensics, hids_notify, ids as ids_lib, scope   # reuse the lsof snapshot
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_DARWIN, IS_LINUX
 
 logger = logging.getLogger(__name__)
@@ -319,7 +320,8 @@ def _kill_one(pid: int, signal_name: str, admin: bool, confirm: bool) -> dict[st
 
 
 @router.post("/processes/kill")
-async def kill_process(req: KillRequest) -> dict[str, Any]:
+async def kill_process(req: KillRequest, request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     result = _kill_one(req.pid, req.signal, req.admin, req.confirm)
     if result["ok"]:
         sev = "critical" if result.get("method") == "admin" else "warning"
@@ -333,7 +335,8 @@ async def kill_process(req: KillRequest) -> dict[str, Any]:
 
 
 @router.post("/processes/kill_bulk")
-async def kill_bulk(req: KillBulkRequest) -> dict[str, Any]:
+async def kill_bulk(req: KillBulkRequest, request: Request) -> dict[str, Any]:
+    scope.enforce_engagement_present(get_engagement_id(request), get_mode(request))
     if not req.pids:
         raise MhpError("pids list is empty", code=ErrorCode.BAD_REQUEST)
     # Length cap is enforced by Field(max_length=...) above; reject any negative
