@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { fetchWifiReport, type WifiFinding, type WifiReport, type WifiSeverity } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const SEV_DOT: Record<WifiSeverity, string> = {
   pass: "bg-phos", info: "bg-ink-dim", warn: "bg-amber", fail: "bg-danger",
@@ -50,34 +53,57 @@ export default function Wifi() {
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">Error — {error}</div>
         )}
+        {!report && !busy && !error && (
+          <EmptyState
+            icon="📶"
+            title="WiFi integrity"
+            description="SSID & encryption sanity, gateway ARP, DNS hijack heuristic. Click Run Check to start."
+          />
+        )}
         {!report && busy && <div className="text-ink-dim text-xs">Running checks…</div>}
-        {report && Object.entries(grouped).map(([section, items]) => (
-          <section key={section}
-                   className="border border-divider rounded-md overflow-hidden bg-bg-card">
-            <header className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em]
-                               text-ink-dim border-b border-divider bg-bg-panel">
-              {section}
-            </header>
-            <div className="p-3 font-mono text-xs space-y-1.5">
-              {items.map((f, i) => (
-                <div key={i}>
-                  <div className="flex items-baseline gap-2">
-                    <span className={"inline-block w-1.5 h-1.5 rounded-full mt-1 " + SEV_DOT[f.severity]} />
-                    <span className="w-32 shrink-0 text-ink-dim">{f.label}</span>
-                    <span className={SEV_TEXT[f.severity] + " break-all"}>
-                      {f.value}
-                    </span>
-                  </div>
-                  {f.note && (
-                    <div className="ml-6 mt-0.5 text-[11px] text-ink-muted whitespace-pre-line">
-                      {f.note}
+        {report && (
+          <>
+            <StatsBar
+              total={report.findings.length}
+              critical={report.findings.filter((f) => f.severity === "fail").length}
+              medium={report.findings.filter((f) => f.severity === "warn").length}
+              low={report.findings.filter((f) => f.severity === "pass").length}
+              extra={`${Object.keys(grouped).length} sections`}
+            />
+            {Object.entries(grouped).map(([section, items]) => (
+              <section key={section}
+                       className="border border-divider rounded-md overflow-hidden bg-bg-card">
+                <header className="px-3 py-1.5 text-[10px] uppercase tracking-[0.2em]
+                                   text-ink-dim border-b border-divider bg-bg-panel">
+                  {section}
+                </header>
+                <div className="p-3 font-mono text-xs space-y-1.5">
+                  {items.map((f, i) => (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group " + (f.severity === "fail" ? "mhp-critical-pulse rounded px-1" : "")}
+                    >
+                      <div className="flex items-baseline gap-2">
+                        <span className={"inline-block w-1.5 h-1.5 rounded-full mt-1 " + SEV_DOT[f.severity]} />
+                        <span className="w-32 shrink-0 text-ink-dim">{f.label}</span>
+                        <span className={SEV_TEXT[f.severity] + " break-all flex-1"}>
+                          {f.value}
+                        </span>
+                        <CopyButton text={`${f.label}: ${f.value}${f.note ? ` — ${f.note}` : ""}`} />
+                      </div>
+                      {f.note && (
+                        <div className="ml-6 mt-0.5 text-[11px] text-ink-muted whitespace-pre-line">
+                          {f.note}
+                        </div>
+                      )}
                     </div>
-                  )}
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
-        ))}
+              </section>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );

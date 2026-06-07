@@ -3,16 +3,14 @@ import {
   fetchDnsRecon, isApiError, openWs, watchWsLiveness,
   type DnsReport, type DnsReconEvent,
 } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import StatsBar from "../components/StatsBar";
+import EmptyStateComponent from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Mode = "quick" | "enum";
 
 type EnumHit = { subdomain: string; ip: string };
-
-const SEV: Record<string, { text: string; dot: string; border: string; bg: string }> = {
-  info: { text: "text-ink-muted", dot: "bg-ink-dim", border: "border-divider",     bg: "bg-bg-card" },
-  warn: { text: "text-amber",     dot: "bg-amber",   border: "border-amber/40",    bg: "bg-amber/5" },
-  high: { text: "text-danger",    dot: "bg-danger",  border: "border-danger/40",   bg: "bg-danger/5" },
-};
 
 export default function DnsRecon() {
   const [mode, setMode] = useState<Mode>("quick");
@@ -258,7 +256,15 @@ export default function DnsRecon() {
           <EnumPanel state={enumState} />
         )}
 
-        {!confirmReason && !error && !timedOut && !report && !enumState.started && !busy && <EmptyState />}
+        {!confirmReason && !error && !timedOut && !report && !enumState.started && !busy && (
+          <EmptyStateComponent
+            icon="🔍"
+            title="DNS Recon"
+            description="Quick = record dump + zone transfer probe. Subdomain = bruteforce common prefixes against the domain."
+            exampleTarget="example.com"
+            onExample={setDomain}
+          />
+        )}
       </div>
     </div>
   );
@@ -355,47 +361,34 @@ function ConfirmBanner({
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  DNS  RECON  │
-        │  ▶ ▶ AXFR ▶  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Quick = record dump + zone transfer probe.<br />
-          Subdomain = bruteforce common prefixes against the domain.
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function QuickReport({ report }: { report: DnsReport }) {
   const axfrSucceeded = report.zone_transfer.some((z) => z.succeeded);
+  const critCount = report.findings.filter((f) => f.severity === "high").length;
   return (
     <>
       {/* Findings banner first */}
       {report.findings.length > 0 && (
         <Card title={`Findings · ${report.findings.length}`}>
           <ul className="space-y-1">
-            {report.findings.map((f, i) => {
-              const sev = SEV[f.severity] ?? SEV.info;
-              return (
-                <li key={i} className="flex items-start gap-2">
-                  <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
-                  <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
-                    {f.severity}
-                  </span>
-                  <span className="text-ink-primary flex-1">{f.label}</span>
-                  <span className="text-ink-muted">{f.detail}</span>
-                </li>
-              );
-            })}
+            {report.findings.map((f, i) => (
+              <li
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="group flex items-start gap-2 mhp-result-in"
+              >
+                <SeverityBadge severity={normalizeSeverity(f.severity)} />
+                <span className="text-ink-primary flex-1">{f.label}</span>
+                <span className="text-ink-muted">{f.detail}</span>
+                <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
+              </li>
+            ))}
           </ul>
+          <StatsBar
+            total={report.findings.length}
+            critical={critCount}
+            high={report.findings.filter((f) => f.severity === "warn").length}
+            className="mt-2 -mx-3 -mb-3"
+          />
         </Card>
       )}
 
@@ -496,15 +489,27 @@ function EnumPanel({ state }: {
             {state.running ? "Probing…" : "No hits."}
           </div>
         ) : (
-          <div className="grid grid-cols-[1fr_1fr] gap-x-3 gap-y-0.5">
+          <div className="grid grid-cols-[1fr_1fr_auto] gap-x-3 gap-y-0.5">
             {state.hits.map((h, i) => (
-              <div key={i} className="contents">
+              <div
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="contents mhp-result-in group"
+              >
                 <span className="text-ink-primary break-all">{h.subdomain}</span>
                 <span className="text-ink-muted">{h.ip}</span>
+                <CopyButton text={`${h.subdomain}\t${h.ip}`} />
               </div>
             ))}
           </div>
         )}
+        <StatsBar
+          total={state.hits.length}
+          elapsed={state.elapsed}
+          running={state.running}
+          extra={state.total > 0 ? `${state.done}/${state.total} probed` : undefined}
+          className="mt-2 -mx-3 -mb-3"
+        />
       </Card>
     </>
   );

@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import {
   fetchPersistenceAudit, type ForensicSeverity, type PersistenceEntry, type SignStatus,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<ForensicSeverity, { dot: string; text: string; bg: string }> = {
   info: { dot: "bg-ink-dim", text: "text-ink-muted", bg: "bg-bg-card" },
@@ -114,9 +116,10 @@ export default function Persistence() {
             <div className="font-mono text-[11px]">
               {visible.map((e, i) => (
                 <div key={e.plist}
-                     className={"grid grid-cols-[120px_1fr_120px_140px] gap-3 px-3 py-2 " +
+                     style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                     className={"mhp-result-in group grid grid-cols-[120px_1fr_120px_140px_30px] gap-3 px-3 py-2 items-center " +
                                 "border-l-2 " + SEV[e.severity].bg + " " +
-                                (e.severity === "high" ? "border-l-danger" :
+                                (e.severity === "high" ? "border-l-danger mhp-critical-pulse" :
                                  e.severity === "warn" ? "border-l-amber" :
                                                           "border-l-transparent ") +
                                 (i % 2 === 0 ? "" : " bg-opacity-50")}>
@@ -139,13 +142,18 @@ export default function Persistence() {
                     {e.start_interval && <div>· every {e.start_interval}s</div>}
                     {!e.run_at_load && !e.keep_alive && !e.start_interval && <div>—</div>}
                   </div>
+                  <CopyButton text={`${e.source} · ${e.label} · ${e.program || "(no program)"} · ${e.sign_status || "—"}`} />
                 </div>
               ))}
             </div>
           </section>
         )}
         {!busy && entries.length === 0 && !error && (
-          <div className="text-ink-dim text-xs">No persistence entries found.</div>
+          <EmptyState
+            icon="🪤"
+            title="No persistence entries"
+            description="No LaunchAgents, LaunchDaemons, systemd units, cron jobs, or autostart entries found."
+          />
         )}
       </div>
     </div>

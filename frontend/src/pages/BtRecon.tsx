@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type BtDevice = {
   address: string;
@@ -83,8 +86,21 @@ export default function BtRecon() {
         </div>
       ))}
 
+      {!devices && !loading && !error && (
+        <EmptyState
+          icon="🔵"
+          title="Bluetooth recon"
+          description="Local controller info + connected / paired / recent devices, OUI manufacturer lookup."
+        />
+      )}
+
       {devices && (
         <>
+          <StatsBar
+            total={devices.summary.connected + devices.summary.paired + devices.summary.not_paired}
+            extra={`${devices.summary.connected} connected · ${devices.summary.paired} paired · ${devices.summary.not_paired} recent`}
+            className="mb-3"
+          />
           {(["connected", "paired", "not_paired"] as const).map((group) => {
             const list = devices[group];
             if (list.length === 0) return null;
@@ -104,20 +120,29 @@ export default function BtRecon() {
                         <th className="text-right px-3 py-1.5 w-16">RSSI</th>
                         <th className="text-right px-3 py-1.5 w-16">BATT</th>
                         <th className="text-left px-3 py-1.5">LAST SEEN</th>
+                        <th className="px-3 py-1.5 w-10"></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {list.map((d, i) => (
-                        <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
-                          <td className="px-3 py-1 font-mono text-ink-primary">{d.name || <span className="text-ink-dim italic">(no name)</span>}</td>
-                          <td className="px-3 py-1 font-mono text-accent">{d.address}</td>
-                          <td className="px-3 py-1 text-ink-muted">{d.manufacturer}</td>
-                          <td className="px-3 py-1 text-ink-muted">{d.minor_type}</td>
-                          <td className="px-3 py-1 font-mono text-right tabular-nums">{d.rssi || "—"}</td>
-                          <td className="px-3 py-1 font-mono text-right tabular-nums">{d.battery || "—"}</td>
-                          <td className="px-3 py-1 text-ink-dim">{d.last_seen}</td>
-                        </tr>
-                      ))}
+                      {list.map((d, i) => {
+                        const copyText = `${d.name || "(no name)"} ${d.address} · ${d.manufacturer} · ${d.minor_type}`;
+                        return (
+                          <tr
+                            key={i}
+                            style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                            className="mhp-result-in group border-b border-divider hover:bg-bg-nav-hover"
+                          >
+                            <td className="px-3 py-1 font-mono text-ink-primary">{d.name || <span className="text-ink-dim italic">(no name)</span>}</td>
+                            <td className="px-3 py-1 font-mono text-accent">{d.address}</td>
+                            <td className="px-3 py-1 text-ink-muted">{d.manufacturer}</td>
+                            <td className="px-3 py-1 text-ink-muted">{d.minor_type}</td>
+                            <td className="px-3 py-1 font-mono text-right tabular-nums">{d.rssi || "—"}</td>
+                            <td className="px-3 py-1 font-mono text-right tabular-nums">{d.battery || "—"}</td>
+                            <td className="px-3 py-1 text-ink-dim">{d.last_seen}</td>
+                            <td className="px-3 py-1"><CopyButton text={copyText} /></td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

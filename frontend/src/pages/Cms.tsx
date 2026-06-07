@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchCms, type CmsReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const CONF_TINT: Record<string, string> = {
   high: "text-phos border-phos/40 bg-phos/10",
@@ -66,7 +69,15 @@ export default function Cms() {
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">Error — {error}</div>
         )}
-        {!report && !error && !confirmReason && !busy && <EmptyState />}
+        {!report && !error && !confirmReason && !busy && (
+          <EmptyStateComponent
+            icon="🧩"
+            title="CMS / Stack Fingerprint"
+            description="Detects CMSes, frontend / backend frameworks, CDNs, hosting providers. One HTTP GET, headers + HTML + cookies inspection. ~40 signatures."
+            exampleTarget="https://example.com"
+            onExample={setUrl}
+          />
+        )}
 
         {report && (
           <>
@@ -112,7 +123,11 @@ export default function Cms() {
               <Card title={`Findings · ${report.findings.length}`}>
                 <ul className="space-y-1">
                   {report.findings.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2">
+                    <li
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="group flex items-start gap-2 mhp-result-in"
+                    >
                       <span className={"text-[10px] uppercase tracking-widest " +
                         (f.severity === "high" ? "text-danger" :
                          f.severity === "warn" ? "text-amber" : "text-ink-muted")}>
@@ -120,9 +135,16 @@ export default function Cms() {
                       </span>
                       <span className="text-ink-primary flex-1">{f.label}</span>
                       <span className="text-ink-muted">{f.detail}</span>
+                      <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                     </li>
                   ))}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  high={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
           </>
@@ -149,25 +171,6 @@ function ConfirmBanner({ reason, target, onCancel, onConfirm }:
                    bg-amber/20 border border-amber/40 text-amber hover:bg-amber/30 transition">
         ▶ Proceed
       </button>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  WHAT IS IT  │
-        │  CMS · stack │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Detects CMSes, frontend / backend frameworks, CDNs, hosting providers.<br />
-          One HTTP GET, headers + HTML + cookies inspection. ~40 signatures.
-        </div>
-      </div>
     </div>
   );
 }

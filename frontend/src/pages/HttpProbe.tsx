@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type HttpProbeEvent, type HttpProbeFinding } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Hit = { path: string; status: number; length: number; location: string };
 
@@ -209,7 +212,15 @@ export default function HttpProbe() {
           </div>
         )}
 
-        {!started && !error && !timedOut && !confirmReason && !running && <EmptyState />}
+        {!started && !error && !timedOut && !confirmReason && !running && (
+          <EmptyStateComponent
+            icon="🌐"
+            title="HTTP Probe"
+            description="Path fuzz · method enum · header audit · sensitive-file detection"
+            exampleTarget="https://example.com"
+            onExample={setUrl}
+          />
+        )}
 
         {started && (
           <>
@@ -260,17 +271,28 @@ export default function HttpProbe() {
                   {findings.map((f, i) => {
                     const sev = SEV[f.severity] ?? SEV.info;
                     return (
-                      <li key={i} className="flex items-start gap-2">
+                      <li
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="group flex items-start gap-2 mhp-result-in"
+                      >
                         <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
                         <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
                           {f.severity}
                         </span>
                         <span className="text-ink-primary flex-1">{f.label}</span>
                         <span className="text-ink-muted">{f.detail}</span>
+                        <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                       </li>
                     );
                   })}
                 </ul>
+                <StatsBar
+                  total={findings.length}
+                  high={findings.filter((f) => f.severity === "high").length}
+                  medium={findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
 
@@ -280,17 +302,25 @@ export default function HttpProbe() {
                   {running ? "Probing…" : "No interesting responses."}
                 </div>
               ) : (
-                <div className="grid grid-cols-[60px_1fr_60px_2fr] gap-x-3 gap-y-1">
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Status</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Path</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider text-right">Len</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Location</span>
+                <div className="flex flex-col gap-1">
+                  <div className="grid grid-cols-[60px_1fr_60px_2fr_auto] gap-x-3">
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">Status</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">Path</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider text-right">Len</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">Location</span>
+                    <span />
+                  </div>
                   {hits.map((h, i) => (
-                    <div key={i} className="contents">
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="group grid grid-cols-[60px_1fr_60px_2fr_auto] gap-x-3 items-center mhp-result-in"
+                    >
                       <span className={statusColor(h.status)}>{h.status}</span>
                       <span className="text-ink-primary break-all">{h.path}</span>
                       <span className="text-ink-muted text-right">{h.length}</span>
                       <span className="text-ink-muted break-all">{h.location || "—"}</span>
+                      <CopyButton text={`${h.status} ${h.path}${h.location ? ` → ${h.location}` : ""}`} />
                     </div>
                   ))}
                 </div>
@@ -335,24 +365,6 @@ function ConfirmBanner({
         >
           ▶ Proceed
         </button>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  H T T P     │
-        │  ▶  PROBE ▶  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Path fuzz · method enum · header audit · sensitive-file detection
-        </div>
       </div>
     </div>
   );

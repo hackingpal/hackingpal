@@ -7,6 +7,7 @@ import {
   type NmapStatus, type NmapScriptEntry, type NmapPolicy,
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
 
 // ── Profile presets (partial overrides applied on top of `defaultOptions()`) ──
 
@@ -674,7 +675,13 @@ export default function Nmap() {
         )}
 
         {!report && !running && rawLog.length === 0 && !error && !needConfirm && (
-          <EmptyState />
+          <EmptyStateComponent
+            icon="🛰"
+            title="Nmap · full surface"
+            description="Pick a profile or open Advanced, then press ▶ Scan. Multi-target · all flags exposed · 612 NSE scripts · live XML parse."
+            exampleTarget="scanme.nmap.org"
+            onExample={(t) => setTargetsText(t + "\n")}
+          />
         )}
       </div>
     </div>
@@ -1295,25 +1302,3 @@ function ExportBar({ report }: { report: NmapReport }) {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  ▶  NMAP     │
-        │ FULL SURFACE │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Pick a profile or open <span className="text-ink-primary">Advanced</span>,
-          then press <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-                                    text-[10px] text-ink-primary">▶ Scan</kbd>
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          Multi-target · all flags exposed · 612 NSE scripts · live XML parse
-        </div>
-      </div>
-    </div>
-  );
-}

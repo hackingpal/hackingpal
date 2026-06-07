@@ -1,16 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openWs, type IdsEvent, type IdsRecord, type IdsSeverity, type IdsSource } from "../api";
-
-const SEV_TEXT: Record<IdsSeverity, string> = {
-  info: "text-ink-muted",
-  warn: "text-amber",
-  high: "text-danger",
-};
+import SeverityBadge, { type Severity } from "../components/SeverityBadge";
+import StatsBar from "../components/StatsBar";
+import EmptyStateComponent from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
+import { useCriticalPulseSet } from "../lib/useCriticalPulse";
 
 const SRC_TAG: Record<IdsSource, string> = {
   ports: "text-accent",
   auth:  "text-amber",
 };
+
+function idsSevToSeverity(s: IdsSeverity): Severity {
+  if (s === "high") return "critical";
+  if (s === "warn") return "medium";
+  return "info";
+}
 
 type Filter = "all" | IdsSource;
 
@@ -20,7 +25,14 @@ export default function IdsPage() {
   const [events,   setEvents]   = useState<IdsRecord[]>([]);
   const [filter,   setFilter]   = useState<Filter>("all");
   const [baseline, setBaseline] = useState<{ total: number; unknown: number } | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const pulsing = useCriticalPulseSet(
+    events,
+    (e) => `${e.ts}-${e.title}`,
+    (e) => e.severity === "high",
+  );
 
   // Stop the live IDS stream if the user navigates away.
   useEffect(() => () => {
@@ -46,6 +58,7 @@ export default function IdsPage() {
   function start() {
     if (running) return;
     setRunning(true); setError(null); setEvents([]); setBaseline(null);
+    setStartedAt(Date.now());
 
     const ws = openWs("/ws/ids");
     wsRef.current = ws;
@@ -143,7 +156,14 @@ export default function IdsPage() {
           </div>
         )}
 
-        {visible.length === 0 && !running && !error && <EmptyState />}
+        {visible.length === 0 && !running && !error && (
+          <EmptyStateComponent
+            icon="🛎️"
+            title="Intrusion Detection"
+            description="Monitor listening ports and authentication failures for unexpected changes."
+            hint="Port baseline · live diff every 5s · auth-event tail · 10s debounce"
+          />
+        )}
 
         {visible.length === 0 && running && (
           <div className="text-ink-dim text-xs font-mono">
@@ -154,20 +174,42 @@ export default function IdsPage() {
         {visible.length > 0 && (
           <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
             <div className="font-mono text-[11px] leading-relaxed">
-              {visible.map((ev, i) => (
-                <div key={i}
-                     className={"grid grid-cols-[72px_64px_64px_1fr] gap-3 px-3 py-1 " +
-                                (i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")}>
-                  <span className="text-ink-dim">{ev.ts}</span>
-                  <span className={SRC_TAG[ev.source]}>[{ev.source.toUpperCase()}]</span>
-                  <span className={SEV_TEXT[ev.severity]}>[{ev.severity.toUpperCase()}]</span>
-                  <span className="text-ink-primary">
-                    <span className="text-ink-primary font-bold">{ev.title}</span>
-                    <span className="text-ink-muted"> — {ev.detail}</span>
-                  </span>
-                </div>
-              ))}
+              {visible.map((ev, i) => {
+                const id = `${ev.ts}-${ev.title}`;
+                const pulse = pulsing.has(id) ? " mhp-critical-pulse" : "";
+                const copyText = `[${ev.iso}] [${ev.source}] [${ev.severity}] ${ev.title} — ${ev.detail}`;
+                return (
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 12) * 30}ms` }}
+                    className={
+                      "group grid grid-cols-[72px_64px_110px_1fr_28px] gap-3 px-3 py-1 mhp-result-in" +
+                      (i % 2 === 0 ? " bg-bg-card" : " bg-bg-row-alt") + pulse
+                    }
+                  >
+                    <span className="text-ink-dim">{ev.ts}</span>
+                    <span className={SRC_TAG[ev.source]}>[{ev.source.toUpperCase()}]</span>
+                    <span><SeverityBadge severity={idsSevToSeverity(ev.severity)} /></span>
+                    <span className="text-ink-primary">
+                      <span className="text-ink-primary font-bold">{ev.title}</span>
+                      <span className="text-ink-muted"> — {ev.detail}</span>
+                    </span>
+                    <span className="flex justify-end">
+                      <CopyButton text={copyText} />
+                    </span>
+                  </div>
+                );
+              })}
             </div>
+            <StatsBar
+              total={events.length}
+              critical={counts.high}
+              medium={counts.warn}
+              low={counts.info}
+              startedAt={startedAt}
+              running={running}
+              extra={baseline ? `baseline ${baseline.total} listeners` : undefined}
+            />
           </section>
         )}
       </div>
@@ -199,24 +241,3 @@ function FilterChip({ active, onClick, children }:
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   ●  ●  ●    │
-        │   IDS WATCH  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Press <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-            text-[10px] text-ink-primary">▶ Start IDS</kbd> to monitor listening ports + auth failures
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          Port baseline · live diff every 5s · auth-event tail · 10s debounce
-        </div>
-      </div>
-    </div>
-  );
-}

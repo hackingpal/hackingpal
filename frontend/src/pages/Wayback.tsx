@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Buckets = {
   domain: string;
@@ -78,8 +81,27 @@ export default function Wayback() {
         {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!buckets && !loading && !error && (
+        <EmptyState
+          icon="📜"
+          title="Wayback Machine URLs"
+          description="Pull historical URLs from Internet Archive's CDX index. Surfaces forgotten endpoints, backups, exposed configs."
+          exampleTarget="example.com"
+          onExample={setDomain}
+          className="mt-4"
+        />
+      )}
+
       {buckets && (
         <div className="mt-4">
+          <StatsBar
+            total={buckets.total}
+            critical={buckets.interesting.length}
+            medium={buckets.api_endpoints.length}
+            low={buckets.js_files.length}
+            extra={`${buckets.domain}${diff ? ` · diff: gone ${diff.gone.length}, new ${diff.new.length}` : ""}`}
+            className="mb-2"
+          />
           <div className="flex gap-2 mb-2 flex-wrap">
             {([
               ["interesting", `Interesting (${buckets.interesting.length})`],
@@ -127,11 +149,18 @@ function UrlList({ urls, accent = "accent" }: { urls: string[]; accent?: string 
     return <div className="text-[11px] text-ink-dim italic">no entries</div>;
   return (
     <div className="bg-bg-card border border-divider rounded p-2 max-h-[60vh] overflow-y-auto">
-      {urls.map((u) => (
-        <a key={u} href={u} target="_blank" rel="noreferrer"
-           className={`block px-2 py-1 text-[11px] font-mono text-ink-primary hover:text-${accent} truncate`}>
-          {u}
-        </a>
+      {urls.map((u, i) => (
+        <div
+          key={u}
+          style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+          className="mhp-result-in group flex items-center gap-2 px-2 py-1"
+        >
+          <a href={u} target="_blank" rel="noreferrer"
+             className={`flex-1 text-[11px] font-mono text-ink-primary hover:text-${accent} truncate`}>
+            {u}
+          </a>
+          <CopyButton text={u} />
+        </div>
       ))}
     </div>
   );

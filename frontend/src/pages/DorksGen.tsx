@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
 import { api } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Dork = { category: string; dork: string; description: string };
 type Resp = {
@@ -66,8 +69,23 @@ export default function DorksGen() {
         {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!resp && !loading && !error && (
+        <EmptyState
+          icon="🔍"
+          title="Dork generator"
+          description="Build Google / Bing / DuckDuckGo dork strings for a domain. Open each link in your own browser."
+          exampleTarget="example.com"
+          onExample={setDomain}
+          className="mt-4"
+        />
+      )}
+
       {resp && (
         <div className="mt-4 space-y-2">
+          <StatsBar
+            total={resp.count}
+            extra={`${cats.length} categories · ${resp.domain}`}
+          />
           <div className="flex flex-wrap gap-1">
             <button onClick={() => setFilter("all")}
                     className={"px-2 py-1 rounded text-[11px] uppercase tracking-wider " +
@@ -87,8 +105,11 @@ export default function DorksGen() {
 
           <div className="space-y-1">
             {visible.map((d, i) => (
-              <div key={`${d.category}-${i}`}
-                   className="bg-bg-card border border-divider rounded p-2 flex items-center gap-2">
+              <div
+                key={`${d.category}-${i}`}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group bg-bg-card border border-divider rounded p-2 flex items-center gap-2"
+              >
                 <div className="flex-1 min-w-0">
                   <div className="text-[11px] font-mono text-ink-primary truncate">{d.dork}</div>
                   <div className="text-[10px] text-ink-dim">{d.category} · {d.description}</div>
@@ -102,6 +123,7 @@ export default function DorksGen() {
                       {name.slice(0, 3)}
                     </a>
                   ))}
+                  <CopyButton text={d.dork} />
                 </div>
               </div>
             ))}

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, type LocalDiscoveryEvent } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Finding = LocalDiscoveryEvent extends infer T
   ? T extends { type: "found" } ? T : never
@@ -19,6 +22,7 @@ export default function LocalDiscovery() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => () => {
@@ -34,6 +38,7 @@ export default function LocalDiscovery() {
     if (protocols.length === 0) return;
     setRunning(true); setError(null);
     setFindings([]); setCounts({}); setElapsed(null);
+    setStartedAt(Date.now());
     const ws = openWs("/ws/local-discovery");
     wsRef.current = ws;
     ws.onopen = () => ws.send(JSON.stringify({ protocols, duration }));
@@ -100,26 +105,30 @@ export default function LocalDiscovery() {
         )}
 
         {(findings.length > 0 || running || elapsed != null) && (
-          <div className="rounded-md border border-divider bg-bg-card px-4 py-3 flex items-center gap-6">
-            <Counter label="mDNS"  count={counts.mdns  ?? mdns.length}  tone="text-accent" />
-            <Counter label="SSDP"  count={counts.ssdp  ?? ssdp.length}  tone="text-phos" />
-            <Counter label="LLMNR" count={counts.llmnr ?? llmnr.length} tone="text-amber" />
-            <div className="flex-1" />
-            {elapsed != null && (
-              <span className="text-ink-dim text-[11px]">{elapsed.toFixed(1)}s</span>
-            )}
-          </div>
+          <StatsBar
+            total={findings.length}
+            critical={counts.llmnr ?? llmnr.length}
+            startedAt={startedAt}
+            running={running}
+            extra={`mDNS: ${counts.mdns ?? mdns.length} · SSDP: ${counts.ssdp ?? ssdp.length}${elapsed != null ? ` · ${elapsed.toFixed(1)}s` : ""}`}
+          />
         )}
 
         {mdns.length > 0 && (
           <Card title={`mDNS · ${mdns.length}`}>
-            <div className="grid grid-cols-[1fr_2fr] gap-x-3 gap-y-0.5">
+            <div className="grid grid-cols-[1fr_2fr_auto] gap-x-3 gap-y-0.5">
               <span className="text-ink-dim text-[10px] uppercase tracking-wider">Service Type</span>
               <span className="text-ink-dim text-[10px] uppercase tracking-wider">Instance</span>
+              <span></span>
               {mdns.map((f, i) => (
-                <div key={i} className="contents">
+                <div
+                  key={i}
+                  style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                  className="mhp-result-in group col-span-3 grid grid-cols-[1fr_2fr_auto] gap-x-3"
+                >
                   <span className="text-accent break-all">{f.service_type}</span>
                   <span className="text-ink-primary break-all">{f.instance}</span>
+                  <CopyButton text={`${f.service_type} ${f.instance}`} />
                 </div>
               ))}
             </div>
@@ -128,17 +137,23 @@ export default function LocalDiscovery() {
 
         {ssdp.length > 0 && (
           <Card title={`SSDP · ${ssdp.length}`}>
-            <div className="grid grid-cols-[120px_1fr_2fr] gap-x-3 gap-y-0.5">
+            <div className="grid grid-cols-[120px_1fr_2fr_auto] gap-x-3 gap-y-0.5">
               <span className="text-ink-dim text-[10px] uppercase tracking-wider">IP</span>
               <span className="text-ink-dim text-[10px] uppercase tracking-wider">Server</span>
               <span className="text-ink-dim text-[10px] uppercase tracking-wider">ST / Location</span>
+              <span></span>
               {ssdp.map((f, i) => (
-                <div key={i} className="contents">
+                <div
+                  key={i}
+                  style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                  className="mhp-result-in group col-span-4 grid grid-cols-[120px_1fr_2fr_auto] gap-x-3"
+                >
                   <span className="text-phos">{f.ip}</span>
                   <span className="text-ink-primary break-all">{f.server}</span>
                   <span className="text-ink-muted break-all">
                     {f.st}{f.location && <div className="text-ink-dim">{f.location}</div>}
                   </span>
+                  <CopyButton text={`${f.ip} ${f.server} ${f.st}${f.location ? ` ${f.location}` : ""}`} />
                 </div>
               ))}
             </div>
@@ -147,11 +162,16 @@ export default function LocalDiscovery() {
 
         {llmnr.length > 0 && (
           <Card title={`LLMNR · ${llmnr.length}`}>
-            <div className="text-ink-primary">
+            <div className="text-ink-primary mhp-critical-pulse rounded">
               {llmnr.map((f, i) => (
-                <div key={i}>
+                <div
+                  key={i}
+                  style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                  className="mhp-result-in group flex items-center gap-2"
+                >
                   <span className="text-amber">{f.ip}</span>
-                  <span className="text-ink-muted ml-2">responded ({f.bytes} bytes)</span>
+                  <span className="text-ink-muted flex-1">responded ({f.bytes} bytes)</span>
+                  <CopyButton text={`LLMNR responder ${f.ip} (${f.bytes} bytes)`} />
                 </div>
               ))}
             </div>
@@ -163,32 +183,14 @@ export default function LocalDiscovery() {
         )}
 
         {!running && findings.length === 0 && !error && (
-          <div className="h-full min-h-[260px] flex items-center justify-center">
-            <div className="text-center max-w-md">
-              <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │ LOCAL DISCO  │
-        │ mDNS·SSDP·L  │
-        └──────────────┘`}
-              </pre>
-              <div className="mt-4 text-xs text-ink-muted">
-                Bonjour services · UPnP devices · LLMNR responders<br />
-                Listen for {duration}s, then summarise.
-              </div>
-            </div>
-          </div>
+          <EmptyState
+            icon="📡"
+            title="Local discovery"
+            description={`Listen ${duration}s for mDNS, SSDP & LLMNR traffic on this LAN.`}
+            hint="LLMNR responders are highlighted — they enable Responder-style poisoning."
+          />
         )}
       </div>
-    </div>
-  );
-}
-
-function Counter({ label, count, tone }:
-  { label: string; count: number; tone: string }) {
-  return (
-    <div>
-      <div className="text-[10px] tracking-widest text-ink-dim">{label}</div>
-      <div className={"text-base font-bold tabular-nums " + tone}>{count}</div>
     </div>
   );
 }

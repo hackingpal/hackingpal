@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchFingerprintBulk, type FingerprintResult } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const COMMON = "22, 80, 443, 21, 25, 53, 110, 143, 3306, 5432, 5900, 6379, 8080, 8443";
 
@@ -113,7 +116,15 @@ export default function Fingerprint() {
           </div>
         )}
 
-        {!results && !error && !busy && <EmptyState />}
+        {!results && !error && !busy && (
+          <EmptyStateComponent
+            icon="🔎"
+            title="Service Fingerprint"
+            description="Probes SSH · HTTP(S) · SMTP · FTP · POP3 · IMAP · MySQL · Postgres · Redis · VNC. Falls back to a generic banner grab on unknown ports."
+            exampleTarget="127.0.0.1"
+            onExample={setHost}
+          />
+        )}
 
         {results && <ResultsTable results={results} />}
       </div>
@@ -138,17 +149,23 @@ function ResultsTable({ results }: { results: FingerprintResult[] }) {
             Open ports
           </header>
           <div className="bg-bg-card text-xs font-mono">
-            <div className="grid grid-cols-[60px_120px_1fr_60px] gap-x-3 px-3 py-2
+            <div className="grid grid-cols-[60px_120px_1fr_60px_auto] gap-x-3 px-3 py-2
                             border-b border-divider text-ink-dim text-[10px] uppercase tracking-wider">
               <span>Port</span>
               <span>Service</span>
               <span>Version / banner</span>
               <span className="text-right">ms</span>
+              <span />
             </div>
             {open.map((r, i) => (
-              <ResultRow key={i} r={r} />
+              <ResultRow key={i} r={r} index={i} />
             ))}
           </div>
+          <StatsBar
+            total={open.length}
+            extra={`${closed.length} closed`}
+            className="mt-0"
+          />
         </section>
       )}
 
@@ -173,16 +190,20 @@ function ResultsTable({ results }: { results: FingerprintResult[] }) {
   );
 }
 
-function ResultRow({ r }: { r: FingerprintResult }) {
+function ResultRow({ r, index }: { r: FingerprintResult; index: number }) {
   const ex = r.extras as Record<string, unknown>;
   const headers = (ex.headers as Record<string, string>) ?? null;
   const caps = (ex.capabilities as string[]) ?? null;
   const isHttp = r.service_guess === "http" || r.service_guess === "https";
   const tlsErr = typeof ex.tls_error === "string" ? (ex.tls_error as string) : null;
+  const copyText = `${r.port}/${r.service_guess}${r.version ? ` · ${r.version}` : r.banner_lines[0] ? ` · ${r.banner_lines[0]}` : ""}`;
 
   return (
-    <div className="px-3 py-2 border-b border-divider/50">
-      <div className="grid grid-cols-[60px_120px_1fr_60px] gap-x-3 items-start">
+    <div
+      style={{ animationDelay: `${Math.min(index, 20) * 30}ms` }}
+      className="group px-3 py-2 border-b border-divider/50 mhp-result-in"
+    >
+      <div className="grid grid-cols-[60px_120px_1fr_60px_auto] gap-x-3 items-start">
         <span className="text-accent">{r.port}</span>
         <span className="text-ink-primary">{r.service_guess}</span>
         <div className="flex flex-col gap-0.5">
@@ -193,10 +214,11 @@ function ResultRow({ r }: { r: FingerprintResult }) {
           {tlsErr && <span className="text-danger">TLS: {tlsErr}</span>}
         </div>
         <span className="text-right text-ink-dim">{r.elapsed_ms}</span>
+        <CopyButton text={copyText} />
       </div>
 
       {(isHttp && headers && Object.keys(headers).length > 0) && (
-        <div className="grid grid-cols-[60px_120px_1fr_60px] gap-x-3 mt-1">
+        <div className="grid grid-cols-[60px_120px_1fr_60px_auto] gap-x-3 mt-1">
           <span />
           <span />
           <div className="text-ink-muted">
@@ -205,15 +227,17 @@ function ResultRow({ r }: { r: FingerprintResult }) {
             ))}
           </div>
           <span />
+          <span />
         </div>
       )}
 
       {caps && caps.length > 0 && (
-        <div className="grid grid-cols-[60px_120px_1fr_60px] gap-x-3 mt-1">
+        <div className="grid grid-cols-[60px_120px_1fr_60px_auto] gap-x-3 mt-1">
           <span /><span />
           <div className="text-ink-muted text-[11px]">
             EHLO: {caps.slice(0, 8).join(", ")}{caps.length > 8 ? "…" : ""}
           </div>
+          <span />
           <span />
         </div>
       )}
@@ -221,21 +245,3 @@ function ResultRow({ r }: { r: FingerprintResult }) {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │ FINGERPRINT  │
-        │  banner+ver  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Probes SSH · HTTP(S) · SMTP · FTP · POP3 · IMAP · MySQL · Postgres · Redis · VNC<br />
-          Falls back to a generic banner grab on unknown ports.
-        </div>
-      </div>
-    </div>
-  );
-}

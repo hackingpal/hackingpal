@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { api, authFetch, isApiError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Stats = { nodes: number; edges: number; by_kind: Record<string, number> };
 
@@ -191,46 +194,64 @@ export default function LateralMove() {
       {/* Results */}
       {pathResult && (
         <div className="mb-4">
-          <div className="text-[11px] text-ink-muted tracking-wider mb-2">
-            FROM <span className="text-accent font-mono">{pathResult.source.name}</span>
-            {" → "}
-            {pathResult.targets.map((t) => t.name).join(", ")}
-            <span className="ml-3 text-ink-dim">{pathResult.paths.length} path(s)</span>
-          </div>
+          <StatsBar
+            total={pathResult.paths.length}
+            critical={pathResult.paths.length}
+            extra={`from ${pathResult.source.name} → ${pathResult.targets.map((t) => t.name).join(", ")}`}
+            className="mb-2"
+          />
           {pathResult.paths.length === 0 && (
             <div className="text-[12px] text-ink-dim italic">
               No path found within {maxHops} hops.
             </div>
           )}
           <div className="space-y-3">
-            {pathResult.paths.map((p, i) => (
-              <div key={i} className="border border-divider rounded p-3 bg-bg-card">
-                <div className="text-[10px] text-ink-muted tracking-wider mb-2">
-                  PATH #{i + 1} · {p.length - 1} hop(s)
-                </div>
-                <div className="space-y-1">
-                  {p.map((node, j) => (
-                    <div key={j} className="flex items-center gap-3 text-[12px]">
-                      {j > 0 && (
-                        <span className="text-amber font-mono text-[10px] uppercase
-                                         border border-amber/40 rounded px-1.5 py-0.5">
-                          {node.edge}
-                        </span>
-                      )}
-                      <span className={
-                        node.kind === "User" ? "text-accent"
-                        : node.kind === "Group" ? "text-amber"
-                        : node.kind === "Computer" ? "text-phos"
-                        : "text-ink-primary"
-                      }>{node.name}</span>
-                      <span className="text-[10px] text-ink-dim">{node.kind}</span>
+            {pathResult.paths.map((p, i) => {
+              const copyText = p.map((n, j) => j === 0 ? n.name : `${n.edge}→ ${n.name}`).join(" ");
+              return (
+                <div
+                  key={i}
+                  style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                  className="mhp-result-in group border border-divider rounded p-3 bg-bg-card mhp-critical-pulse"
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="text-[10px] text-ink-muted tracking-wider">
+                      PATH #{i + 1} · {p.length - 1} hop(s)
                     </div>
-                  ))}
+                    <CopyButton text={copyText} className="ml-auto" />
+                  </div>
+                  <div className="space-y-1">
+                    {p.map((node, j) => (
+                      <div key={j} className="flex items-center gap-3 text-[12px]">
+                        {j > 0 && (
+                          <span className="text-amber font-mono text-[10px] uppercase
+                                           border border-amber/40 rounded px-1.5 py-0.5">
+                            {node.edge}
+                          </span>
+                        )}
+                        <span className={
+                          node.kind === "User" ? "text-accent"
+                          : node.kind === "Group" ? "text-amber"
+                          : node.kind === "Computer" ? "text-phos"
+                          : "text-ink-primary"
+                        }>{node.name}</span>
+                        <span className="text-[10px] text-ink-dim">{node.kind}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
+      )}
+
+      {!pathResult && stats?.nodes === 0 && !loading && !error && (
+        <EmptyState
+          icon="🐾"
+          title="Lateral movement planner"
+          description="Upload BloodHound ZIP, then BFS shortest path between any principal and a target group/account."
+        />
       )}
 
       {/* Technique reference */}

@@ -2,6 +2,9 @@ import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Mode = "kerberoast" | "asrep";
 
@@ -139,45 +142,64 @@ export default function KerberosRoast() {
         </div>
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="🔑"
+          title={mode === "kerberoast" ? "Kerberoasting" : "AS-REP Roasting"}
+          description={mode === "kerberoast"
+            ? "Request TGS-REQ tickets for SPN-bearing accounts → produces hashcat-ready hashes (mode 13100)."
+            : "Request AS-REP for UF_DONT_REQUIRE_PREAUTH accounts → produces hashcat-ready hashes (mode 18200)."}
+          hint="Fill AD form above (AS-REP can use a user list with no creds)."
+        />
+      )}
+
       {result && (
         <div>
           {result.message && (
             <div className="text-[12px] text-ink-muted italic mb-3">{result.message}</div>
           )}
-          {mode === "kerberoast" && result.targets && result.targets.length > 0 && (
-            <div className="text-[11px] text-ink-muted mb-2">
-              Found <span className="text-phos">{result.targets.length}</span> SPN-bearing
-              account{result.targets.length === 1 ? "" : "s"}.
-            </div>
-          )}
-          {mode === "asrep" && result.users && result.users.length > 0 && (
-            <div className="text-[11px] text-ink-muted mb-2">
-              Targeted <span className="text-phos">{result.users.length}</span>{" "}
-              user{result.users.length === 1 ? "" : "s"}.
-            </div>
-          )}
+          <StatsBar
+            total={result.hashes.length}
+            critical={crackableCount}
+            extra={mode === "kerberoast"
+              ? `${result.targets?.length ?? 0} SPN account${(result.targets?.length ?? 0) === 1 ? "" : "s"}${modesSeen.length ? ` · hashcat ${modesSeen.join(",")}` : ""}`
+              : `${result.users?.length ?? 0} target${(result.users?.length ?? 0) === 1 ? "" : "s"}${modesSeen.length ? ` · hashcat ${modesSeen.join(",")}` : ""}`}
+            className="mb-3"
+          />
+
           {result.hashes.length > 0 && crackableCount > 0 ? (
             <>
               <div className="flex items-center gap-2 mb-2">
                 <div className="text-[11px] text-ink-muted tracking-wider">
-                  HASHES ({crackableCount} crackable
-                  {modesSeen.length > 0
-                    ? `, hashcat mode${modesSeen.length > 1 ? "s" : ""} ${modesSeen.join(", ")}`
-                    : ""})
+                  HASHES ({crackableCount} crackable)
                 </div>
-                <button
-                  onClick={() => navigator.clipboard?.writeText(
-                    result.hashes.filter((h) => h.hash).map((h) => h.hash).join("\n")
-                  )}
-                  className="ml-auto text-[11px] text-accent hover:underline">
-                  Copy all hashes
-                </button>
+                <CopyButton
+                  text={result.hashes.filter((h) => h.hash).map((h) => h.hash).join("\n")}
+                  label="Copy all hashes"
+                  alwaysVisible
+                  className="ml-auto"
+                />
               </div>
-              <pre className="bg-bg-panel border border-divider rounded p-2 mb-3
-                              text-[10px] font-mono text-phos whitespace-pre-wrap break-all
-                              max-h-96 overflow-y-auto">
-                {result.hashes.filter((h) => h.hash).map((h) => h.hash).join("\n\n")}
-              </pre>
+              <div className="space-y-1.5 mb-3">
+                {result.hashes.filter((h) => h.hash).map((h, i) => (
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="mhp-result-in group bg-bg-panel border border-divider rounded p-2 mhp-critical-pulse"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-amber text-[11px] font-bold font-mono">{h.user}</span>
+                      {h.spn && <span className="text-[10px] text-ink-dim font-mono truncate">{h.spn}</span>}
+                      {h.hashcat_mode != null && (
+                        <span className="text-[10px] text-ink-muted">m{h.hashcat_mode}</span>
+                      )}
+                      <CopyButton text={h.hash ?? ""} className="ml-auto" />
+                    </div>
+                    <pre className="text-[10px] font-mono text-phos whitespace-pre-wrap break-all
+                                    max-h-32 overflow-y-auto">{h.hash}</pre>
+                  </div>
+                ))}
+              </div>
               <div className="text-[11px] text-ink-muted mb-2">
                 Hashcat command:{" "}
                 <code className="text-amber font-mono">{result.hashcat_hint}</code>

@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type SourceStatus = {
   name: string;
@@ -126,8 +129,22 @@ curl -X POST http://127.0.0.1:8765/settings/keys/hunter_api_key \\
         {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="👥"
+          title="Email enumeration"
+          description="Aggregate emails referencing a target domain across passive sources. Infers the org's email-format pattern."
+          exampleTarget="example.com"
+          onExample={setTarget}
+        />
+      )}
+
       {result && (
         <div className="space-y-3">
+          <StatsBar
+            total={result.emails.length}
+            extra={`pattern: ${result.pattern_guess?.pattern ?? "—"} · ${result.target}`}
+          />
           {/* Summary + pattern */}
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-bg-card border border-divider rounded p-3">
@@ -180,22 +197,39 @@ curl -X POST http://127.0.0.1:8765/settings/keys/hunter_api_key \\
 
           {/* Email list */}
           <div className="bg-bg-card border border-divider rounded overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-bg-panel border-b border-divider">
+              <span className="text-[10px] text-ink-muted tracking-wider">EMAILS</span>
+              {result.emails.length > 0 && (
+                <CopyButton
+                  text={result.emails.map((e) => e.email).join("\n")}
+                  label="Copy all"
+                  alwaysVisible
+                  className="ml-auto"
+                />
+              )}
+            </div>
             <table className="w-full text-[12px]">
-              <thead className="bg-bg-panel border-b border-divider">
+              <thead className="bg-bg-panel/40 border-b border-divider">
                 <tr className="text-ink-muted text-[10px] tracking-wider">
                   <th className="text-left px-3 py-1.5">EMAIL</th>
                   <th className="text-left px-3 py-1.5">SOURCES</th>
+                  <th className="px-3 py-1.5 w-10"></th>
                 </tr>
               </thead>
               <tbody>
                 {result.emails.map((e, i) => (
-                  <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
+                  <tr
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="mhp-result-in group border-b border-divider hover:bg-bg-nav-hover"
+                  >
                     <td className="px-3 py-1.5 font-mono text-ink-primary">{e.email}</td>
                     <td className="px-3 py-1.5 text-ink-dim text-[11px]">{e.sources.join(", ")}</td>
+                    <td className="px-3 py-1.5"><CopyButton text={e.email} /></td>
                   </tr>
                 ))}
                 {result.emails.length === 0 && (
-                  <tr><td colSpan={2} className="px-3 py-6 text-center text-ink-dim italic">
+                  <tr><td colSpan={3} className="px-3 py-6 text-center text-ink-dim italic">
                     No emails found. Try different sources or a more popular target.
                   </td></tr>
                 )}

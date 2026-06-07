@@ -6,6 +6,10 @@
  * table for transparency.
  */
 import { useState } from "react";
+import SeverityBadge, { type Severity } from "../SeverityBadge";
+import CopyButton from "../CopyButton";
+import StatsBar from "../StatsBar";
+import EmptyState from "../EmptyState";
 
 export type Attempt = {
   payload: string;
@@ -23,11 +27,11 @@ export type Finding = {
   extra?: Record<string, unknown>;  // tool-specific
 };
 
-const SEV: Record<string, { text: string; bg: string; label: string }> = {
-  info: { text: "text-ink-muted", bg: "bg-ink-dim/10",   label: "INFO" },
-  warn: { text: "text-amber",     bg: "bg-amber/10",     label: "WARN" },
-  high: { text: "text-danger",    bg: "bg-danger/10",    label: "HIGH" },
-};
+function findingSeverity(s: "info" | "warn" | "high"): Severity {
+  if (s === "high") return "critical";
+  if (s === "warn") return "medium";
+  return "info";
+}
 
 function statusColor(s: number | null): string {
   if (s === null) return "text-ink-dim";
@@ -48,29 +52,60 @@ type Props = {
 export default function AttackResults({ attempts, findings, extraColumns = [], doneText }: Props) {
   const [showAttempts, setShowAttempts] = useState(true);
 
+  const sevCounts = findings.reduce(
+    (acc, f) => { acc[f.severity] = (acc[f.severity] ?? 0) + 1; return acc; },
+    {} as Record<string, number>,
+  );
+
   return (
     <div className="flex-1 overflow-hidden flex flex-col gap-3">
+      {(findings.length > 0 || attempts.length > 0 || doneText) && (
+        <StatsBar
+          total={attempts.length}
+          critical={sevCounts.high ?? 0}
+          medium={sevCounts.warn ?? 0}
+          low={sevCounts.info ?? 0}
+          extra={`${findings.length} findings${doneText ? ` · ${doneText}` : ""}`}
+        />
+      )}
+
       {/* Findings — always visible */}
       <div>
         <div className="text-[11px] text-ink-muted tracking-wider mb-1">
           FINDINGS ({findings.length})
         </div>
         <div className="space-y-2 max-h-96 overflow-y-auto">
-          {findings.length === 0 && (
+          {findings.length === 0 && attempts.length === 0 && (
+            <EmptyState
+              icon="🪲"
+              title="Web exploit scan"
+              description="Fill in the request form above, confirm authorization, then start the scan."
+              hint="Findings appear here as soon as the scanner confirms a hit."
+            />
+          )}
+          {findings.length === 0 && attempts.length > 0 && (
             <div className="text-[12px] text-ink-dim italic">
-              No findings yet — run the scan to see detected issues.
+              No findings so far — see attempts below.
             </div>
           )}
           {findings.map((f, i) => {
-            const sev = SEV[f.severity] ?? SEV.info;
+            const sev = findingSeverity(f.severity);
+            const evidencePreview = (f.evidence || "").slice(0, 200);
+            const copyText = `[${sev.toUpperCase()}${f.confirmed ? " confirmed" : ""}] payload=${f.payload}${evidencePreview ? `\n${evidencePreview}` : ""}`;
             return (
-              <div key={i} className={"rounded border border-divider p-2 " + sev.bg}>
+              <div
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className={"mhp-result-in group rounded border border-divider p-2 " +
+                           (sev === "critical" ? "mhp-critical-pulse" : "")}
+              >
                 <div className="flex items-center gap-2 text-[11px] mb-1">
-                  <span className={"font-bold tracking-wider " + sev.text}>{sev.label}</span>
+                  <SeverityBadge severity={sev} />
                   {f.confirmed && <span className="text-phos text-[10px]">✓ confirmed</span>}
                   {f.extra && Object.entries(f.extra).map(([k, v]) =>
                     v ? <span key={k} className="text-ink-dim">{k}={String(v)}</span> : null
                   )}
+                  <CopyButton text={copyText} className="ml-auto" />
                 </div>
                 <div className="text-[12px] font-mono text-ink-primary mb-1 break-all">
                   payload: <span className="text-amber">{f.payload}</span>
@@ -137,7 +172,6 @@ export default function AttackResults({ attempts, findings, extraColumns = [], d
         )}
       </div>
 
-      {doneText && <div className="text-[11px] text-ink-dim">{doneText}</div>}
     </div>
   );
 }

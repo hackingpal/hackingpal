@@ -6,6 +6,9 @@ import {
   type IpReport,
   type IpBulkResult,
 } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<string, { text: string; dot: string; border: string; bg: string }> = {
   clean: { text: "text-phos",   dot: "bg-phos",   border: "border-phos/40",   bg: "bg-phos/5" },
@@ -211,7 +214,14 @@ export default function IpChecker() {
           {bulkResults && <BulkResults results={bulkResults} onPick={(t) => { setMode("single"); void lookup(t); }} />}
 
           {!report && !bulkResults && !error && !timedOut && !busy && mode === "single" && (
-            <EmptyState onPick={(t) => void lookup(t)} />
+            <EmptyStateComponent
+              icon="⌖"
+              title="IP & hostname intelligence"
+              description="DNSBL hits · ASN / country · WHOIS owner & abuse · datacenter / VPS heuristic"
+              exampleTarget="8.8.8.8"
+              onExample={(t) => void lookup(t)}
+              hint="Try 1.1.1.1, cloudflare.com, or github.com — or paste a list in Bulk mode."
+            />
           )}
 
           {busy && (
@@ -306,13 +316,17 @@ function BulkResults({
         </div>
         {results.map((r, i) => {
           const sev = r.report ? SEV[r.report.verdict_severity] ?? SEV.info : SEV.high;
+          const copyText = r.ok && r.report
+            ? `${r.target} → ${r.report.ip} · ${[r.report.country, r.report.org].filter(Boolean).join(" · ") || "—"} · ${r.report.verdict_text}`
+            : `${r.target} → ${r.error ?? "Unknown error"}`;
           return (
-            <button
+            <div
               key={i}
+              style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
               onClick={() => onPick(r.target)}
-              className="w-full text-left grid grid-cols-[16px_1.2fr_1fr_1fr_2fr] gap-x-3
+              className="mhp-result-in group grid grid-cols-[16px_1.2fr_1fr_1fr_2fr_auto] gap-x-3
                          px-3 py-1.5 border-b border-divider/50
-                         hover:bg-bg-row-alt transition"
+                         hover:bg-bg-row-alt transition items-center cursor-pointer"
             >
               <span className={"inline-block w-2 h-2 rounded-full mt-1 " + sev.dot} />
               <span className="text-ink-primary break-all">{r.target}</span>
@@ -325,10 +339,17 @@ function BulkResults({
               <span className={r.ok ? sev.text : "text-danger"}>
                 {r.ok && r.report ? r.report.verdict_text : (r.error ?? "Unknown error")}
               </span>
-            </button>
+              <CopyButton text={copyText} />
+            </div>
           );
         })}
       </div>
+      <StatsBar
+        total={results.length}
+        critical={results.filter((r) => r.ok && r.report?.verdict_severity === "high").length}
+        medium={results.filter((r) => r.ok && r.report?.verdict_severity === "warn").length}
+        className="-mx-px"
+      />
     </div>
   );
 }
@@ -378,66 +399,6 @@ function HistoryPanel({
         )}
       </div>
     </aside>
-  );
-}
-
-const EMPTY_SAMPLES = ["8.8.8.8", "1.1.1.1", "cloudflare.com", "github.com"];
-
-const EMPTY_CHECKS: Array<{ label: string; blurb: string }> = [
-  { label: "DNSBL",   blurb: "Spam & abuse blocklist hits" },
-  { label: "ASN",     blurb: "Autonomous system & country" },
-  { label: "WHOIS",   blurb: "Owner & abuse contact" },
-  { label: "Hosting", blurb: "Datacenter / VPS heuristic" },
-];
-
-function EmptyState({ onPick }: { onPick: (t: string) => void }) {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center p-6">
-      <div className="w-full max-w-xl text-center">
-        <div className="mx-auto w-14 h-14 rounded-lg bg-accent/10 border border-accent/30
-                        flex items-center justify-center text-accent text-2xl leading-none
-                        select-none">
-          ⌖
-        </div>
-        <h3 className="mt-4 text-base font-semibold text-ink-primary tracking-wide">
-          IP &amp; hostname intelligence
-        </h3>
-        <p className="mt-1 text-xs text-ink-muted">
-          Enter a target above and press{" "}
-          <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-                          text-[10px] text-ink-primary font-mono">Enter</kbd>,
-          or try a sample.
-        </p>
-
-        <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {EMPTY_SAMPLES.map((s) => (
-            <button
-              key={s}
-              onClick={() => onPick(s)}
-              className="px-2.5 py-1 text-[11px] font-mono rounded
-                         bg-bg-card border border-divider text-ink-muted
-                         hover:border-accent/50 hover:text-accent transition"
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-6 grid grid-cols-2 gap-2 text-left">
-          {EMPTY_CHECKS.map((c) => (
-            <div
-              key={c.label}
-              className="rounded border border-divider bg-bg-card px-3 py-2"
-            >
-              <div className="text-[10px] uppercase tracking-[0.2em] text-accent">
-                {c.label}
-              </div>
-              <div className="mt-0.5 text-[11px] text-ink-muted">{c.blurb}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -516,9 +477,13 @@ function Report({ report }: { report: IpReport }) {
 
       {!report.is_internal && (
         <Card title="DNSBL Checks">
-          <div className="grid grid-cols-[16px_140px_1fr] gap-x-3 gap-y-1">
-            {report.dnsbl.map((b) => (
-              <div key={b.name} className="contents">
+          <div className="flex flex-col gap-1">
+            {report.dnsbl.map((b, i) => (
+              <div
+                key={b.name}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group grid grid-cols-[16px_140px_1fr_auto] gap-x-3 items-center"
+              >
                 <span className={b.listed ? "text-danger" : "text-phos"}>
                   {b.listed ? "✗" : "✓"}
                 </span>
@@ -526,6 +491,7 @@ function Report({ report }: { report: IpReport }) {
                 <span className={b.listed ? "text-danger" : "text-ink-primary"}>
                   {b.status}
                 </span>
+                <CopyButton text={`${b.name} — ${b.listed ? "LISTED" : "clean"} (${b.status})`} />
               </div>
             ))}
           </div>
@@ -538,7 +504,14 @@ function Report({ report }: { report: IpReport }) {
         ) : (
           <ul className="space-y-0.5">
             {report.abuse_contact.map((ln, i) => (
-              <li key={i} className="text-ink-primary">{ln}</li>
+              <li
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group flex items-center gap-2 text-ink-primary"
+              >
+                <span className="flex-1">{ln}</span>
+                <CopyButton text={ln} />
+              </li>
             ))}
           </ul>
         )}

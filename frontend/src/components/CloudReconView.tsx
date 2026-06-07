@@ -4,6 +4,11 @@
 
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import SeverityBadge, { normalizeSeverity, type Severity } from "./SeverityBadge";
+import ResultGroup from "./ResultGroup";
+import CopyButton from "./CopyButton";
+import StatsBar from "./StatsBar";
+import EmptyState from "./EmptyState";
 
 export type CloudFinding = {
   severity: "critical" | "high" | "medium" | "low" | "info";
@@ -19,13 +24,13 @@ type ReconResponse = {
   [k: string]: unknown;
 };
 
-const SEV: Record<string, { text: string; bg: string }> = {
-  critical: { text: "text-danger", bg: "bg-danger/20 border-danger/40" },
-  high:     { text: "text-amber",  bg: "bg-amber/20 border-amber/40" },
-  medium:   { text: "text-amber",  bg: "bg-amber/10 border-amber/30" },
-  low:      { text: "text-accent", bg: "bg-accent/10 border-accent/30" },
-  info:     { text: "text-ink-muted", bg: "bg-ink-dim/10 border-divider" },
-};
+function topSeverity(findings: CloudFinding[]): Severity {
+  const order: Severity[] = ["critical", "high", "medium", "low", "info"];
+  for (const sev of order) {
+    if (findings.some((f) => normalizeSeverity(f.severity) === sev)) return sev;
+  }
+  return "info";
+}
 
 type Props = {
   cloud: "AWS" | "Azure" | "GCP";
@@ -141,54 +146,67 @@ export default function CloudReconView({
         </div>
       )}
 
-      {result && <ReconResults result={result} />}
+      {result && <ReconResults result={result} cloud={cloud} />}
+
+      {ok && !result && !loading && !error && (
+        <EmptyState
+          icon={cloud === "AWS" ? "☁︎" : cloud === "Azure" ? "△" : "✦"}
+          title={`${cloud} read-only audit`}
+          description="Pick services above, then Run Recon to surface misconfigurations grouped by service."
+          hint="Findings are scored critical → info and grouped per-service."
+        />
+      )}
     </div>
   );
 }
 
-function ReconResults({ result }: { result: ReconResponse }) {
-  const sevCounts: Record<string, number> = {};
-  for (const f of result.findings) sevCounts[f.severity] = (sevCounts[f.severity] || 0) + 1;
+function ReconResults({ result, cloud }: { result: ReconResponse; cloud: string }) {
+  const sevCounts: Record<Severity, number> = {
+    critical: 0, high: 0, medium: 0, low: 0, info: 0,
+  };
+  for (const f of result.findings) sevCounts[normalizeSeverity(f.severity)] += 1;
 
   // Group findings by service for display
   const byService: Record<string, CloudFinding[]> = {};
   for (const f of result.findings) {
     (byService[f.service] = byService[f.service] || []).push(f);
   }
+  const serviceEntries = Object.entries(byService);
 
   return (
     <div className="space-y-3">
       {/* Summary banner */}
-      <div className="bg-bg-card border border-divider rounded p-3">
-        <div className="flex items-center gap-3 mb-2">
-          <span className="text-[11px] text-ink-muted tracking-wider">FINDINGS:</span>
-          {(["critical", "high", "medium", "low", "info"] as const).map((sev) => (
-            sevCounts[sev] ? (
-              <span key={sev} className={
-                "px-2 py-0.5 rounded border text-[11px] uppercase tracking-wider " + SEV[sev].bg
-              }>
-                <span className={SEV[sev].text + " font-bold"}>{sevCounts[sev]} {sev}</span>
-              </span>
-            ) : null
-          ))}
-          {result.findings.length === 0 && (
-            <span className="text-[12px] text-phos">✓ No issues flagged</span>
+      <div className="bg-bg-card border border-divider rounded">
+        <div className="px-3 pt-3 pb-2">
+          {result.findings.length === 0 ? (
+            <span className="text-[12px] text-phos">✓ No issues flagged across audited services.</span>
+          ) : (
+            <div className="text-[11px] text-ink-dim space-x-3">
+              {Object.entries(result.services).map(([name, svc]) => (
+                <span key={name}>
+                  <span className="text-ink-muted">{name}:</span>{" "}
+                  {svc.error ? (
+                    <span className="text-amber">error</span>
+                  ) : (
+                    <span className="text-ink-primary">
+                      {svc.summary
+                        ? Object.entries(svc.summary).map(([k, v]) => `${k}=${v}`).join(", ")
+                        : "ok"}
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
           )}
         </div>
-        <div className="text-[10px] text-ink-dim space-x-3">
-          {Object.entries(result.services).map(([name, svc]) => (
-            <span key={name}>
-              <span className="text-ink-muted">{name}:</span>{" "}
-              {svc.error ? (
-                <span className="text-amber">error</span>
-              ) : (
-                <span className="text-ink-primary">
-                  {svc.summary ? Object.entries(svc.summary).map(([k, v]) => `${k}=${v}`).join(", ") : "ok"}
-                </span>
-              )}
-            </span>
-          ))}
-        </div>
+        <StatsBar
+          total={result.findings.length}
+          critical={sevCounts.critical}
+          high={sevCounts.high}
+          medium={sevCounts.medium}
+          low={sevCounts.low}
+          extra={`${cloud.toLowerCase()} audit`}
+        />
       </div>
 
       {/* Per-service errors */}
@@ -199,39 +217,51 @@ function ReconResults({ result }: { result: ReconResponse }) {
         </div>
       ))}
 
-      {/* Findings list */}
-      {Object.entries(byService).map(([service, findings]) => (
-        <div key={service}>
-          <h3 className="text-[12px] font-bold text-ink-primary tracking-wider mb-1">
-            {service.toUpperCase()} <span className="text-ink-dim font-normal">({findings.length})</span>
-          </h3>
-          <div className="space-y-2">
-            {findings.map((f, i) => (
-              <div key={i} className={"rounded border p-2 " + SEV[f.severity].bg}>
-                <div className="flex items-center gap-2 text-[11px] mb-1">
-                  <span className={"font-bold tracking-wider uppercase " + SEV[f.severity].text}>
-                    {f.severity}
-                  </span>
-                  <span className="text-ink-primary font-bold text-[12px]">{f.title}</span>
-                </div>
-                <div className="text-[12px] text-ink-muted">{f.detail}</div>
-                {f.evidence !== undefined && f.evidence !== null && (
-                  <details className="mt-1">
-                    <summary className="text-[10px] text-ink-dim cursor-pointer">
-                      Evidence
-                    </summary>
-                    <pre className="text-[10px] font-mono text-phos
-                                    bg-bg-panel border border-divider rounded p-1.5 mt-1
-                                    whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
-                      {JSON.stringify(f.evidence, null, 2)}
-                    </pre>
-                  </details>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
+      {/* Findings grouped per-service */}
+      {serviceEntries.map(([service, findings]) => {
+        const sev = topSeverity(findings);
+        return (
+          <ResultGroup
+            key={service}
+            title={service.toUpperCase()}
+            count={findings.length}
+            severity={sev}
+          >
+            <div className="divide-y divide-divider/60">
+              {findings.map((f, i) => {
+                const fSev = normalizeSeverity(f.severity);
+                const copyText = `[${fSev.toUpperCase()}] ${service}: ${f.title} — ${f.detail}`;
+                return (
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="mhp-result-in group px-3 py-2 hover:bg-bg-row-alt transition"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <SeverityBadge severity={fSev} />
+                      <span className="text-ink-primary font-bold text-[12px]">{f.title}</span>
+                      <CopyButton text={copyText} className="ml-auto" />
+                    </div>
+                    <div className="text-[12px] text-ink-muted">{f.detail}</div>
+                    {f.evidence !== undefined && f.evidence !== null && (
+                      <details className="mt-1">
+                        <summary className="text-[10px] text-ink-dim cursor-pointer">
+                          Evidence
+                        </summary>
+                        <pre className="text-[10px] font-mono text-phos
+                                        bg-bg-panel border border-divider rounded p-1.5 mt-1
+                                        whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                          {JSON.stringify(f.evidence, null, 2)}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </ResultGroup>
+        );
+      })}
     </div>
   );
 }

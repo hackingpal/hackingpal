@@ -4,6 +4,8 @@ import {
   type ForensicSeverity, type ProcessEntry, type SignStatus,
   type KillResult, type KillSignal,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<ForensicSeverity, { dot: string; bg: string }> = {
   info: { dot: "bg-ink-dim", bg: "bg-bg-card" },
@@ -231,9 +233,10 @@ export default function Processes() {
             <div className="font-mono text-[11px]">
               {visible.map((e, i) => (
                 <div key={e.pid}
-                     className={"grid grid-cols-[24px_60px_1fr_120px_160px_70px_60px] gap-3 px-3 py-2 " +
+                     style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                     className={"mhp-result-in group grid grid-cols-[24px_60px_1fr_120px_160px_70px_60px] gap-3 px-3 py-2 " +
                                 "border-l-2 items-center " + SEV[e.severity].bg + " " +
-                                (e.severity === "high" ? "border-l-danger" :
+                                (e.severity === "high" ? "border-l-danger mhp-critical-pulse" :
                                  e.severity === "warn" ? "border-l-amber" :
                                                           "border-l-transparent ") +
                                 (i % 2 === 0 ? "" : " bg-opacity-50")}>
@@ -266,22 +269,29 @@ export default function Processes() {
                         (e.listeners.length > 3 ? ` +${e.listeners.length - 3}` : "")}
                   </span>
                   <span className="text-ink-muted truncate">{e.username}</span>
-                  <button
-                    onClick={() => setKillTarget({ mode: "single", entry: e })}
-                    title={`Kill PID ${e.pid}`}
-                    className="text-[11px] font-bold text-ink-dim hover:text-danger transition
-                               border border-divider hover:border-danger/60 rounded
-                               px-2 py-0.5"
-                  >
-                    ✖
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <CopyButton text={`${e.pid} ${e.name} (${e.username}) · ${e.sign_status || "—"} · ${e.exe || "(no exe)"}`} />
+                    <button
+                      onClick={() => setKillTarget({ mode: "single", entry: e })}
+                      title={`Kill PID ${e.pid}`}
+                      className="text-[11px] font-bold text-ink-dim hover:text-danger transition
+                                 border border-divider hover:border-danger/60 rounded
+                                 px-2 py-0.5"
+                    >
+                      ✖
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           </section>
         )}
         {!busy && visible.length === 0 && !error && (
-          <div className="text-ink-dim text-xs">No processes match.</div>
+          <EmptyState
+            icon="⚙️"
+            title="No processes match"
+            description={unsignedOnly ? "Toggle 'Unsigned only' off, clear filters, or rescan." : "Try a different filter or rescan."}
+          />
         )}
       </div>
 

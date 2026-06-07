@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchEmailAudit, type EmailReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -86,7 +89,15 @@ export default function EmailSecurity() {
             Error — {error}
           </div>
         )}
-        {!report && !error && !confirmReason && !busy && <EmptyState />}
+        {!report && !error && !confirmReason && !busy && (
+          <EmptyStateComponent
+            icon="📧"
+            title="Email Security"
+            description="DNS-only audit: SPF, DMARC, MTA-STS, BIMI, DKIM (common selectors)"
+            exampleTarget="anthropic.com"
+            onExample={setDomain}
+          />
+        )}
 
         {report && (
           <>
@@ -173,17 +184,28 @@ export default function EmailSecurity() {
                   {report.findings.map((f, i) => {
                     const sev = SEV[f.severity] ?? SEV.info;
                     return (
-                      <li key={i} className="flex items-start gap-2">
+                      <li
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="group flex items-start gap-2 mhp-result-in"
+                      >
                         <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
                         <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
                           {f.severity}
                         </span>
                         <span className="text-ink-primary flex-1">{f.label}</span>
                         <span className="text-ink-muted">{f.detail}</span>
+                        <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                       </li>
                     );
                   })}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  high={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
           </>
@@ -243,24 +265,6 @@ function StatusPill({ label, ok }: { label: string; ok: boolean }) {
       <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">{label}</div>
       <div className={"mt-0.5 text-sm font-mono " + (ok ? "text-phos" : "text-ink-dim")}>
         {ok ? "✓" : "—"}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  EMAIL  SEC  │
-        │ SPF·DMARC·KI │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          DNS-only audit: SPF, DMARC, MTA-STS, BIMI, DKIM (common selectors)
-        </div>
       </div>
     </div>
   );

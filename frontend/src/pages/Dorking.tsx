@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Category = {
   id: string;
@@ -160,42 +163,65 @@ curl -X POST http://127.0.0.1:8765/settings/keys/google_cse_id \\
         {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
       </div>
 
+      {dorks.length === 0 && !loading && !error && (
+        <EmptyState
+          icon="🕵️"
+          title="Google dorking"
+          description="Generate (and optionally execute via CSE) targeted dorks for files, admin paths, leaks, errors, configs."
+          exampleTarget="example.com"
+          onExample={setTarget}
+        />
+      )}
+
       {dorks.length > 0 && (
         <div className="space-y-2">
-          <div className="text-[11px] text-ink-muted tracking-wider">
-            {dorks.length} dorks{executed ? " · executed via CSE" : ""}
-          </div>
-          {dorks.map((d, i) => (
-            <div key={i} className="border border-divider rounded p-2">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] uppercase text-accent border border-accent/40 rounded px-1.5">
-                  {d.category}
-                </span>
-                <a href={d.url} target="_blank" rel="noreferrer"
-                   className="text-[12px] font-mono text-ink-primary hover:text-accent truncate flex-1">
-                  {d.query}
-                </a>
-                <a href={d.url} target="_blank" rel="noreferrer"
-                   className="text-[10px] text-ink-muted hover:text-accent">↗</a>
-              </div>
-              {d.error && <div className="text-[11px] text-amber">{d.error}</div>}
-              {d.items && d.items.length > 0 && (
-                <div className="pl-3 border-l-2 border-divider mt-2 space-y-2">
-                  {d.items.map((it, j) => (
-                    <div key={j}>
-                      <a href={it.link} target="_blank" rel="noreferrer"
-                         className="text-[12px] text-accent hover:underline">{it.title}</a>
-                      <div className="text-[10px] text-ink-dim font-mono truncate">{it.link}</div>
-                      {it.snippet && <div className="text-[11px] text-ink-muted">{it.snippet}</div>}
-                    </div>
-                  ))}
+          <StatsBar
+            total={dorks.length}
+            critical={dorks.reduce((s, d) => s + (d.items?.length ?? 0), 0)}
+            extra={`${dorks.length} dorks${executed ? " · executed via CSE" : ""}`}
+          />
+          {dorks.map((d, i) => {
+            const copyText = d.query;
+            return (
+              <div
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group border border-divider rounded p-2"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] uppercase text-accent border border-accent/40 rounded px-1.5">
+                    {d.category}
+                  </span>
+                  <a href={d.url} target="_blank" rel="noreferrer"
+                     className="text-[12px] font-mono text-ink-primary hover:text-accent truncate flex-1">
+                    {d.query}
+                  </a>
+                  <a href={d.url} target="_blank" rel="noreferrer"
+                     className="text-[10px] text-ink-muted hover:text-accent">↗</a>
+                  <CopyButton text={copyText} />
                 </div>
-              )}
-              {executed && d.items && d.items.length === 0 && !d.error && (
-                <div className="text-[11px] text-ink-dim italic pl-3">No results</div>
-              )}
-            </div>
-          ))}
+                {d.error && <div className="text-[11px] text-amber">{d.error}</div>}
+                {d.items && d.items.length > 0 && (
+                  <div className="pl-3 border-l-2 border-divider mt-2 space-y-2">
+                    {d.items.map((it, j) => (
+                      <div key={j} className="group/inner flex items-start gap-2">
+                        <div className="flex-1">
+                          <a href={it.link} target="_blank" rel="noreferrer"
+                             className="text-[12px] text-accent hover:underline">{it.title}</a>
+                          <div className="text-[10px] text-ink-dim font-mono truncate">{it.link}</div>
+                          {it.snippet && <div className="text-[11px] text-ink-muted">{it.snippet}</div>}
+                        </div>
+                        <CopyButton text={it.link} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {executed && d.items && d.items.length === 0 && !d.error && (
+                  <div className="text-[11px] text-ink-dim italic pl-3">No results</div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import StatsBar from "../components/StatsBar";
+import EmptyState from "../components/EmptyState";
 
 type Finding = {
   severity: "critical" | "high" | "medium" | "low" | "info";
@@ -13,14 +17,6 @@ type ScanResp = {
   home: string;
   findings: Finding[];
   sources: Record<string, any>;
-};
-
-const SEV: Record<string, string> = {
-  critical: "border-danger/40 bg-danger/10 text-danger",
-  high:     "border-danger/40 bg-danger/10 text-danger",
-  medium:   "border-amber/40 bg-amber/10 text-amber",
-  low:      "border-accent/30 bg-accent/5 text-accent",
-  info:     "border-divider text-ink-muted",
 };
 
 export default function CredHarvest() {
@@ -65,36 +61,59 @@ export default function CredHarvest() {
 
       {result && (
         <>
+          <StatsBar
+            total={result.findings.length}
+            critical={result.findings.filter((f) => normalizeSeverity(f.severity) === "critical").length}
+            high={result.findings.filter((f) => normalizeSeverity(f.severity) === "high").length}
+            medium={result.findings.filter((f) => normalizeSeverity(f.severity) === "medium").length}
+            low={result.findings.filter((f) => normalizeSeverity(f.severity) === "low").length}
+            extra={`home: ${result.home}`}
+            className="mb-3"
+          />
           {/* Findings */}
           <div className="mb-4">
             <div className="text-[11px] text-ink-muted tracking-wider mb-2">
               FINDINGS ({result.findings.length})
             </div>
             {result.findings.length === 0 ? (
-              <div className="text-[12px] text-phos">✓ No issues flagged.</div>
+              <EmptyState
+                icon="✓"
+                title="No issues flagged"
+                description="Credential stores look healthy — no shell history secrets, no chmod-666 dotfiles, no plaintext tokens."
+              />
             ) : (
               <div className="space-y-2">
-                {result.findings.map((f, i) => (
-                  <div key={i} className={"border rounded p-3 " + SEV[f.severity]}>
-                    <div className="flex items-center gap-2 mb-1 text-[11px]">
-                      <span className="font-bold uppercase tracking-wider">{f.severity}</span>
-                      <span className="text-ink-dim text-[10px] uppercase border border-divider rounded px-1">
-                        {f.source}
-                      </span>
-                      <span className="text-ink-primary font-bold text-[12px] ml-1">{f.title}</span>
+                {result.findings.map((f, i) => {
+                  const sev = normalizeSeverity(f.severity);
+                  const copyText = `[${sev.toUpperCase()}] ${f.source} · ${f.title} — ${f.detail}`;
+                  return (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group border border-divider rounded p-3 " +
+                                 (sev === "critical" ? "mhp-critical-pulse" : "")}
+                    >
+                      <div className="flex items-center gap-2 mb-1 text-[11px]">
+                        <SeverityBadge severity={sev} />
+                        <span className="text-ink-dim text-[10px] uppercase border border-divider rounded px-1">
+                          {f.source}
+                        </span>
+                        <span className="text-ink-primary font-bold text-[12px] ml-1">{f.title}</span>
+                        <CopyButton text={copyText} className="ml-auto" />
+                      </div>
+                      <div className="text-[12px] text-ink-muted">{f.detail}</div>
+                      {f.evidence !== undefined && (
+                        <details className="mt-1">
+                          <summary className="text-[10px] text-ink-dim cursor-pointer">Evidence</summary>
+                          <pre className="text-[10px] font-mono text-phos bg-bg-panel border border-divider
+                                          rounded p-1.5 mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                            {JSON.stringify(f.evidence, null, 2)}
+                          </pre>
+                        </details>
+                      )}
                     </div>
-                    <div className="text-[12px] text-ink-muted">{f.detail}</div>
-                    {f.evidence !== undefined && (
-                      <details className="mt-1">
-                        <summary className="text-[10px] text-ink-dim cursor-pointer">Evidence</summary>
-                        <pre className="text-[10px] font-mono text-phos bg-bg-panel border border-divider
-                                        rounded p-1.5 mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap">
-                          {JSON.stringify(f.evidence, null, 2)}
-                        </pre>
-                      </details>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

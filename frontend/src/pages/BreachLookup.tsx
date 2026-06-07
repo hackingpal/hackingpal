@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, authFetch, parseError } from "../api";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
+import StatsBar from "../components/StatsBar";
+import SeverityBadge from "../components/SeverityBadge";
 
 type Mode = "password" | "email";
 
@@ -108,14 +112,29 @@ function PasswordTab() {
         {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="🔐"
+          title="Pwned-password check"
+          description="HIBP k-anonymity check: SHA-1 your password locally, send only the first 5 hex chars."
+          hint="Your password never crosses the network."
+        />
+      )}
+
       {result && (
-        <div className={"bg-bg-card border rounded p-4 " +
-          (result.pwned ? "border-danger/60" : "border-phos/60")}>
-          <div className={"text-[14px] font-bold mb-1 " +
-            (result.pwned ? "text-danger" : "text-phos")}>
-            {result.pwned
-              ? `⚠ This password has been seen ${result.count.toLocaleString()} times in known breaches.`
-              : "✓ Not found in any known breach."}
+        <div className={"mhp-result-in bg-bg-card border rounded p-4 " +
+          (result.pwned ? "border-danger/60 mhp-critical-pulse" : "border-phos/60")}>
+          <div className="flex items-center gap-2 mb-1">
+            {result.pwned ? <SeverityBadge severity="critical" /> : <SeverityBadge severity="info" label="Clean" />}
+            <div className={"text-[14px] font-bold " +
+              (result.pwned ? "text-danger" : "text-phos")}>
+              {result.pwned
+                ? `Seen ${result.count.toLocaleString()} times in known breaches`
+                : "Not found in any known breach"}
+            </div>
+            {result.pwned && (
+              <CopyButton text={`Pwned ${result.count.toLocaleString()}× (prefix ${result.prefix})`} className="ml-auto" />
+            )}
           </div>
           <div className="text-[11px] text-ink-dim font-mono">
             Hash prefix queried: <span className="text-amber">{result.prefix}</span>
@@ -184,35 +203,53 @@ function EmailTab({ status }: { status: StatusResp | null }) {
         {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!result && !loading && !error && hasKey && (
+        <EmptyState
+          icon="📧"
+          title="HIBP email lookup"
+          description="Cross-check an email address against HaveIBeenPwned's full breach database."
+          exampleTarget="user@example.com"
+          onExample={setEmail}
+        />
+      )}
+
       {result && (
         <div>
-          <div className={"text-[14px] font-bold mb-2 " +
-            (result.count > 0 ? "text-danger" : "text-phos")}>
-            {result.count > 0
-              ? `⚠ ${result.email} is in ${result.count} known breach${result.count === 1 ? "" : "es"}.`
-              : `✓ ${result.email} not found in any known breach.`}
-          </div>
-          {result.breaches.map((b) => (
-            <div key={b.Name} className="border border-divider rounded p-3 mb-2">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[13px] font-bold text-ink-primary">{b.Title}</span>
-                <span className="text-[10px] text-ink-dim">({b.Domain})</span>
-                {b.IsSensitive && (
-                  <span className="text-[10px] text-amber border border-amber/40 rounded px-1">SENSITIVE</span>
+          <StatsBar
+            total={result.count}
+            critical={result.breaches.filter((b) => b.IsSensitive).length}
+            medium={result.count - result.breaches.filter((b) => b.IsSensitive).length}
+            extra={result.email}
+            className="mb-3"
+          />
+          {result.breaches.map((b, i) => {
+            const copyText = `${b.Title} (${b.Domain}) — ${b.BreachDate} · ${b.PwnCount.toLocaleString()} affected${b.DataClasses?.length ? ` · ${b.DataClasses.join(", ")}` : ""}`;
+            return (
+              <div
+                key={b.Name}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className={"mhp-result-in group border border-divider rounded p-3 mb-2 " +
+                           (b.IsSensitive ? "mhp-critical-pulse" : "")}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[13px] font-bold text-ink-primary">{b.Title}</span>
+                  <span className="text-[10px] text-ink-dim">({b.Domain})</span>
+                  {b.IsSensitive && <SeverityBadge severity="critical" label="SENSITIVE" />}
+                  <CopyButton text={copyText} className="ml-auto" />
+                </div>
+                <div className="text-[10px] text-ink-dim mb-2">
+                  Breach date: {b.BreachDate} · Added to HIBP: {b.AddedDate} ·
+                  Affected: {b.PwnCount.toLocaleString()}
+                </div>
+                {b.Description && <BreachDescription html={b.Description} />}
+                {b.DataClasses && b.DataClasses.length > 0 && (
+                  <div className="text-[10px] text-ink-dim">
+                    Compromised data: <span className="text-ink-primary">{b.DataClasses.join(", ")}</span>
+                  </div>
                 )}
               </div>
-              <div className="text-[10px] text-ink-dim mb-2">
-                Breach date: {b.BreachDate} · Added to HIBP: {b.AddedDate} ·
-                Affected: {b.PwnCount.toLocaleString()}
-              </div>
-              {b.Description && <BreachDescription html={b.Description} />}
-              {b.DataClasses && b.DataClasses.length > 0 && (
-                <div className="text-[10px] text-ink-dim">
-                  Compromised data: <span className="text-ink-primary">{b.DataClasses.join(", ")}</span>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

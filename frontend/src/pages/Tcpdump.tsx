@@ -4,6 +4,9 @@ import {
   installTcpdumpSudoers, openWs,
   type TcpdumpEvent, type TcpdumpStatus,
 } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 export default function Tcpdump() {
   const [status,    setStatus]    = useState<TcpdumpStatus | null>(null);
@@ -171,28 +174,47 @@ export default function Tcpdump() {
         )}
 
         {lines.length === 0 && !running && !error && !needsInstall && (
-          <div className="text-ink-dim text-xs font-mono">
-            Set an interface and press <kbd className="px-1.5 py-0.5 rounded bg-bg-card
-              border border-divider text-[10px] text-ink-primary">▶ Capture</kbd>
-          </div>
+          <EmptyStateComponent
+            icon="📦"
+            title="TCPDump"
+            description="Capture live packet traffic on a network interface with an optional BPF filter."
+            hint="Try filter `tcp port 443` or `icmp` to scope the capture."
+          />
         )}
 
         {lines.length > 0 && (
-          <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap
-                          bg-bg-card border border-divider rounded p-3 text-ink-primary
-                          max-h-[calc(100vh-280px)] overflow-auto">
-            {lines.map((ln, i) => {
-              const lo = ln.toLowerCase();
-              let cls = "";
-              if (ln.startsWith("$")) cls = "text-ink-dim";
-              else if (lo.includes("tcp")) cls = "text-accent";
-              else if (lo.includes("udp")) cls = "text-phos";
-              else if (lo.includes("icmp")) cls = "text-amber";
-              else if (lo.includes("arp"))  cls = "text-amber";
-              else if (lo.includes("error") || lo.includes("warning")) cls = "text-danger";
-              return <div key={i} className={cls}>{ln || " "}</div>;
-            })}
-          </pre>
+          <div className="bg-bg-card border border-divider rounded overflow-hidden relative">
+            <div className="absolute top-2 right-2 z-10">
+              <CopyButton text={lines.join("\n")} alwaysVisible label="Copy all" />
+            </div>
+            <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap
+                            p-3 text-ink-primary max-h-[calc(100vh-320px)] overflow-auto">
+              {lines.map((ln, i) => {
+                const lo = ln.toLowerCase();
+                let cls = "";
+                if (ln.startsWith("$")) cls = "text-ink-dim";
+                else if (lo.includes("tcp")) cls = "text-accent";
+                else if (lo.includes("udp")) cls = "text-phos";
+                else if (lo.includes("icmp")) cls = "text-amber";
+                else if (lo.includes("arp"))  cls = "text-amber";
+                else if (lo.includes("error") || lo.includes("warning")) cls = "text-danger";
+                return (
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 12) * 15}ms` }}
+                    className={`mhp-result-in ${cls}`}
+                  >
+                    {ln || " "}
+                  </div>
+                );
+              })}
+            </pre>
+            <StatsBar
+              total={lines.length - (lines[0]?.startsWith("$") ? 1 : 0)}
+              running={running}
+              extra={captured > 0 ? `${captured} captured` : undefined}
+            />
+          </div>
         )}
       </div>
     </div>

@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchReverseIp, type ReverseIpReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 export default function ReverseIp() {
   const [target, setTarget] = useState("");
@@ -81,7 +84,15 @@ export default function ReverseIp() {
             Error — {error}
           </div>
         )}
-        {!report && !error && !confirmReason && !busy && <EmptyState />}
+        {!report && !error && !confirmReason && !busy && (
+          <EmptyStateComponent
+            icon="🔁"
+            title="Reverse IP"
+            description="What other domains live on a given IP. Backed by HackerTarget free tier (~50/day rate limit)."
+            exampleTarget="example.com"
+            onExample={setTarget}
+          />
+        )}
 
         {report && (
           <>
@@ -112,7 +123,11 @@ export default function ReverseIp() {
               <Card title="Findings">
                 <ul className="space-y-1">
                   {report.findings.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2">
+                    <li
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group flex items-start gap-2"
+                    >
                       <span className={"text-[10px] uppercase tracking-widest " +
                         (f.severity === "warn" ? "text-amber" :
                          f.severity === "high" ? "text-danger" : "text-ink-muted")}>
@@ -120,9 +135,16 @@ export default function ReverseIp() {
                       </span>
                       <span className="text-ink-primary flex-1">{f.label}</span>
                       <span className="text-ink-muted">{f.detail}</span>
+                      <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                     </li>
                   ))}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  critical={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
 
@@ -140,7 +162,14 @@ export default function ReverseIp() {
                   />
                   <div className="max-h-96 overflow-auto grid grid-cols-2 gap-x-3 gap-y-0.5">
                     {filtered.slice(0, 400).map((d, i) => (
-                      <span key={i} className="text-ink-primary break-all">{d}</span>
+                      <span
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="mhp-result-in group flex items-center gap-1 text-ink-primary break-all"
+                      >
+                        <span className="flex-1">{d}</span>
+                        <CopyButton text={d} />
+                      </span>
                     ))}
                     {filtered.length > 400 && (
                       <span className="text-ink-dim col-span-2 mt-2">
@@ -153,25 +182,6 @@ export default function ReverseIp() {
             </Card>
           </>
         )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │ REVERSE  IP  │
-        │  shared host │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          What other domains live on a given IP.<br />
-          Backed by HackerTarget free tier (~50/day rate limit).
-        </div>
       </div>
     </div>
   );

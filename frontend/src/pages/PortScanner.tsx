@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
 import ScopeBanner from "../components/ScopeBanner";
 import { useActiveEngagementId } from "../lib/engagement";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type OpenRow = { port: number; service: string; banner: string };
 
@@ -329,12 +332,28 @@ export default function PortScanner() {
           </div>
         )}
 
-        {!error && !timedOut && rows.length === 0 && !scanning && elapsed === null && <EmptyState />}
+        {!error && !timedOut && rows.length === 0 && !scanning && elapsed === null && (
+          <EmptyStateComponent
+            icon="🔌"
+            title="Port Scanner"
+            description="Threaded TCP connect scan with service detection and banner grab."
+            exampleTarget="scanme.nmap.org"
+            onExample={setTarget}
+            hint="Set port range above and press ▶ Scan."
+          />
+        )}
 
         {(rows.length > 0 || scanning) && (
           <>
             {rows.length > 0 && <ExportBar rows={rows} target={meta?.target ?? target} />}
-            <ResultsTable rows={rows} />
+            <ResultsTable
+              rows={rows}
+              scanning={scanning}
+              elapsed={elapsed}
+              stopped={stopped}
+              done={done}
+              total={total}
+            />
           </>
         )}
 
@@ -359,23 +378,34 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function ResultsTable({ rows }: { rows: OpenRow[] }) {
+function ResultsTable({
+  rows, scanning, elapsed, stopped, done, total,
+}: {
+  rows: OpenRow[];
+  scanning: boolean;
+  elapsed: number | null;
+  stopped: boolean;
+  done: number;
+  total: number;
+}) {
   return (
     <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
-      <div className="grid grid-cols-[70px_60px_140px_1fr] gap-3 px-3 py-1.5
+      <div className="grid grid-cols-[70px_60px_140px_1fr_60px] gap-3 px-3 py-1.5
                       bg-bg-panel border-b border-divider text-[10px]
                       uppercase tracking-[0.2em] text-ink-dim">
         <span>Port</span>
         <span>State</span>
         <span>Service</span>
         <span>Banner</span>
+        <span></span>
       </div>
       <div className="font-mono text-xs">
         {rows.map((r, i) => (
           <div
             key={r.port}
+            style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
             className={
-              "grid grid-cols-[70px_60px_140px_1fr] gap-3 px-3 py-1 " +
+              "group grid grid-cols-[70px_60px_140px_1fr_60px] gap-3 px-3 py-1 mhp-result-in " +
               (i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")
             }
           >
@@ -383,9 +413,24 @@ function ResultsTable({ rows }: { rows: OpenRow[] }) {
             <span className="text-phos">open</span>
             <span className="text-ink-muted">{r.service || "—"}</span>
             <span className="text-ink-primary truncate">{r.banner || "—"}</span>
+            <span className="flex justify-end">
+              <CopyButton text={`${r.port}/${r.service}\t${r.banner}`} />
+            </span>
           </div>
         ))}
       </div>
+      <StatsBar
+        total={rows.length}
+        elapsed={elapsed ?? undefined}
+        running={scanning}
+        extra={
+          stopped
+            ? "stopped"
+            : total > 0
+              ? `${done}/${total} probed`
+              : undefined
+        }
+      />
     </section>
   );
 }
@@ -467,24 +512,3 @@ function ExportBar({ rows, target }: { rows: OpenRow[]; target: string }) {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   ▶  SCAN    │
-        │  PORTS 1-N   │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Set a target + port range and press <kbd className="px-1.5 py-0.5 rounded
-            bg-bg-card border border-divider text-[10px] text-ink-primary">▶ Scan</kbd>
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          Threaded TCP connect · service detection · banner grab
-        </div>
-      </div>
-    </div>
-  );
-}

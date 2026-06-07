@@ -1,6 +1,9 @@
 import { useState } from "react";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type S3Event =
   | { type: "started"; target: string; total: number }
@@ -23,6 +26,7 @@ export default function S3Scanner() {
   const [buckets, setBuckets] = useState<Bucket[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [doneText, setDoneText] = useState("");
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   const { status, error, start, stop } = useAttackWS<S3Event>(
     "/ws/s3-scan",
@@ -30,6 +34,7 @@ export default function S3Scanner() {
       if (ev.type === "started") {
         setBuckets([]); setDoneText("");
         setProgress({ done: 0, total: ev.total });
+        setStartedAt(Date.now());
       } else if (ev.type === "bucket") {
         setBuckets((b) => [...b, ev]);
       } else if (ev.type === "progress") {
@@ -141,51 +146,80 @@ export default function S3Scanner() {
       </div>
 
       <div className="flex-1 overflow-y-auto bg-bg-card border border-divider rounded">
-        <table className="w-full text-[11px]">
-          <thead className="sticky top-0 bg-bg-panel border-b border-divider">
-            <tr className="text-ink-muted text-[10px] tracking-wider">
-              <th className="text-left px-3 py-1.5"></th>
-              <th className="text-left px-3 py-1.5">BUCKET</th>
-              <th className="text-left px-3 py-1.5 w-16">STATUS</th>
-              <th className="text-left px-3 py-1.5 w-24">STATE</th>
-              <th className="text-left px-3 py-1.5">HINT</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((b, i) => {
-              const sevClass = b.listable ? "text-phos" : b.exists ? "text-amber" : "text-ink-dim";
-              const dot = b.listable ? "bg-phos" : b.exists ? "bg-amber" : "bg-ink-dim";
-              return (
-                <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
-                  <td className="px-3 py-1.5">
-                    <span className={"inline-block w-1.5 h-1.5 rounded-full " + dot} />
-                  </td>
-                  <td className="px-3 py-1.5 font-mono">
-                    <a href={`https://${b.name}.s3.amazonaws.com/`} target="_blank" rel="noreferrer"
-                       className={"hover:underline " + sevClass}>
-                      {b.name}
-                    </a>
-                  </td>
-                  <td className="px-3 py-1.5 font-mono text-ink-muted tabular-nums">{b.status || "—"}</td>
-                  <td className={"px-3 py-1.5 uppercase tracking-wider " + sevClass}>
-                    {b.listable ? "listable" : b.exists ? "private" : "missing"}
-                  </td>
-                  <td className="px-3 py-1.5 text-ink-muted">
-                    {b.hint || ""}{b.region ? ` → ${b.region}` : ""}
-                  </td>
-                </tr>
-              );
-            })}
-            {filtered.length === 0 && (
-              <tr><td colSpan={5} className="px-3 py-6 text-center text-ink-dim italic">
-                {buckets.length === 0
-                  ? "No results yet."
-                  : "Buckets exist but the current filter hides them — toggle filters above."}
-              </td></tr>
-            )}
-          </tbody>
-        </table>
+        {buckets.length === 0 && !running ? (
+          <EmptyState
+            icon="🪣"
+            title="S3 bucket enumeration"
+            description="Permutation-based public-bucket finder. Probes <target>-prod, <target>-backup, <target>-data, … against s3.amazonaws.com."
+            exampleTarget="acme"
+            onExample={setTarget}
+          />
+        ) : (
+          <table className="w-full text-[11px]">
+            <thead className="sticky top-0 bg-bg-panel border-b border-divider">
+              <tr className="text-ink-muted text-[10px] tracking-wider">
+                <th className="text-left px-3 py-1.5"></th>
+                <th className="text-left px-3 py-1.5">BUCKET</th>
+                <th className="text-left px-3 py-1.5 w-16">STATUS</th>
+                <th className="text-left px-3 py-1.5 w-24">STATE</th>
+                <th className="text-left px-3 py-1.5">HINT</th>
+                <th className="px-3 py-1.5 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((b, i) => {
+                const sevClass = b.listable ? "text-phos" : b.exists ? "text-amber" : "text-ink-dim";
+                const dot = b.listable ? "bg-phos" : b.exists ? "bg-amber" : "bg-ink-dim";
+                const copyText = `${b.name} (${b.status || "?"}) ${b.listable ? "LISTABLE" : b.exists ? "private" : "missing"}${b.region ? ` [${b.region}]` : ""}${b.hint ? ` — ${b.hint}` : ""}`;
+                return (
+                  <tr
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className={"group border-b border-divider hover:bg-bg-nav-hover mhp-result-in " +
+                               (b.listable ? "mhp-critical-pulse" : "")}
+                  >
+                    <td className="px-3 py-1.5">
+                      <span className={"inline-block w-1.5 h-1.5 rounded-full " + dot} />
+                    </td>
+                    <td className="px-3 py-1.5 font-mono">
+                      <a href={`https://${b.name}.s3.amazonaws.com/`} target="_blank" rel="noreferrer"
+                         className={"hover:underline " + sevClass}>
+                        {b.name}
+                      </a>
+                    </td>
+                    <td className="px-3 py-1.5 font-mono text-ink-muted tabular-nums">{b.status || "—"}</td>
+                    <td className={"px-3 py-1.5 uppercase tracking-wider " + sevClass}>
+                      {b.listable ? "listable" : b.exists ? "private" : "missing"}
+                    </td>
+                    <td className="px-3 py-1.5 text-ink-muted">
+                      {b.hint || ""}{b.region ? ` → ${b.region}` : ""}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <CopyButton text={copyText} />
+                    </td>
+                  </tr>
+                );
+              })}
+              {filtered.length === 0 && (
+                <tr><td colSpan={6} className="px-3 py-6 text-center text-ink-dim italic">
+                  Buckets exist but the current filter hides them — toggle filters above.
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
+
+      {buckets.length > 0 && (
+        <StatsBar
+          total={buckets.length}
+          critical={listable.length}
+          medium={existing.length - listable.length}
+          startedAt={startedAt}
+          running={running}
+          extra={progress.total > 0 ? `${progress.done}/${progress.total} probed` : undefined}
+        />
+      )}
     </div>
   );
 }

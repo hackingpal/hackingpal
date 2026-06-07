@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import { api } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type SourceStatus = { name: string; needs_key: boolean; key_configured: boolean };
 
@@ -33,6 +36,7 @@ export default function SubdomainEnum() {
   const [sourcesProgress, setSourcesProgress] = useState<Record<string, SourceProgress>>({});
   const [found, setFound] = useState<Map<string, Found>>(new Map());
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   useEffect(() => {
     api<{ sources: SourceStatus[] }>("/subdom/status")
@@ -75,6 +79,7 @@ export default function SubdomainEnum() {
   function go() {
     const d = domain.trim().toLowerCase();
     if (!d) return;
+    setStartedAt(Date.now());
     start({ domain: d, sources: [...selected], resolve: doResolve, confirm_auth: true });
   }
 
@@ -197,28 +202,59 @@ export default function SubdomainEnum() {
       )}
 
       {/* Results */}
-      <div className="flex-1 overflow-y-auto bg-bg-card border border-divider rounded">
-        <table className="w-full text-[12px]">
-          <thead className="sticky top-0 bg-bg-sidebar border-b border-divider">
-            <tr className="text-ink-muted text-[10px] tracking-wider">
-              <th className="text-left px-3 py-2">SUBDOMAIN</th>
-              <th className="text-left px-3 py-2">IP</th>
-              <th className="text-left px-3 py-2">SOURCES</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...found.values()].sort((a, b) => a.name.localeCompare(b.name)).map((f) => (
-              <tr key={f.name} className="border-b border-divider hover:bg-bg-base">
-                <td className="px-3 py-1.5 font-mono text-ink-primary">{f.name}</td>
-                <td className="px-3 py-1.5 font-mono text-phos">{f.ip ?? "—"}</td>
-                <td className="px-3 py-1.5 text-ink-dim">{f.sources.join(", ")}</td>
-              </tr>
-            ))}
-            {found.size === 0 && (
-              <tr><td colSpan={3} className="px-3 py-4 text-ink-dim text-center">No results yet.</td></tr>
-            )}
-          </tbody>
-        </table>
+      <div className="flex-1 overflow-hidden flex flex-col bg-bg-card border border-divider rounded">
+        {found.size === 0 && !running ? (
+          <EmptyStateComponent
+            icon="🌐"
+            title="Subdomain Enumeration"
+            description="Aggregate passive sources (crt.sh, OTX, HackerTarget, …) to discover subdomains."
+            exampleTarget="example.com"
+            onExample={setDomain}
+          />
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto">
+              <table className="w-full text-[12px]">
+                <thead className="sticky top-0 bg-bg-sidebar border-b border-divider">
+                  <tr className="text-ink-muted text-[10px] tracking-wider">
+                    <th className="text-left px-3 py-2">SUBDOMAIN</th>
+                    <th className="text-left px-3 py-2">IP</th>
+                    <th className="text-left px-3 py-2">SOURCES</th>
+                    <th className="px-3 py-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...found.values()].sort((a, b) => a.name.localeCompare(b.name)).map((f, i) => (
+                    <tr
+                      key={f.name}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group border-b border-divider hover:bg-bg-base"
+                    >
+                      <td className="px-3 py-1.5 font-mono text-ink-primary">{f.name}</td>
+                      <td className="px-3 py-1.5 font-mono text-phos">{f.ip ?? "—"}</td>
+                      <td className="px-3 py-1.5 text-ink-dim">{f.sources.join(", ")}</td>
+                      <td className="px-3 py-1.5 text-right">
+                        <CopyButton
+                          text={`${f.name}\t${f.ip ?? ""}\t${f.sources.join(",")}`}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                  {found.size === 0 && (
+                    <tr><td colSpan={4} className="px-3 py-4 text-ink-dim text-center">No results yet.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <StatsBar
+              total={total}
+              startedAt={startedAt}
+              running={running}
+              elapsed={elapsed ?? undefined}
+              extra={resolved > 0 ? `${resolved} resolved` : undefined}
+            />
+          </>
+        )}
       </div>
     </div>
   );

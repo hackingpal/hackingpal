@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Service = "shodan" | "censys";
 
@@ -165,11 +168,24 @@ curl -X POST http://127.0.0.1:8765/settings/keys/censys_api_secret \\
         )}
       </div>
 
+      {!results && !loading && !error && (
+        <EmptyState
+          icon="🌐"
+          title={service === "shodan" ? "Shodan query" : "Censys query"}
+          description={service === "shodan"
+            ? "Internet-wide scan results from Shodan. Native syntax (product:, port:, hostname:, org:)."
+            : "Internet-wide scan results from Censys. Native syntax (services.service_name:, autonomous_system.name:)."}
+          hint="Pick from the example queries above or type your own."
+        />
+      )}
+
       {results && (
         <div>
-          <div className="text-[11px] text-ink-muted tracking-wider mb-2">
-            {results.rows.length} rows · total matches: {results.total.toLocaleString()}
-          </div>
+          <StatsBar
+            total={results.rows.length}
+            extra={`total matches: ${results.total.toLocaleString()} · ${service}`}
+            className="mb-2"
+          />
           <div className="bg-bg-card border border-divider rounded overflow-hidden">
             <table className="w-full text-[11px]">
               <thead className="bg-bg-panel border-b border-divider">
@@ -180,23 +196,32 @@ curl -X POST http://127.0.0.1:8765/settings/keys/censys_api_secret \\
                   <th className="text-left px-3 py-1.5 w-12">CC</th>
                   <th className="text-left px-3 py-1.5">ORG</th>
                   <th className="text-left px-3 py-1.5">HOSTNAMES</th>
+                  <th className="px-3 py-1.5 w-10"></th>
                 </tr>
               </thead>
               <tbody>
-                {results.rows.map((r, i) => (
-                  <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover align-top">
-                    <td className="px-3 py-1.5 font-mono text-accent">{r.ip}</td>
-                    <td className="px-3 py-1.5 font-mono text-amber tabular-nums">{r.port ?? "—"}</td>
-                    <td className="px-3 py-1.5 font-mono text-ink-primary">{r.service}</td>
-                    <td className="px-3 py-1.5 text-ink-dim uppercase">{r.country}</td>
-                    <td className="px-3 py-1.5 text-ink-muted truncate max-w-[160px]" title={r.org}>{r.org}</td>
-                    <td className="px-3 py-1.5 text-ink-muted truncate max-w-[200px]">
-                      {r.hostnames.slice(0, 3).join(", ")}{r.hostnames.length > 3 ? "…" : ""}
-                    </td>
-                  </tr>
-                ))}
+                {results.rows.map((r, i) => {
+                  const copyText = `${r.ip}:${r.port ?? "—"} · ${r.service} · ${r.country} · ${r.org}${r.hostnames.length ? ` · ${r.hostnames.join(", ")}` : ""}`;
+                  return (
+                    <tr
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group border-b border-divider hover:bg-bg-nav-hover align-top"
+                    >
+                      <td className="px-3 py-1.5 font-mono text-accent">{r.ip}</td>
+                      <td className="px-3 py-1.5 font-mono text-amber tabular-nums">{r.port ?? "—"}</td>
+                      <td className="px-3 py-1.5 font-mono text-ink-primary">{r.service}</td>
+                      <td className="px-3 py-1.5 text-ink-dim uppercase">{r.country}</td>
+                      <td className="px-3 py-1.5 text-ink-muted truncate max-w-[160px]" title={r.org}>{r.org}</td>
+                      <td className="px-3 py-1.5 text-ink-muted truncate max-w-[200px]">
+                        {r.hostnames.slice(0, 3).join(", ")}{r.hostnames.length > 3 ? "…" : ""}
+                      </td>
+                      <td className="px-3 py-1.5"><CopyButton text={copyText} /></td>
+                    </tr>
+                  );
+                })}
                 {results.rows.length === 0 && (
-                  <tr><td colSpan={6} className="px-3 py-6 text-center text-ink-dim italic">
+                  <tr><td colSpan={7} className="px-3 py-6 text-center text-ink-dim italic">
                     No matches.
                   </td></tr>
                 )}

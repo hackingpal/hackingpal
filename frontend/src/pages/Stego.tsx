@@ -5,6 +5,9 @@ import {
   type StegoAnalyzeResp, type StegoCapacity, type StegoEmbedResult,
   type StegoExtractResp,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
+import SeverityBadge from "../components/SeverityBadge";
 
 type Mode = "embed" | "extract" | "analyze";
 
@@ -207,6 +210,14 @@ function EmbedTab({ onError }: { onError: (e: string | null) => void }) {
         </button>
       </div>
 
+      {!result && !busy && (
+        <EmptyState
+          icon="🫥"
+          title="Embed payload"
+          description="Hide text or a file inside PNG / BMP / WAV using LSB. AES-GCM encryption when you set a password."
+        />
+      )}
+
       {result && downloadUrlRef.current && (
         <Card title="Stego file ready">
           <div className="text-[11px] space-y-1.5">
@@ -279,6 +290,14 @@ function ExtractTab({ onError }: { onError: (e: string | null) => void }) {
         </div>
       </Card>
 
+      {!result && !busy && (
+        <EmptyState
+          icon="📤"
+          title="Extract hidden data"
+          description="Provide a PNG / BMP / WAV created with this tool's embed mode. Add password if AES-encrypted."
+        />
+      )}
+
       {result && (
         <Card title="Recovered payload">
           <div className="grid grid-cols-4 gap-3 mb-3">
@@ -289,10 +308,13 @@ function ExtractTab({ onError }: { onError: (e: string | null) => void }) {
             <KV k="Filename" v={result.filename ?? "—"} />
           </div>
           {result.is_text ? (
-            <pre className="bg-bg-base border border-divider rounded p-2 text-[11px]
-                            whitespace-pre-wrap break-all max-h-80 overflow-auto text-ink-primary">
-              {result.text}
-            </pre>
+            <div className="relative group">
+              <pre className="bg-bg-base border border-divider rounded p-2 text-[11px]
+                              whitespace-pre-wrap break-all max-h-80 overflow-auto text-ink-primary">
+                {result.text}
+              </pre>
+              <CopyButton text={result.text ?? ""} className="absolute top-1 right-1" />
+            </div>
           ) : (
             <div className="text-[11px] text-ink-muted">Binary payload — use download below.</div>
           )}
@@ -373,14 +395,31 @@ function AnalyzeTab({ onError }: { onError: (e: string | null) => void }) {
         </div>
       )}
 
+      {!result && !busy && !file && (
+        <EmptyState
+          icon="🕵️"
+          title="Steganalysis"
+          description="Pick a PNG / BMP / JPEG / WAV file — chi-square LSB test + appended-data scan + EXIF dump."
+        />
+      )}
+
       {result && (
         <>
-          <div className={"rounded-md border-l-4 border " + SEV[sev].bg + " px-4 py-3"}>
+          <div className={"mhp-result-in rounded-md border-l-4 border " + SEV[sev].bg + " px-4 py-3 " +
+                          (sev === "high" ? "mhp-critical-pulse" : "")}>
             <div className="flex items-center gap-2">
-              <span className={"inline-block w-2 h-2 rounded-full " + SEV[sev].dot} />
-              <span className={"text-[10px] uppercase tracking-[0.25em] " + SEV[sev].text}>
-                Verdict · {sev}
-              </span>
+              <SeverityBadge
+                severity={sev === "high" ? "critical" : sev === "warn" ? "medium" : "low"}
+                label={`Verdict · ${sev}`}
+              />
+              {result.verdict.signals.length > 0 && (
+                <CopyButton
+                  text={result.verdict.signals.join("\n")}
+                  label="Copy signals"
+                  alwaysVisible
+                  className="ml-auto"
+                />
+              )}
             </div>
             {result.verdict.signals.length > 0 ? (
               <ul className="mt-2 space-y-0.5 text-[11px] font-mono text-ink-primary">

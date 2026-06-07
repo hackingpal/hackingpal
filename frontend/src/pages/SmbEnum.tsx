@@ -1,6 +1,10 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import { authFetch, parseError } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
 
 type Share = {
   name: string; type: number; comment: string;
@@ -18,14 +22,6 @@ type EnumResponse = {
   shares: Share[];
   logged_in_users: { username: string; logon_domain: string }[];
   findings: Finding[];
-};
-
-const SEV: Record<string, string> = {
-  critical: "text-danger",
-  high:     "text-amber",
-  medium:   "text-amber",
-  low:      "text-accent",
-  info:     "text-ink-muted",
 };
 
 export default function SmbEnum() {
@@ -81,6 +77,15 @@ export default function SmbEnum() {
         </div>
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="🗂️"
+          title="SMB enumerator"
+          description="Impacket-based: shares, read/write probes, OS info, RPC user list. Leave creds blank for null session."
+          hint="Use the AD form above to authenticate, then click Enumerate."
+        />
+      )}
+
       {result && (
         <div className="space-y-3">
           {/* Server card */}
@@ -93,20 +98,39 @@ export default function SmbEnum() {
             </div>
           </div>
 
+          <StatsBar
+            total={result.shares.length}
+            critical={result.findings.filter((f) => normalizeSeverity(f.severity) === "critical").length}
+            high={result.findings.filter((f) => normalizeSeverity(f.severity) === "high").length}
+            medium={result.findings.filter((f) => normalizeSeverity(f.severity) === "medium").length}
+            low={result.findings.filter((f) => normalizeSeverity(f.severity) === "low").length}
+            extra={`${result.shares.filter((s) => s.readable).length} readable · ${result.logged_in_users.length} users`}
+          />
+
           {/* Findings */}
           {result.findings.length > 0 && (
             <div>
               <div className="text-[11px] text-ink-muted tracking-wider mb-1">FINDINGS</div>
               <div className="space-y-2">
-                {result.findings.map((f, i) => (
-                  <div key={i} className="border border-divider rounded p-2">
-                    <div className="text-[11px] mb-1">
-                      <span className={"font-bold uppercase tracking-wider " + SEV[f.severity]}>{f.severity}</span>{" — "}
-                      <span className="text-ink-primary">{f.title}</span>
+                {result.findings.map((f, i) => {
+                  const sev = normalizeSeverity(f.severity);
+                  const copyText = `[${sev.toUpperCase()}] ${f.title} — ${f.detail}`;
+                  return (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group border border-divider rounded p-2 " +
+                                 (sev === "critical" ? "mhp-critical-pulse" : "")}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <SeverityBadge severity={sev} />
+                        <span className="text-ink-primary text-[12px] font-bold">{f.title}</span>
+                        <CopyButton text={copyText} className="ml-auto" />
+                      </div>
+                      <div className="text-[12px] text-ink-muted">{f.detail}</div>
                     </div>
-                    <div className="text-[12px] text-ink-muted">{f.detail}</div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -124,22 +148,30 @@ export default function SmbEnum() {
                     <th className="text-left px-3 py-1.5 w-20">READABLE</th>
                     <th className="text-left px-3 py-1.5">COMMENT</th>
                     <th className="text-left px-3 py-1.5">FILES SAMPLE</th>
+                    <th className="px-3 py-1.5 w-10"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {result.shares.map((s) => (
-                    <tr key={s.name} className="border-b border-divider align-top hover:bg-bg-nav-hover">
-                      <td className="px-3 py-1.5 font-mono text-accent">{s.name}</td>
-                      <td className={"px-3 py-1.5 font-mono " + (s.readable ? "text-phos" : "text-ink-dim")}>
-                        {s.readable ? "yes" : "—"}
-                      </td>
-                      <td className="px-3 py-1.5 text-ink-muted">{s.comment}</td>
-                      <td className="px-3 py-1.5 font-mono text-ink-dim">
-                        {s.files.slice(0, 5).map((f) =>
-                          `${f.is_dir ? "📁" : "📄"} ${f.name}`).join(", ")}{s.files.length > 5 ? " …" : ""}
-                      </td>
-                    </tr>
-                  ))}
+                  {result.shares.map((s, i) => {
+                    const filesPreview = s.files.slice(0, 5).map((f) =>
+                      `${f.is_dir ? "📁" : "📄"} ${f.name}`).join(", ") + (s.files.length > 5 ? " …" : "");
+                    const copyText = `\\\\${result.target}\\${s.name}${s.readable ? " (readable)" : ""}${s.comment ? ` — ${s.comment}` : ""}`;
+                    return (
+                      <tr
+                        key={s.name}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="mhp-result-in group border-b border-divider align-top hover:bg-bg-nav-hover"
+                      >
+                        <td className="px-3 py-1.5 font-mono text-accent">{s.name}</td>
+                        <td className={"px-3 py-1.5 font-mono " + (s.readable ? "text-phos" : "text-ink-dim")}>
+                          {s.readable ? "yes" : "—"}
+                        </td>
+                        <td className="px-3 py-1.5 text-ink-muted">{s.comment}</td>
+                        <td className="px-3 py-1.5 font-mono text-ink-dim">{filesPreview}</td>
+                        <td className="px-3 py-1.5"><CopyButton text={copyText} /></td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -151,13 +183,23 @@ export default function SmbEnum() {
               <div className="text-[11px] text-ink-muted tracking-wider mb-1">
                 LOGGED-IN USERS ({result.logged_in_users.length})
               </div>
-              <div className="bg-bg-card border border-divider rounded p-3 text-[12px] font-mono">
-                {result.logged_in_users.map((u, i) => (
-                  <div key={i} className="text-ink-primary">
-                    <span className="text-accent">{u.logon_domain}</span>\
-                    <span>{u.username}</span>
-                  </div>
-                ))}
+              <div className="bg-bg-card border border-divider rounded p-3 text-[12px] font-mono space-y-0.5">
+                {result.logged_in_users.map((u, i) => {
+                  const display = `${u.logon_domain}\\${u.username}`;
+                  return (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group flex items-center gap-2 text-ink-primary"
+                    >
+                      <span className="flex-1">
+                        <span className="text-accent">{u.logon_domain}</span>\
+                        <span>{u.username}</span>
+                      </span>
+                      <CopyButton text={display} />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchGraphql, type GraphqlReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 export default function Graphql() {
   const [url, setUrl] = useState("https://example.com/graphql");
@@ -72,7 +75,15 @@ export default function Graphql() {
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">Error — {error}</div>
         )}
-        {!report && !error && !confirmReason && !busy && <EmptyState />}
+        {!report && !error && !confirmReason && !busy && (
+          <EmptyStateComponent
+            icon="🧬"
+            title="GraphQL Introspection"
+            description="POSTs the standard introspection query. If enabled (common dev/staging leak) you get the entire schema."
+            exampleTarget="https://example.com/graphql"
+            onExample={setUrl}
+          />
+        )}
 
         {report && (
           <>
@@ -99,7 +110,11 @@ export default function Graphql() {
               <Card title={`Findings · ${report.findings.length}`}>
                 <ul className="space-y-1">
                   {report.findings.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2">
+                    <li
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group flex items-start gap-2"
+                    >
                       <span className={"text-[10px] uppercase tracking-widest " +
                         (f.severity === "high" ? "text-danger" :
                          f.severity === "warn" ? "text-amber" : "text-ink-muted")}>
@@ -107,9 +122,16 @@ export default function Graphql() {
                       </span>
                       <span className="text-ink-primary flex-1">{f.label}</span>
                       <span className="text-ink-muted">{f.detail}</span>
+                      <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                     </li>
                   ))}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  critical={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
 
@@ -172,25 +194,6 @@ function Stat({ label, value, tone }: { label: string; value: string; tone: stri
     <div className="text-right">
       <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">{label}</div>
       <div className={"mt-0.5 text-sm font-mono font-bold " + tone}>{value}</div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  GRAPHQL     │
-        │  introspect  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          POSTs the standard introspection query.<br />
-          If enabled (common dev/staging leak) you get the entire schema.
-        </div>
-      </div>
     </div>
   );
 }

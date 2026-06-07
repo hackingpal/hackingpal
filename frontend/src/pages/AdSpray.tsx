@@ -2,6 +2,9 @@ import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type SprayEvent =
   | { type: "started"; total: number; lockout_threshold: number; threshold_known: boolean; safe_threshold: number }
@@ -28,6 +31,7 @@ export default function AdSpray() {
   const [progress, setProgress] = useState({ done: 0, total: 0, success: 0, locked: 0 });
   const [successes, setSuccesses] = useState<{ user: string; password: string }[]>([]);
   const [doneText, setDoneText] = useState("");
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   const { status, error, start, stop } = useAttackWS<SprayEvent>(
     "/ws/ad-spray",
@@ -37,6 +41,7 @@ export default function AdSpray() {
                   thresholdKnown: ev.threshold_known, safe: ev.safe_threshold });
         setAttempts([]); setSuccesses([]); setDoneText("");
         setProgress({ done: 0, total: ev.total, success: 0, locked: 0 });
+        setStartedAt(Date.now());
       } else if (ev.type === "attempt") {
         setAttempts((a) => [...a.slice(-500), ev]);  // keep last 500
       } else if (ev.type === "progress") {
@@ -146,31 +151,48 @@ export default function AdSpray() {
         </div>
       </div>
 
+      {/* Empty state when nothing has been run */}
+      {!running && attempts.length === 0 && successes.length === 0 && progress.total === 0 && !error && (
+        <EmptyState
+          icon="💧"
+          title="AD password spray"
+          description="LDAP NTLM bind spray. Reads lockoutThreshold from the domain policy and auto-stops each user at threshold-1."
+          hint="One user/password per line; tune delay + max-lockouts before starting."
+        />
+      )}
+
       {/* Successes — most important */}
       {successes.length > 0 && (
-        <div className="bg-phos/10 border border-phos/40 rounded p-3 mb-3">
-          <div className="text-[12px] font-bold text-phos mb-1">
-            ✓ {successes.length} SUCCESS{successes.length === 1 ? "" : "ES"}
+        <div className="bg-phos/10 border border-phos/40 rounded p-3 mb-3 mhp-critical-pulse">
+          <div className="text-[12px] font-bold text-phos mb-1 flex items-center gap-2">
+            <span>✓ {successes.length} SUCCESS{successes.length === 1 ? "" : "ES"}</span>
+            <CopyButton
+              text={successes.map((s) => `${s.user}:${s.password}`).join("\n")}
+              label="Copy creds"
+              alwaysVisible
+              className="ml-auto"
+            />
           </div>
-          {successes.map((s, i) => (
-            <div key={i} className="text-[12px] font-mono">
-              <span className="text-phos">{s.user}</span>
-              <span className="text-ink-dim"> : </span>
-              <span className="text-amber">{s.password}</span>
-            </div>
-          ))}
+          <div className="space-y-0.5">
+            {successes.map((s, i) => (
+              <div
+                key={i}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group text-[12px] font-mono flex items-center gap-2"
+              >
+                <span className="text-phos">{s.user}</span>
+                <span className="text-ink-dim">:</span>
+                <span className="text-amber">{s.password}</span>
+                <CopyButton text={`${s.user}:${s.password}`} className="ml-auto" />
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Progress + attempts log */}
       {(progress.total > 0 || attempts.length > 0) && (
         <div>
-          <div className="text-[11px] text-ink-muted tracking-wider mb-1 flex items-center gap-3">
-            <span>PROGRESS: {progress.done}/{progress.total}</span>
-            <span className="text-phos">{progress.success} success</span>
-            <span className="text-danger">{progress.locked} locked</span>
-            {doneText && <span className="text-ink-dim ml-auto">{doneText}</span>}
-          </div>
           <div className="bg-bg-card border border-divider rounded overflow-hidden max-h-96 overflow-y-auto">
             <table className="w-full text-[11px]">
               <thead className="bg-bg-panel border-b border-divider sticky top-0 text-ink-muted text-[10px]">
@@ -199,6 +221,14 @@ export default function AdSpray() {
               </tbody>
             </table>
           </div>
+          <StatsBar
+            total={progress.done}
+            critical={progress.success}
+            high={progress.locked}
+            startedAt={startedAt}
+            running={running}
+            extra={`${progress.done}/${progress.total}${doneText ? ` · ${doneText}` : ""}`}
+          />
         </div>
       )}
     </div>

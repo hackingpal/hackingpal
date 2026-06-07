@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { fetchTlsAudit, isApiError, type TlsReport } from "../api";
-
-const SEV: Record<string, { text: string; dot: string }> = {
-  info: { text: "text-ink-muted", dot: "bg-ink-dim" },
-  warn: { text: "text-amber",     dot: "bg-amber"   },
-  high: { text: "text-danger",    dot: "bg-danger"  },
-};
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import StatsBar from "../components/StatsBar";
+import EmptyStateComponent from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 const PROTO_TIER: Record<string, "legacy" | "modern"> = {
   "SSLv3":   "legacy",
@@ -122,7 +120,15 @@ export default function TlsAudit() {
           </div>
         )}
 
-        {!report && !error && !timedOut && !busy && <EmptyState />}
+        {!report && !error && !timedOut && !busy && (
+          <EmptyStateComponent
+            icon="🔒"
+            title="TLS Auditor"
+            description="Cert chain · expiry · SAN · TLS version support · HSTS"
+            exampleTarget="anthropic.com"
+            onExample={setHost}
+          />
+        )}
 
         {report && (
           <>
@@ -164,20 +170,25 @@ export default function TlsAudit() {
             {report.findings.length > 0 && (
               <Card title={`Findings · ${report.findings.length}`}>
                 <ul className="space-y-1">
-                  {report.findings.map((f, i) => {
-                    const sev = SEV[f.severity] ?? SEV.info;
-                    return (
-                      <li key={i} className="flex items-start gap-2">
-                        <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
-                        <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
-                          {f.severity}
-                        </span>
-                        <span className="text-ink-primary flex-1">{f.label}</span>
-                        <span className="text-ink-muted">{f.detail}</span>
-                      </li>
-                    );
-                  })}
+                  {report.findings.map((f, i) => (
+                    <li
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="group flex items-start gap-2 mhp-result-in"
+                    >
+                      <SeverityBadge severity={normalizeSeverity(f.severity)} />
+                      <span className="text-ink-primary flex-1">{f.label}</span>
+                      <span className="text-ink-muted">{f.detail}</span>
+                      <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
+                    </li>
+                  ))}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  critical={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
           </>
@@ -273,24 +284,6 @@ function ProtocolGrid({ protocols }: { protocols: Record<string, string> }) {
         })}
       </div>
     </Card>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │ T L S  A U D │
-        │ cert · proto │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Cert chain · expiry · SAN · TLS version support · HSTS
-        </div>
-      </div>
-    </div>
   );
 }
 

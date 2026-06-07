@@ -6,6 +6,7 @@
  * command + an ASCII chain diagram so it's obvious which side is which.
  */
 import { useState } from "react";
+import CopyButton from "../components/CopyButton";
 
 type Mode = "local" | "remote" | "socks" | "sshuttle" | "autossh";
 
@@ -220,10 +221,7 @@ export default function PivotingHelper() {
           <div className="bg-bg-card border border-divider rounded p-3">
             <div className="flex items-center justify-between mb-1">
               <div className="text-[10px] text-ink-muted tracking-wider">COMMAND</div>
-              <button onClick={() => navigator.clipboard?.writeText(cmd)}
-                      className="text-[10px] text-accent hover:underline">
-                Copy
-              </button>
+              <CopyButton text={cmd} label="Copy" alwaysVisible />
             </div>
             <pre className="text-[12px] font-mono text-phos whitespace-pre-wrap break-all">
               {cmd}

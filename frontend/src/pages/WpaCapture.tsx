@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { useAttackWS } from "../components/webattack/useAttackWS";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Tool = { installed: boolean; path: string; description: string };
 type Iface = { device: string; name: string; mac: string; is_wifi: boolean; is_usb: boolean };
@@ -187,11 +189,24 @@ export default function WpaCapture() {
       </div>
 
       {/* Output */}
+      {lines.length === 0 && !running && !error && (
+        <EmptyState
+          icon="🛜"
+          title="WPA capture / PMKID"
+          description="Wrapper around aircrack-ng / hcxdumptool. Run a preset above, or edit the command."
+          hint="macOS doesn't expose monitor mode on internal WiFi — use an external USB adapter on Linux."
+        />
+      )}
       {lines.length > 0 && (
-        <pre className="bg-bg-panel border border-divider rounded p-2 text-[11px]
-                        font-mono text-phos whitespace-pre-wrap max-h-96 overflow-y-auto">
-          {lines.join("\n")}
-        </pre>
+        <div className="bg-bg-panel border border-divider rounded">
+          <div className="flex items-center gap-2 px-2 py-1 border-b border-divider">
+            <span className="text-[10px] text-ink-muted tracking-wider">OUTPUT</span>
+            <CopyButton text={lines.join("\n")} label="Copy log" alwaysVisible className="ml-auto" />
+          </div>
+          <pre className="p-2 text-[11px] font-mono text-phos whitespace-pre-wrap max-h-96 overflow-y-auto">
+            {lines.join("\n")}
+          </pre>
+        </div>
       )}
     </div>
   );

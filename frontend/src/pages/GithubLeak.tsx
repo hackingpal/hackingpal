@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
+import ResultGroup from "../components/ResultGroup";
 
 type Pattern = { label: string; template: string };
 
@@ -137,61 +141,80 @@ export default function GithubLeak() {
         {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
       </div>
 
+      {results.length === 0 && !loading && !error && (
+        <EmptyState
+          icon="🐙"
+          title="GitHub leak scanner"
+          description="Search public GitHub code for credentials, API keys, configs referencing your target."
+          exampleTarget="target.com"
+          onExample={setTarget}
+          hint={authed ? "GitHub token configured." : "Without a token, search is rate-limited to ~10 req/min."}
+        />
+      )}
+
       {results.length > 0 && (
         <div className="space-y-3">
-          <div className="text-[11px] text-ink-muted tracking-wider">
-            {totalHits} matches across {results.length} queries
-          </div>
-          {results.map((r, i) => (
-            <div key={i} className="border border-divider rounded">
-              <div className="flex items-center gap-2 px-3 py-2 bg-bg-panel border-b border-divider">
-                <span className="text-[10px] uppercase text-accent border border-accent/40 rounded px-1.5">
-                  {r.label}
-                </span>
-                <span className="text-[11px] font-mono text-ink-muted truncate flex-1">
-                  {r.query}
-                </span>
-                {r.total_count != null && (
-                  <span className="text-[10px] text-ink-dim">
-                    {r.items.length} shown of {r.total_count.toLocaleString()}
-                  </span>
+          <StatsBar
+            total={totalHits}
+            critical={totalHits}
+            extra={`${results.length} queries · target ${target}`}
+          />
+          {results.map((r, i) => {
+            const sev = r.items.length > 0 ? "critical" : "info";
+            return (
+              <ResultGroup key={i} title={r.label} count={r.items.length} severity={sev}>
+                <div className="px-3 py-1.5 bg-bg-panel/40 border-b border-divider/40 flex items-center gap-2">
+                  <span className="text-[11px] font-mono text-ink-muted truncate flex-1">{r.query}</span>
+                  {r.total_count != null && (
+                    <span className="text-[10px] text-ink-dim">
+                      {r.items.length} of {r.total_count.toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {r.error && (
+                  <div className="px-3 py-2 text-[11px] text-amber">{r.error}</div>
                 )}
-              </div>
-              {r.error && (
-                <div className="px-3 py-2 text-[11px] text-amber">{r.error}</div>
-              )}
-              {r.items.length === 0 && !r.error && (
-                <div className="px-3 py-2 text-[11px] text-ink-dim italic">No matches.</div>
-              )}
-              <div className="divide-y divide-divider">
-                {r.items.map((it, j) => (
-                  <div key={j} className="px-3 py-2">
-                    <div className="flex items-center gap-2 mb-1">
-                      <a href={it.html_url} target="_blank" rel="noreferrer"
-                         className="text-[12px] text-accent hover:underline truncate flex-1 font-mono">
-                        {it.path}
-                      </a>
-                      <a href={it.repository.html_url} target="_blank" rel="noreferrer"
-                         className="text-[10px] text-ink-muted hover:text-ink-primary">
-                        {it.repository.full_name}
-                      </a>
-                      {it.repository.stars > 0 && (
-                        <span className="text-[10px] text-ink-dim">★{it.repository.stars}</span>
-                      )}
-                    </div>
-                    {it.snippets.map((s, k) => (
-                      <pre key={k}
-                           className="bg-bg-panel border border-divider rounded p-1.5 mt-1
-                                      text-[11px] font-mono text-phos
-                                      whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-                        {s}
-                      </pre>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+                {r.items.length === 0 && !r.error && (
+                  <div className="px-3 py-2 text-[11px] text-ink-dim italic">No matches.</div>
+                )}
+                <div className="divide-y divide-divider">
+                  {r.items.map((it, j) => {
+                    const copyText = `${it.repository.full_name}/${it.path} → ${it.html_url}`;
+                    return (
+                      <div
+                        key={j}
+                        style={{ animationDelay: `${Math.min(j, 20) * 30}ms` }}
+                        className="mhp-result-in group px-3 py-2 mhp-critical-pulse"
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <a href={it.html_url} target="_blank" rel="noreferrer"
+                             className="text-[12px] text-accent hover:underline truncate flex-1 font-mono">
+                            {it.path}
+                          </a>
+                          <a href={it.repository.html_url} target="_blank" rel="noreferrer"
+                             className="text-[10px] text-ink-muted hover:text-ink-primary">
+                            {it.repository.full_name}
+                          </a>
+                          {it.repository.stars > 0 && (
+                            <span className="text-[10px] text-ink-dim">★{it.repository.stars}</span>
+                          )}
+                          <CopyButton text={copyText} />
+                        </div>
+                        {it.snippets.map((s, k) => (
+                          <pre key={k}
+                               className="bg-bg-panel border border-divider rounded p-1.5 mt-1
+                                          text-[11px] font-mono text-phos
+                                          whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                            {s}
+                          </pre>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </ResultGroup>
+            );
+          })}
         </div>
       )}
     </div>

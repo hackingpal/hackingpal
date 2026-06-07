@@ -1,6 +1,10 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import { authFetch, parseError } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
 
 const CATEGORIES = ["users", "groups", "dcs", "policy", "gpos", "computers", "spns", "admins"];
 
@@ -16,14 +20,6 @@ type EnumResponse = {
   base_dn: string;
   categories: Record<string, any>;
   findings: Finding[];
-};
-
-const SEV: Record<string, string> = {
-  critical: "text-danger border-danger/40 bg-danger/10",
-  high:     "text-amber border-amber/40 bg-amber/10",
-  medium:   "text-amber border-amber/30 bg-amber/5",
-  low:      "text-accent border-accent/30 bg-accent/5",
-  info:     "text-ink-muted border-divider",
 };
 
 export default function LdapEnum() {
@@ -91,8 +87,26 @@ export default function LdapEnum() {
         </div>
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="📇"
+          title="LDAP enumerator"
+          description="ldap3-based AD inventory: users, groups, DCs, GPOs, SPNs, password policy. Flags Kerberoastable / AS-REP roastable accounts."
+          hint="Authenticate via the AD form above, then click Enumerate."
+        />
+      )}
+
       {result && (
         <div className="space-y-3">
+          <StatsBar
+            total={result.findings.length}
+            critical={result.findings.filter((f) => normalizeSeverity(f.severity) === "critical").length}
+            high={result.findings.filter((f) => normalizeSeverity(f.severity) === "high").length}
+            medium={result.findings.filter((f) => normalizeSeverity(f.severity) === "medium").length}
+            low={result.findings.filter((f) => normalizeSeverity(f.severity) === "low").length}
+            extra={`${result.domain} · ${result.base_dn}`}
+          />
+
           {/* Findings */}
           {result.findings.length > 0 && (
             <div>
@@ -100,24 +114,34 @@ export default function LdapEnum() {
                 FINDINGS ({result.findings.length})
               </div>
               <div className="space-y-2">
-                {result.findings.map((f, i) => (
-                  <div key={i} className={"border rounded p-2 " + SEV[f.severity]}>
-                    <div className="text-[11px] mb-1">
-                      <span className="font-bold uppercase tracking-wider">{f.severity}</span>{" — "}
-                      <span className="text-ink-primary">{f.title}</span>
+                {result.findings.map((f, i) => {
+                  const sev = normalizeSeverity(f.severity);
+                  const copyText = `[${sev.toUpperCase()}] ${f.title} — ${f.detail}`;
+                  return (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group border border-divider rounded p-2 " +
+                                 (sev === "critical" ? "mhp-critical-pulse" : "")}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <SeverityBadge severity={sev} />
+                        <span className="text-ink-primary text-[12px] font-bold">{f.title}</span>
+                        <CopyButton text={copyText} className="ml-auto" />
+                      </div>
+                      <div className="text-[12px] text-ink-muted">{f.detail}</div>
+                      {f.evidence != null && (
+                        <details className="mt-1">
+                          <summary className="text-[10px] text-ink-dim cursor-pointer">Evidence</summary>
+                          <pre className="text-[10px] font-mono text-phos bg-bg-panel border border-divider
+                                          rounded p-1.5 mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                            {JSON.stringify(f.evidence, null, 2)}
+                          </pre>
+                        </details>
+                      )}
                     </div>
-                    <div className="text-[12px] text-ink-muted">{f.detail}</div>
-                    {f.evidence != null && (
-                      <details className="mt-1">
-                        <summary className="text-[10px] text-ink-dim cursor-pointer">Evidence</summary>
-                        <pre className="text-[10px] font-mono text-phos bg-bg-panel border border-divider
-                                        rounded p-1.5 mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap">
-                          {JSON.stringify(f.evidence, null, 2)}
-                        </pre>
-                      </details>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

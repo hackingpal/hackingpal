@@ -3,6 +3,8 @@ import {
   fetchSystemdUnits, fetchSystemdUnit, fetchSystemdJournal,
   type SystemdUnit, type SystemdUnitDetail,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type State = "all" | "enabled" | "active" | "failed" | "running" | "static" | "disabled" | "masked";
 type Type  = "service" | "timer" | "socket" | "target" | "mount" | "path";
@@ -106,11 +108,13 @@ export default function Systemd() {
                           uppercase tracking-[0.2em] text-ink-dim sticky top-0">
             <span>Unit · Description</span><span>Active</span><span>Sub</span>
           </div>
-          {visible.map((u) => (
+          {visible.map((u, i) => (
             <button key={u.name} onClick={() => loadDetail(u.name)}
-                    className={"w-full text-left grid grid-cols-[1fr_80px_60px] gap-2 " +
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className={"mhp-result-in w-full text-left grid grid-cols-[1fr_80px_60px] gap-2 " +
                                "px-3 py-1.5 text-[11px] font-mono border-b border-divider/40 " +
                                "hover:bg-bg-card " +
+                               (u.active === "failed" ? "mhp-critical-pulse " : "") +
                                (selected === u.name ? "bg-bg-card" : "")}>
               <div className="truncate">
                 <div className="text-ink-primary truncate">{u.name}</div>
@@ -120,6 +124,13 @@ export default function Systemd() {
               <span className="text-ink-muted">{u.sub}</span>
             </button>
           ))}
+          {!busy && visible.length === 0 && !error && (
+            <EmptyState
+              icon="🧩"
+              title="No matching units"
+              description="Adjust the type / state filter or clear the search above."
+            />
+          )}
         </div>
 
         {/* detail pane */}
@@ -133,7 +144,10 @@ export default function Systemd() {
           {detail && (
             <>
               <div className="rounded border border-divider bg-bg-card p-3">
-                <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">unit</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">unit</div>
+                  <CopyButton text={detail.name} alwaysVisible className="ml-auto" />
+                </div>
                 <div className="text-sm font-mono font-bold text-ink-primary">{detail.name}</div>
                 <div className="text-[11px] text-ink-muted mt-0.5">{detail.description}</div>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 mt-2 text-[11px] font-mono">
@@ -151,7 +165,12 @@ export default function Systemd() {
               </div>
 
               <div className="rounded border border-divider bg-bg-card p-3">
-                <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">journal · last {journal?.length ?? 0}</div>
+                <div className="flex items-center gap-2">
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">journal · last {journal?.length ?? 0}</div>
+                  {journal && journal.length > 0 && (
+                    <CopyButton text={journal.join("\n")} label="Copy log" alwaysVisible className="ml-auto" />
+                  )}
+                </div>
                 <pre className="mt-1 text-[11px] text-ink-muted whitespace-pre-wrap max-h-[420px] overflow-auto">
                   {(journal ?? []).join("\n") || "(no entries)"}
                 </pre>

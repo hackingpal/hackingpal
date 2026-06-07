@@ -1,5 +1,9 @@
 import { useState } from "react";
 import { useAttackWS } from "../components/webattack/useAttackWS";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
 
 type Sample = {
   bssid: string;
@@ -25,13 +29,6 @@ type EvilTwinEvent =
   | ({ type: "finding" } & Finding)
   | { type: "done"; total_unique: number; groups: number; stopped: boolean }
   | { type: "error"; detail: string };
-
-const SEV: Record<string, string> = {
-  high:   "text-danger border-danger/40 bg-danger/10",
-  medium: "text-amber border-amber/40 bg-amber/10",
-  low:    "text-accent border-accent/40 bg-accent/10",
-  info:   "text-ink-muted border-divider",
-};
 
 export default function EvilTwin() {
   const [rounds, setRounds] = useState(3);
@@ -117,49 +114,79 @@ export default function EvilTwin() {
         </div>
       </div>
 
+      {findings.length === 0 && !running && progress.total === 0 && !error && (
+        <EmptyState
+          icon="👯"
+          title="Evil twin detector"
+          description="Repeated WiFi scans flag SSIDs broadcast by multiple BSSIDs with differing security or OUIs."
+          hint="Start a scan with at least 3 rounds for stable results."
+        />
+      )}
+
       {findings.length === 0 && !running && progress.total > 0 && (
         <div className="text-[12px] text-phos italic">
           ✓ No suspicious SSID groups in this scan.
         </div>
       )}
 
+      {findings.length > 0 && (
+        <StatsBar
+          total={findings.length}
+          critical={findings.filter((f) => normalizeSeverity(f.severity) === "critical").length}
+          high={findings.filter((f) => normalizeSeverity(f.severity) === "high").length}
+          medium={findings.filter((f) => normalizeSeverity(f.severity) === "medium").length}
+          extra={`${obsCount} observations`}
+          className="mb-2"
+        />
+      )}
+
       <div className="space-y-2">
-        {findings.map((f, i) => (
-          <div key={i} className={"border rounded p-3 " + SEV[f.severity]}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="font-bold uppercase tracking-wider text-[11px]">{f.severity}</span>
-              <span className="text-ink-primary text-[13px] font-mono">{f.ssid}</span>
-              <span className="text-ink-dim text-[10px]">{f.bssids.length} BSSIDs</span>
-            </div>
-            <ul className="text-[11px] text-ink-muted list-disc pl-5 mb-2 space-y-0.5">
-              {f.reasons.map((r, j) => <li key={j}>{r}</li>)}
-            </ul>
-            <table className="w-full text-[11px]">
-              <thead className="text-[10px] text-ink-dim tracking-wider">
-                <tr>
-                  <th className="text-left">BSSID</th>
-                  <th className="text-left">SECURITY</th>
-                  <th className="text-right">CH</th>
-                  <th className="text-right">RSSI</th>
-                  <th className="text-left">OUI</th>
-                  <th className="text-right">SEEN</th>
-                </tr>
-              </thead>
-              <tbody>
-                {f.samples.map((s, j) => (
-                  <tr key={j} className="border-t border-divider/40">
-                    <td className="font-mono text-ink-primary">{s.bssid}</td>
-                    <td className="text-ink-muted">{s.security}</td>
-                    <td className="text-right font-mono tabular-nums">{s.channel}</td>
-                    <td className="text-right font-mono tabular-nums">{s.rssi}</td>
-                    <td className="font-mono text-ink-dim">{s.oui}</td>
-                    <td className="text-right font-mono tabular-nums">{s.rounds_seen}</td>
+        {findings.map((f, i) => {
+          const sev = normalizeSeverity(f.severity);
+          const copyText = `[${sev.toUpperCase()}] ${f.ssid} — ${f.bssids.length} BSSIDs: ${f.bssids.join(", ")} (${f.reasons.join("; ")})`;
+          return (
+            <div
+              key={i}
+              style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+              className={"mhp-result-in group border border-divider rounded p-3 " +
+                         (sev === "critical" || sev === "high" ? "mhp-critical-pulse" : "")}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <SeverityBadge severity={sev} />
+                <span className="text-ink-primary text-[13px] font-mono">{f.ssid}</span>
+                <span className="text-ink-dim text-[10px]">{f.bssids.length} BSSIDs</span>
+                <CopyButton text={copyText} className="ml-auto" />
+              </div>
+              <ul className="text-[11px] text-ink-muted list-disc pl-5 mb-2 space-y-0.5">
+                {f.reasons.map((r, j) => <li key={j}>{r}</li>)}
+              </ul>
+              <table className="w-full text-[11px]">
+                <thead className="text-[10px] text-ink-dim tracking-wider">
+                  <tr>
+                    <th className="text-left">BSSID</th>
+                    <th className="text-left">SECURITY</th>
+                    <th className="text-right">CH</th>
+                    <th className="text-right">RSSI</th>
+                    <th className="text-left">OUI</th>
+                    <th className="text-right">SEEN</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ))}
+                </thead>
+                <tbody>
+                  {f.samples.map((s, j) => (
+                    <tr key={j} className="border-t border-divider/40">
+                      <td className="font-mono text-ink-primary">{s.bssid}</td>
+                      <td className="text-ink-muted">{s.security}</td>
+                      <td className="text-right font-mono tabular-nums">{s.channel}</td>
+                      <td className="text-right font-mono tabular-nums">{s.rssi}</td>
+                      <td className="font-mono text-ink-dim">{s.oui}</td>
+                      <td className="text-right font-mono tabular-nums">{s.rounds_seen}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
       </div>
     </div>
   );

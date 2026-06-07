@@ -1,5 +1,9 @@
 import { useEffect, useState } from "react";
 import { fetchWindowsPosture, type WindowsPosture } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
 
 const STATUS_TINT = (good: boolean | null): string =>
   good === null ? "text-ink-dim" : good ? "text-phos" : "text-danger";
@@ -54,8 +58,22 @@ export default function WindowsPosturePage() {
                           rounded px-3 py-2 text-sm font-mono">Error — {error}</div>
         )}
 
+        {!report && !busy && !error && (
+          <EmptyState
+            icon="🪟"
+            title="Windows posture"
+            description="BitLocker · Defender · UAC · Firewall · SmartScreen · Secure Boot · last update."
+          />
+        )}
         {report && bl && df && uac && fw && ss && sb && upd && (
           <>
+            <StatsBar
+              total={report.findings.length}
+              critical={report.findings.filter((f) => normalizeSeverity(f.severity) === "critical").length}
+              high={report.findings.filter((f) => normalizeSeverity(f.severity) === "high").length}
+              medium={report.findings.filter((f) => normalizeSeverity(f.severity) === "medium").length}
+              extra="Windows"
+            />
             <div className="grid grid-cols-4 gap-3">
               <Stat label="BitLocker"
                     value={bl.status === "enabled"
@@ -104,17 +122,22 @@ export default function WindowsPosturePage() {
             {report.findings.length > 0 && (
               <Card title={`Findings · ${report.findings.length}`}>
                 <ul className="space-y-1">
-                  {report.findings.map((f, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <span className={"text-[10px] uppercase tracking-widest min-w-[40px] " +
-                        (f.severity === "high" ? "text-danger" :
-                         f.severity === "warn" ? "text-amber" : "text-ink-muted")}>
-                        {f.severity}
-                      </span>
-                      <span className="text-ink-primary flex-1">{f.label}</span>
-                      <span className="text-ink-muted">{f.detail || ""}</span>
-                    </li>
-                  ))}
+                  {report.findings.map((f, i) => {
+                    const sev = normalizeSeverity(f.severity);
+                    return (
+                      <li
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className={"mhp-result-in group flex items-center gap-2 px-1 rounded " +
+                                   (sev === "critical" ? "mhp-critical-pulse" : "")}
+                      >
+                        <SeverityBadge severity={sev} />
+                        <span className="text-ink-primary flex-1">{f.label}</span>
+                        <span className="text-ink-muted">{f.detail || ""}</span>
+                        <CopyButton text={`[${sev}] ${f.label}${f.detail ? ` — ${f.detail}` : ""}`} />
+                      </li>
+                    );
+                  })}
                 </ul>
               </Card>
             )}

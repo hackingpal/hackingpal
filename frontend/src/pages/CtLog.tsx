@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchCtSearch, type CtReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -79,7 +82,15 @@ export default function CtLog() {
             Error — {error}
           </div>
         )}
-        {!report && !error && !confirmReason && !busy && <EmptyState />}
+        {!report && !error && !confirmReason && !busy && (
+          <EmptyStateComponent
+            icon="📜"
+            title="CT Log Search"
+            description="Pulls every cert ever issued under a domain. Surfaces subdomains a wordlist enum will never find."
+            exampleTarget="anthropic.com"
+            onExample={setDomain}
+          />
+        )}
 
         {report && (
           <>
@@ -96,17 +107,28 @@ export default function CtLog() {
                   {report.findings.map((f, i) => {
                     const sev = SEV[f.severity] ?? SEV.info;
                     return (
-                      <li key={i} className="flex items-start gap-2">
+                      <li
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="group flex items-start gap-2 mhp-result-in"
+                      >
                         <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
                         <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
                           {f.severity}
                         </span>
                         <span className="text-ink-primary flex-1">{f.label}</span>
                         <span className="text-ink-muted">{f.detail}</span>
+                        <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                       </li>
                     );
                   })}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  high={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
 
@@ -120,7 +142,14 @@ export default function CtLog() {
               />
               <div className="max-h-80 overflow-auto grid grid-cols-2 gap-x-3 gap-y-0.5">
                 {filtered.slice(0, 400).map((s, i) => (
-                  <span key={i} className="text-ink-primary break-all">{s}</span>
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="group flex items-center gap-2 mhp-result-in"
+                  >
+                    <span className="text-ink-primary break-all flex-1">{s}</span>
+                    <CopyButton text={s} />
+                  </div>
                 ))}
                 {filtered.length > 400 && (
                   <span className="text-ink-dim col-span-2 mt-2">
@@ -141,17 +170,25 @@ export default function CtLog() {
             )}
 
             <Card title="Recent certificates">
-              <div className="grid grid-cols-[2fr_2fr_1fr_1fr] gap-x-3 gap-y-0.5">
-                <span className="text-ink-dim text-[10px] uppercase tracking-wider">CN</span>
-                <span className="text-ink-dim text-[10px] uppercase tracking-wider">Issuer</span>
-                <span className="text-ink-dim text-[10px] uppercase tracking-wider">Not before</span>
-                <span className="text-ink-dim text-[10px] uppercase tracking-wider">Not after</span>
+              <div className="flex flex-col gap-0.5">
+                <div className="grid grid-cols-[2fr_2fr_1fr_1fr_auto] gap-x-3">
+                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">CN</span>
+                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Issuer</span>
+                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Not before</span>
+                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Not after</span>
+                  <span />
+                </div>
                 {report.recent_certs.map((c, i) => (
-                  <div key={i} className="contents">
+                  <div
+                    key={i}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="group grid grid-cols-[2fr_2fr_1fr_1fr_auto] gap-x-3 items-center mhp-result-in"
+                  >
                     <span className="text-ink-primary break-all">{c.name}</span>
                     <span className="text-ink-muted break-all">{c.issuer}</span>
                     <span className="text-ink-muted">{c.not_before.split("T")[0]}</span>
                     <span className="text-ink-muted">{c.not_after.split("T")[0]}</span>
+                    <CopyButton text={`${c.name} · ${c.issuer} · ${c.not_before.split("T")[0]} → ${c.not_after.split("T")[0]}`} />
                   </div>
                 ))}
               </div>
@@ -216,25 +253,6 @@ function ConfirmBanner({
                      bg-amber/20 border border-amber/40 text-amber hover:bg-amber/30 transition">
           ▶ Proceed
         </button>
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   CT LOGS    │
-        │  ▶ crt.sh ▶  │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Pulls every cert ever issued under a domain.<br />
-          Surfaces subdomains a wordlist enum will never find.
-        </div>
       </div>
     </div>
   );

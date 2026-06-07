@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import AuthorizationGate from "../components/AuthorizationGate";
 import { api, authFetch, BACKEND_URL, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Job = {
   id: string; state: "queued" | "running" | "done" | "error";
@@ -158,12 +160,25 @@ export default function BloodHound() {
       </div>
 
       {/* Job list */}
+      {jobs.length === 0 && !activeJob && !error && (
+        <EmptyState
+          icon="🐶"
+          title="BloodHound ingestor"
+          description="SharpHound-equivalent AD collection. Downloads as a ZIP of JSON files for import into BloodHound / BloodHound CE."
+          hint="Pick collection methods, then Start Collection."
+        />
+      )}
+
       {jobs.length > 0 && (
         <div className="mb-4">
           <div className="text-[11px] text-ink-muted tracking-wider mb-1">JOBS</div>
           <div className="space-y-2">
-            {jobs.map((j) => (
-              <div key={j.id} className="border border-divider rounded p-2 flex items-center gap-3">
+            {jobs.map((j, i) => (
+              <div
+                key={j.id}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group border border-divider rounded p-2 flex items-center gap-3"
+              >
                 <span className={"inline-block w-1.5 h-1.5 rounded-full " + (
                   j.state === "running" ? "bg-amber animate-pulse"
                   : j.state === "done" ? "bg-phos"
@@ -182,6 +197,7 @@ export default function BloodHound() {
                 )}
                 <button onClick={() => api(`/bloodhound/jobs/${j.id}`).then((d) => setActiveJob(d as any)).catch(() => {})}
                         className="text-[10px] text-accent hover:underline">view log</button>
+                <CopyButton text={j.id} />
                 {(j.state === "done" || j.state === "error") && (
                   <button onClick={() => deleteJob(j.id)}
                           title="Remove job + clear its workdir"
@@ -196,8 +212,16 @@ export default function BloodHound() {
       {/* Active job detail */}
       {activeJob && (
         <div>
-          <div className="text-[11px] text-ink-muted tracking-wider mb-1">
-            JOB {activeJob.id} · {activeJob.state.toUpperCase()}
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[11px] text-ink-muted tracking-wider">
+              JOB {activeJob.id} · {activeJob.state.toUpperCase()}
+            </span>
+            <CopyButton
+              text={(activeJob.log || activeJob.log_tail || []).join("\n")}
+              label="Copy log"
+              alwaysVisible
+              className="ml-auto"
+            />
           </div>
           {activeJob.error && <div className="text-[12px] text-danger mb-2">⚠ {activeJob.error}</div>}
           <pre className="bg-bg-panel border border-divider rounded p-2 text-[11px]

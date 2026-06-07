@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Dork = {
   source: string; label: string; query: string; url: string;
@@ -133,8 +136,23 @@ export default function ProfileFinder() {
         </div>
       </div>
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="🧑‍💼"
+          title="Profile finder"
+          description="Discover LinkedIn / GitHub / X / team-page profiles tied to a company via Google dorks (no LinkedIn API)."
+          exampleTarget="Acme Corp"
+          onExample={setCompany}
+        />
+      )}
+
       {result && (
         <div className="space-y-4">
+          <StatsBar
+            total={result.profiles.length}
+            medium={result.email_guesses.length}
+            extra={`${result.dorks.length} dorks${result.executed ? " · executed" : ""}`}
+          />
           {/* Profiles */}
           {result.executed && (
             <div>
@@ -158,15 +176,20 @@ export default function ProfileFinder() {
                     </thead>
                     <tbody>
                       {result.profiles.map((p, i) => (
-                        <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
+                        <tr
+                          key={i}
+                          style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                          className="mhp-result-in group border-b border-divider hover:bg-bg-nav-hover"
+                        >
                           <td className="px-3 py-1 font-mono text-ink-primary">{p.name}</td>
                           <td className="px-3 py-1 text-ink-muted">{p.title}</td>
                           <td className="px-3 py-1 text-ink-dim uppercase text-[10px]">{p.source}</td>
-                          <td className="px-3 py-1">
+                          <td className="px-3 py-1 flex items-center gap-2">
                             <a href={p.url} target="_blank" rel="noreferrer"
                                className="text-accent hover:underline text-[11px] truncate inline-block max-w-[200px]">
                               {p.url}
                             </a>
+                            <CopyButton text={`${p.name} — ${p.title} (${p.source}): ${p.url}`} />
                           </td>
                         </tr>
                       ))}
@@ -193,9 +216,16 @@ export default function ProfileFinder() {
                   </thead>
                   <tbody>
                     {result.email_guesses.map((g, i) => (
-                      <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
+                      <tr
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="mhp-result-in group border-b border-divider hover:bg-bg-nav-hover"
+                      >
                         <td className="px-3 py-1 font-mono text-ink-primary">{g.name}</td>
-                        <td className="px-3 py-1 font-mono text-phos">{g.email}</td>
+                        <td className="px-3 py-1 font-mono text-phos flex items-center gap-2">
+                          {g.email}
+                          <CopyButton text={g.email} className="ml-auto" />
+                        </td>
                       </tr>
                     ))}
                   </tbody>

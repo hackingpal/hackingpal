@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { fetchUsersAudit, type UsersAudit } from "../api";
+import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
+import CopyButton from "../components/CopyButton";
+import EmptyState from "../components/EmptyState";
 
 type Tab = "users" | "groups" | "ssh" | "sudoers" | "findings";
 
@@ -64,20 +67,29 @@ export default function UsersAuditPage() {
         {report && tab === "findings" && (
           <Card title={`Findings · ${report.findings.length}`}>
             {report.findings.length === 0 ? (
-              <div className="text-ink-dim">No findings.</div>
+              <EmptyState
+                icon="✓"
+                title="No findings"
+                description="No risky users, weak SSH key perms, or stray sudoers entries."
+              />
             ) : (
               <ul className="space-y-1">
-                {report.findings.map((f, i) => (
-                  <li key={i} className="flex items-start gap-2">
-                    <span className={"text-[10px] uppercase tracking-widest min-w-[40px] " +
-                      (f.severity === "high" ? "text-danger" :
-                       f.severity === "warn" ? "text-amber" : "text-ink-muted")}>
-                      {f.severity}
-                    </span>
-                    <span className="text-ink-primary flex-1">{f.label}</span>
-                    <span className="text-ink-muted">{f.detail || ""}</span>
-                  </li>
-                ))}
+                {report.findings.map((f, i) => {
+                  const sev = normalizeSeverity(f.severity);
+                  return (
+                    <li
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group flex items-center gap-2 px-1 rounded " +
+                                 (sev === "critical" ? "mhp-critical-pulse" : "")}
+                    >
+                      <SeverityBadge severity={sev} />
+                      <span className="text-ink-primary flex-1">{f.label}</span>
+                      <span className="text-ink-muted">{f.detail || ""}</span>
+                      <CopyButton text={`[${sev}] ${f.label}${f.detail ? ` — ${f.detail}` : ""}`} />
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Card>

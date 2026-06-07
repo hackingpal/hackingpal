@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { api } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type EmailRow = { email: string; sources: string[] };
 type Dork = { query: string; url: string };
@@ -55,32 +58,50 @@ export default function EmailHarvest() {
         {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
       </div>
 
+      {!resp && !loading && !error && (
+        <EmptyState
+          icon="✉️"
+          title="Email harvest"
+          description="Aggregate emails for a domain from crt.sh, live scraping, and Hunter.io (if configured)."
+          exampleTarget="example.com"
+          onExample={setDomain}
+          className="mt-4"
+        />
+      )}
+
       {resp && (
         <div className="mt-4 space-y-3">
-          <div className="flex gap-2 flex-wrap text-[11px]">
-            {Object.entries(resp.by_source).map(([k, v]) => (
-              <span key={k} className="bg-bg-base border border-divider rounded px-2 py-0.5">
-                {k}: <span className="text-accent">{v}</span>
-              </span>
-            ))}
-            {!resp.hunter_configured && (
-              <span className="text-amber">Hunter.io key not configured</span>
-            )}
-          </div>
+          <StatsBar
+            total={resp.count}
+            extra={`${resp.domain}${Object.entries(resp.by_source).map(([k, v]) => ` · ${k}=${v}`).join("")}${!resp.hunter_configured ? " · hunter.io key missing" : ""}`}
+          />
 
           <div className="bg-bg-card border border-divider rounded">
-            <div className="px-3 py-1.5 text-[11px] text-ink-muted tracking-wider border-b border-divider">
-              {resp.count} EMAILS
+            <div className="px-3 py-1.5 text-[11px] text-ink-muted tracking-wider border-b border-divider flex items-center gap-2">
+              <span>{resp.count} EMAILS</span>
+              {resp.emails.length > 0 && (
+                <CopyButton
+                  text={resp.emails.map((e) => e.email).join("\n")}
+                  label="Copy all"
+                  alwaysVisible
+                  className="ml-auto"
+                />
+              )}
             </div>
             {resp.emails.length === 0 ? (
               <div className="px-3 py-2 text-[12px] text-ink-dim italic">No emails found.</div>
             ) : (
               <table className="w-full text-[11px] font-mono">
                 <tbody>
-                  {resp.emails.map((e) => (
-                    <tr key={e.email} className="border-b border-divider last:border-0">
+                  {resp.emails.map((e, i) => (
+                    <tr
+                      key={e.email}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className="mhp-result-in group border-b border-divider last:border-0 hover:bg-bg-row-alt"
+                    >
                       <td className="px-3 py-1.5 text-ink-primary">{e.email}</td>
                       <td className="px-3 py-1.5 text-ink-dim">{e.sources.join(", ")}</td>
+                      <td className="px-3 py-1.5 w-10"><CopyButton text={e.email} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -94,11 +115,18 @@ export default function EmailHarvest() {
                 MANUAL DORKS (open in browser)
               </div>
               <div className="space-y-1">
-                {resp.dorks.map((d) => (
-                  <a key={d.query} href={d.url} target="_blank" rel="noreferrer"
-                     className="block text-[11px] font-mono text-accent hover:underline">
-                    {d.query}
-                  </a>
+                {resp.dorks.map((d, i) => (
+                  <div
+                    key={d.query}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="mhp-result-in group flex items-center gap-2"
+                  >
+                    <a href={d.url} target="_blank" rel="noreferrer"
+                       className="block text-[11px] font-mono text-accent hover:underline flex-1 truncate">
+                      {d.query}
+                    </a>
+                    <CopyButton text={d.query} />
+                  </div>
                 ))}
               </div>
             </div>

@@ -9,6 +9,8 @@ import {
   type BindInterface, type RevListener, type RevSession, type PayloadKind,
   type RevWsEvent,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Tab = "listeners" | "payloads" | "sessions";
 
@@ -181,7 +183,12 @@ function ListenersTab({
       </div>
 
       {listeners.length === 0 ? (
-        <div className="text-ink-dim text-xs font-mono">No active listeners.</div>
+        <EmptyState
+          icon="🎯"
+          title="No active listeners"
+          description="Bind a TCP socket above to catch reverse-shell connections."
+          hint="Then generate a payload from the PAYLOADS tab and run it on the target."
+        />
       ) : (
         <div className="border border-divider rounded overflow-hidden">
           <table className="w-full text-sm">
@@ -195,8 +202,10 @@ function ListenersTab({
               </tr>
             </thead>
             <tbody>
-              {listeners.map((l) => (
-                <tr key={l.id} className="border-t border-divider">
+              {listeners.map((l, i) => (
+                <tr key={l.id}
+                    style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                    className="mhp-result-in group border-t border-divider">
                   <td className="px-3 py-2 font-mono text-xs">{l.host}</td>
                   <td className="px-3 py-2 font-mono text-xs">{l.port}</td>
                   <td className="px-3 py-2 text-xs">
@@ -232,7 +241,6 @@ function PayloadsTab({
   const [lhost, setLhost] = useState("");
   const [lport, setLport] = useState(4444);
   const [cmd, setCmd] = useState("");
-  const [copied, setCopied] = useState(false);
 
   // Default LHOST/LPORT to the most recent listener (it's almost always what you want)
   useEffect(() => {
@@ -248,22 +256,13 @@ function PayloadsTab({
   }, [listeners.length]);
 
   async function generate() {
-    onError(null); setCopied(false);
+    onError(null);
     try {
       const r = await generatePayload(kind, lhost, lport);
       setCmd(r.cmd);
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     }
-  }
-
-  async function copy() {
-    if (!cmd) return;
-    try {
-      await navigator.clipboard.writeText(cmd);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch { /* ignore */ }
   }
 
   const groups = useMemo(() => {
@@ -306,13 +305,18 @@ function PayloadsTab({
         )}
       </div>
 
+      {!cmd && (
+        <EmptyState
+          icon="💣"
+          title="Generate a payload"
+          description="Pick a payload kind + LHOST/LPORT above, then click Generate."
+        />
+      )}
       {cmd && (
         <div className="bg-bg-card border border-divider rounded">
           <div className="flex items-center justify-between px-3 py-2 border-b border-divider">
             <span className="text-[10px] tracking-widest text-ink-dim">PAYLOAD</span>
-            <button onClick={copy} className="text-xs text-accent hover:text-ink-primary">
-              {copied ? "✓ Copied" : "Copy"}
-            </button>
+            <CopyButton text={cmd} label="Copy" alwaysVisible />
           </div>
           <pre className="font-mono text-[11px] leading-snug whitespace-pre-wrap
                           text-ink-primary p-3 select-all break-all">{cmd}</pre>
@@ -333,9 +337,11 @@ function SessionsTab({
 }) {
   if (sessions.length === 0) {
     return (
-      <div className="text-ink-dim text-xs font-mono">
-        No active sessions. Start a listener and run a payload on the target.
-      </div>
+      <EmptyState
+        icon="🎣"
+        title="No active sessions"
+        description="Start a listener and run a payload on the target — connections appear here."
+      />
     );
   }
   return (
@@ -352,8 +358,10 @@ function SessionsTab({
           </tr>
         </thead>
         <tbody>
-          {sessions.map((s) => (
-            <tr key={s.id} className="border-t border-divider hover:bg-bg-card/40">
+          {sessions.map((s, i) => (
+            <tr key={s.id}
+                style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                className="mhp-result-in group border-t border-divider hover:bg-bg-card/40 mhp-critical-pulse">
               <td className="px-3 py-2 font-mono text-xs">{s.id}</td>
               <td className="px-3 py-2 font-mono text-xs">{s.remote}</td>
               <td className="px-3 py-2 text-xs">

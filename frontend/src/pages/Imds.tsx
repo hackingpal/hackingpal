@@ -2,6 +2,10 @@ import { useState } from "react";
 import RequestForm, { initialRequestState, requestToInit, type RequestState }
   from "../components/webattack/RequestForm";
 import { useAttackWS } from "../components/webattack/useAttackWS";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
+import ResultGroup from "../components/ResultGroup";
 
 type Cloud = "aws" | "azure" | "gcp";
 
@@ -18,17 +22,12 @@ const CLOUD_LABEL: Record<Cloud, string> = {
   aws: "AWS", azure: "Azure", gcp: "GCP",
 };
 
-const CLOUD_ACCENT: Record<Cloud, string> = {
-  aws: "text-amber border-amber/40",
-  azure: "text-accent border-accent/40",
-  gcp: "text-phos border-phos/40",
-};
-
 export default function Imds() {
   const [req, setReq] = useState<RequestState>(initialRequestState);
   const [clouds, setClouds] = useState<Set<Cloud>>(new Set(["aws", "azure", "gcp"]));
   const [probes, setProbes] = useState<Probe[]>([]);
   const [doneText, setDoneText] = useState("");
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   const { status, error, start, stop } = useAttackWS<ImdsEvent>(
     "/ws/imds",
@@ -36,6 +35,7 @@ export default function Imds() {
       if (ev.type === "started") {
         setProbes([]);
         setDoneText("");
+        setStartedAt(Date.now());
       } else if (ev.type === "probe") {
         setProbes((p) => [...p, ev]);
       } else if (ev.type === "done") {
@@ -113,54 +113,71 @@ export default function Imds() {
 
       {/* Per-cloud grouped results */}
       <div className="flex-1 overflow-y-auto space-y-3">
+        {probes.length === 0 && !running && (
+          <EmptyState
+            icon="☁︎"
+            title="Cloud metadata probe"
+            description="Probes AWS, Azure & GCP IMDS endpoints through a target URL (FUZZ marker). Use to confirm SSRF reachability."
+            hint={<>Tip: drop <code className="text-amber">FUZZ</code> where the SSRF sink reads its target URL.</>}
+          />
+        )}
         {(["aws", "azure", "gcp"] as Cloud[]).map((c) => {
           if (!clouds.has(c) || byCloud[c].length === 0) return null;
           const anyHit = byCloud[c].some((p) => p.hit);
+          const sev = anyHit ? "critical" : "info";
           return (
-            <div key={c} className="border border-divider rounded">
-              <div className={"flex items-center gap-2 px-3 py-2 border-b border-divider " +
-                              "bg-bg-panel"}>
-                <span className={"text-[11px] tracking-wider font-bold uppercase border rounded px-1.5 " +
-                                 CLOUD_ACCENT[c]}>
-                  {CLOUD_LABEL[c]}
-                </span>
-                <span className="text-[11px] text-ink-muted">
-                  {byCloud[c].length} probe{byCloud[c].length === 1 ? "" : "s"}
-                </span>
-                {anyHit && <span className="text-[11px] text-phos">✓ reachable</span>}
-              </div>
+            <ResultGroup
+              key={c}
+              title={`${CLOUD_LABEL[c]} ${anyHit ? "✓ reachable" : ""}`}
+              count={byCloud[c].length}
+              severity={sev}
+            >
               <div className="divide-y divide-divider">
-                {byCloud[c].map((p, i) => (
-                  <div key={i} className="px-3 py-2">
-                    <div className="flex items-center gap-2 text-[11px] mb-1">
-                      <span className={p.hit ? "text-phos font-bold" : "text-ink-dim"}>
-                        {p.hit ? "✓" : "·"}
-                      </span>
-                      <span className="font-mono text-ink-primary truncate flex-1">{p.path}</span>
-                      <span className="text-ink-dim tabular-nums">{p.status ?? "—"} · {p.elapsed_ms}ms</span>
-                    </div>
-                    {p.hit && (
-                      <div className="mt-1">
-                        <div className="text-[10px] text-ink-muted mb-1">EVIDENCE (matched "{p.hit}"):</div>
-                        <pre className="bg-bg-panel border border-divider rounded p-2
-                                        text-[11px] text-phos whitespace-pre-wrap break-all
-                                        max-h-32 overflow-y-auto">
-                          {p.evidence.slice(0, 1500)}
-                        </pre>
+                {byCloud[c].map((p, i) => {
+                  const copyText = `${CLOUD_LABEL[c]} ${p.path} → ${p.status ?? "—"} (${p.elapsed_ms}ms)${p.hit ? ` HIT "${p.hit}"` : ""}`;
+                  return (
+                    <div
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group px-3 py-2 hover:bg-bg-row-alt transition " +
+                                 (p.hit ? "mhp-critical-pulse" : "")}
+                    >
+                      <div className="flex items-center gap-2 text-[11px] mb-1">
+                        <span className={p.hit ? "text-phos font-bold" : "text-ink-dim"}>
+                          {p.hit ? "✓" : "·"}
+                        </span>
+                        <span className="font-mono text-ink-primary truncate flex-1">{p.path}</span>
+                        <span className="text-ink-dim tabular-nums">{p.status ?? "—"} · {p.elapsed_ms}ms</span>
+                        <CopyButton text={copyText} />
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {p.hit && (
+                        <div className="mt-1">
+                          <div className="text-[10px] text-ink-muted mb-1">EVIDENCE (matched "{p.hit}"):</div>
+                          <pre className="bg-bg-panel border border-divider rounded p-2
+                                          text-[11px] text-phos whitespace-pre-wrap break-all
+                                          max-h-32 overflow-y-auto">
+                            {p.evidence.slice(0, 1500)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            </div>
+            </ResultGroup>
           );
         })}
-        {probes.length === 0 && !running && (
-          <div className="text-[12px] text-ink-dim italic text-center py-8">
-            No results yet. Fill in a target URL with <code className="text-amber">FUZZ</code> and start.
-          </div>
-        )}
       </div>
+
+      {probes.length > 0 && (
+        <StatsBar
+          total={probes.length}
+          critical={probes.filter((p) => p.hit).length}
+          startedAt={startedAt}
+          running={running}
+          extra={running ? undefined : doneText || undefined}
+        />
+      )}
     </div>
   );
 }

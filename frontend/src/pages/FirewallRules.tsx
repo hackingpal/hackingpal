@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchFirewallRules, type FirewallRules } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 export default function FirewallRulesPage() {
   const [report, setReport] = useState<FirewallRules | null>(null);
@@ -54,13 +56,19 @@ export default function FirewallRulesPage() {
           </div>
         )}
         {report && !report.needs_root && report.tables.length === 0 && (
-          <div className="text-ink-dim text-xs">
-            No rules loaded {report.backend !== "none" ? `(backend: ${report.backend})` : ""}.
-          </div>
+          <EmptyState
+            icon="🧱"
+            title="No firewall rules"
+            description={`Backend: ${report.backend === "none" ? "none detected" : report.backend}. No rules loaded.`}
+          />
         )}
 
         {report?.tables.map((t, ti) => (
-          <section key={ti} className="rounded border border-divider overflow-hidden">
+          <section
+            key={ti}
+            style={{ animationDelay: `${Math.min(ti, 20) * 30}ms` }}
+            className="mhp-result-in rounded border border-divider overflow-hidden"
+          >
             <header className="px-3 py-1.5 bg-bg-panel border-b border-divider
                                flex justify-between text-[11px] font-mono">
               <span className="text-ink-primary">
@@ -69,15 +77,18 @@ export default function FirewallRulesPage() {
               <span className="text-ink-dim">{t.chains.length} chain(s)</span>
             </header>
             {t.chains.map((c, ci) => (
-              <div key={ci} className="border-t border-divider/40 first:border-0">
-                <div className="px-3 py-1 bg-bg-card flex justify-between
+              <div key={ci} className="group border-t border-divider/40 first:border-0">
+                <div className="px-3 py-1 bg-bg-card flex justify-between items-center
                                 text-[11px] font-mono text-ink-muted">
                   <span>
                     chain <span className="text-ink-primary">{c.name}</span>
                     {c.hook && <> · hook {c.hook}</>}
                     {c.policy && <> · policy <span className={c.policy.toLowerCase() === "drop" ? "text-phos" : "text-amber"}>{c.policy}</span></>}
                   </span>
-                  <span className="text-ink-dim">{c.rules.length} rule(s)</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-ink-dim">{c.rules.length} rule(s)</span>
+                    <CopyButton text={`${t.family} ${t.name} / ${c.name}\n${c.rules.join("\n")}`} />
+                  </span>
                 </div>
                 <pre className="px-3 py-1.5 text-[11px] font-mono text-ink-muted whitespace-pre-wrap">
                   {c.rules.length === 0 ? "(no rules)" : c.rules.join("\n")}

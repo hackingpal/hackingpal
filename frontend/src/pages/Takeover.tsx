@@ -4,6 +4,10 @@ import {
   fetchTakeoverCheck, openWs,
   type TakeoverEvent, type TakeoverResult, type TakeoverVerdict,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
+import SeverityBadge from "../components/SeverityBadge";
 
 type Mode = "single" | "bulk";
 
@@ -38,9 +42,10 @@ export default function Takeover() {
   const [scanState, setScanState] = useState<{
     running: boolean;
     started: number | null;
+    startedAt: number | null;
     results: TakeoverResult[];
     done: number; total: number; elapsed?: number;
-  }>({ running: false, started: null, results: [], done: 0, total: 0 });
+  }>({ running: false, started: null, startedAt: null, results: [], done: 0, total: 0 });
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -65,7 +70,7 @@ export default function Takeover() {
     const subs = bulkText.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
     if (subs.length === 0) return;
     setBusy(true); setError(null); setConfirmReason(null);
-    setScanState({ running: true, started: subs.length, results: [], done: 0, total: subs.length });
+    setScanState({ running: true, started: subs.length, startedAt: Date.now(), results: [], done: 0, total: subs.length });
 
     const ws = openWs("/ws/takeover-scan");
     wsRef.current = ws;
@@ -219,39 +224,48 @@ export default function Takeover() {
             </Card>
 
             {(scanState.results.length > 0 || scanState.running || scanState.elapsed != null) && (
-              <Card title={`Scan · ${scanState.done}/${scanState.total} · ${scanState.results.filter(r => r.verdict === "vulnerable" || r.verdict === "dangling").length} hits`}>
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="flex-1 h-2 rounded bg-bg-base border border-divider overflow-hidden">
-                    <div className={"h-full transition-all " + (scanState.running ? "bg-accent" : "bg-phos")}
-                      style={{ width: scanState.total > 0 ? `${Math.round((scanState.done / scanState.total) * 100)}%` : "0%" }} />
+              <>
+                <StatsBar
+                  total={scanState.results.length}
+                  critical={scanState.results.filter((r) => r.verdict === "vulnerable").length}
+                  medium={scanState.results.filter((r) => r.verdict === "dangling" || r.verdict === "matched").length}
+                  startedAt={scanState.startedAt}
+                  running={scanState.running}
+                  extra={`${scanState.done}/${scanState.total}${scanState.elapsed != null ? ` · ${scanState.elapsed.toFixed(1)}s` : ""}`}
+                />
+                <Card title="Results">
+                  <div className="grid grid-cols-[100px_2fr_120px_2fr_auto] gap-x-3 gap-y-0.5">
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">Verdict</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">FQDN</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">Service</span>
+                    <span className="text-ink-dim text-[10px] uppercase tracking-wider">CNAME / Evidence</span>
+                    <span></span>
+                    {scanState.results.map((r, i) => {
+                      const copyText = `${r.verdict.toUpperCase()} ${r.fqdn}${r.service ? ` (${r.service})` : ""}${r.cname_chain.length ? ` → ${r.cname_chain.join(" → ")}` : ""}${r.evidence ? ` — ${r.evidence}` : ""}`;
+                      return (
+                        <div
+                          key={i}
+                          style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                          className={"mhp-result-in group col-span-5 grid grid-cols-[100px_2fr_120px_2fr_auto] gap-x-3 " +
+                                     (r.verdict === "vulnerable" ? "mhp-critical-pulse rounded" : "")}
+                        >
+                          <span className={"flex items-center gap-1.5 " + VERDICT_COLOR[r.verdict]}>
+                            <span className={"inline-block w-2 h-2 rounded-full " + VERDICT_DOT[r.verdict]} />
+                            {r.verdict}
+                          </span>
+                          <span className="text-ink-primary break-all">{r.fqdn}</span>
+                          <span className="text-ink-muted">{r.service || "—"}</span>
+                          <span className="text-ink-muted break-all">
+                            {r.cname_chain.length > 0 ? r.cname_chain.join(" → ") : "—"}
+                            {r.evidence && <div className="text-amber text-[10px]">{r.evidence}</div>}
+                          </span>
+                          <CopyButton text={copyText} />
+                        </div>
+                      );
+                    })}
                   </div>
-                  {scanState.elapsed != null && (
-                    <span className="text-ink-dim text-[11px] w-16 text-right">
-                      {scanState.elapsed.toFixed(1)}s
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-[100px_2fr_120px_2fr] gap-x-3 gap-y-0.5">
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Verdict</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">FQDN</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">Service</span>
-                  <span className="text-ink-dim text-[10px] uppercase tracking-wider">CNAME / Evidence</span>
-                  {scanState.results.map((r, i) => (
-                    <div key={i} className="contents">
-                      <span className={"flex items-center gap-1.5 " + VERDICT_COLOR[r.verdict]}>
-                        <span className={"inline-block w-2 h-2 rounded-full " + VERDICT_DOT[r.verdict]} />
-                        {r.verdict}
-                      </span>
-                      <span className="text-ink-primary break-all">{r.fqdn}</span>
-                      <span className="text-ink-muted">{r.service || "—"}</span>
-                      <span className="text-ink-muted break-all">
-                        {r.cname_chain.length > 0 ? r.cname_chain.join(" → ") : "—"}
-                        {r.evidence && <div className="text-amber text-[10px]">{r.evidence}</div>}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
+                </Card>
+              </>
             )}
           </>
         )}
@@ -261,19 +275,20 @@ export default function Takeover() {
 }
 
 function SingleResult({ r }: { r: TakeoverResult }) {
+  const sev = r.verdict === "vulnerable" ? "critical"
+            : r.verdict === "dangling" || r.verdict === "matched" ? "medium"
+            : r.verdict === "clean" ? "low"
+            : "info";
   return (
     <>
-      <div className={"rounded-md border-l-4 border-y border-r border-divider px-4 py-3 " +
-        (r.verdict === "vulnerable" ? "border-l-danger bg-danger/5" :
+      <div className={"mhp-result-in rounded-md border-l-4 border-y border-r border-divider px-4 py-3 " +
+        (r.verdict === "vulnerable" ? "border-l-danger bg-danger/5 mhp-critical-pulse" :
          r.verdict === "dangling"   ? "border-l-amber bg-amber/5"  :
          r.verdict === "clean"      ? "border-l-phos bg-phos/5"    :
                                       "border-l-divider bg-bg-card")}>
         <div className="flex items-center gap-3">
-          <span className={"inline-block w-2.5 h-2.5 rounded-full " + VERDICT_DOT[r.verdict]} />
+          <SeverityBadge severity={sev} label={r.verdict.toUpperCase()} />
           <div className="flex-1">
-            <div className={"text-[10px] uppercase tracking-[0.25em] " + VERDICT_COLOR[r.verdict]}>
-              {r.verdict}
-            </div>
             <div className="text-sm font-mono font-bold text-ink-primary break-all">{r.fqdn}</div>
           </div>
           {r.service && (
@@ -282,6 +297,7 @@ function SingleResult({ r }: { r: TakeoverResult }) {
               <div className="text-sm font-mono text-amber">{r.service}</div>
             </div>
           )}
+          <CopyButton text={`${r.verdict.toUpperCase()} ${r.fqdn}${r.service ? ` (${r.service})` : ""}`} />
         </div>
       </div>
 
@@ -311,19 +327,12 @@ function SingleResult({ r }: { r: TakeoverResult }) {
 
 function EmptySingle() {
   return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   T A K E    │
-        │  ▶ O V E R   │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Detects dangling CNAMEs pointing at S3/Heroku/GitHub Pages/Azure/Netlify/Vercel/etc.
-        </div>
-      </div>
-    </div>
+    <EmptyState
+      icon="🪧"
+      title="Subdomain takeover"
+      description="Detects dangling CNAMEs pointing at S3, Heroku, GitHub Pages, Azure, Netlify, Vercel, etc."
+      hint="Single mode for one FQDN; bulk mode for a list."
+    />
   );
 }
 

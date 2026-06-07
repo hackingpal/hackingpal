@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { fetchWhois, isApiError, type WhoisReport } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -108,7 +111,16 @@ export default function Whois() {
           </div>
         )}
 
-        {!report && !error && !timedOut && !busy && <EmptyState />}
+        {!report && !error && !timedOut && !busy && (
+          <EmptyStateComponent
+            icon="🌐"
+            title="WHOIS · ASN"
+            description="Registrar · netblock · BGP origin ASN"
+            exampleTarget="anthropic.com"
+            onExample={setTarget}
+            hint="Try a domain, IP, or CIDR."
+          />
+        )}
 
         {report && (
           <>
@@ -132,17 +144,28 @@ export default function Whois() {
                   {report.findings.map((f, i) => {
                     const sev = SEV[f.severity] ?? SEV.info;
                     return (
-                      <li key={i} className="flex items-start gap-2">
+                      <li
+                        key={i}
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="mhp-result-in group flex items-start gap-2"
+                      >
                         <span className={"inline-block w-2 h-2 rounded-full mt-1.5 " + sev.dot} />
                         <span className={"text-[10px] uppercase tracking-widest " + sev.text}>
                           {f.severity}
                         </span>
                         <span className="text-ink-primary flex-1">{f.label}</span>
                         <span className="text-ink-muted">{f.detail}</span>
+                        <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                       </li>
                     );
                   })}
                 </ul>
+                <StatsBar
+                  total={report.findings.length}
+                  critical={report.findings.filter((f) => f.severity === "high").length}
+                  medium={report.findings.filter((f) => f.severity === "warn").length}
+                  className="mt-2 -mx-3 -mb-3"
+                />
               </Card>
             )}
 
@@ -244,27 +267,6 @@ function AsnCard({ report }: { report: WhoisReport }) {
       <Row k="Registry"   v={a.registry ?? <span className="text-ink-dim">—</span>} />
       <Row k="Allocated"  v={a.allocated ?? <span className="text-ink-dim">—</span>} />
     </Card>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center max-w-md">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │   W H O I S  │
-        │   ▶ ASN ▶    │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Registrar · netblock · BGP origin ASN
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          Try a domain, IP, or CIDR.
-        </div>
-      </div>
-    </div>
   );
 }
 

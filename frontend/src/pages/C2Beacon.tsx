@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, authFetch, parseError } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Callback = {
   ts: string; source: string; method: string; path: string;
@@ -101,12 +103,21 @@ export default function C2Beacon() {
       </div>
 
       {data && data.listeners.length === 0 && (
-        <div className="text-[12px] text-ink-dim italic">No listeners yet.</div>
+        <EmptyState
+          icon="📡"
+          title="No listeners yet"
+          description="Start an HTTP or TCP listener above, then fire the suggested beacon commands from your target host."
+        />
       )}
 
       <div className="space-y-3">
-        {data?.listeners.map((l) => (
-          <div key={l.id} className="border border-divider rounded p-3">
+        {data?.listeners.map((l, idx) => (
+          <div
+            key={l.id}
+            style={{ animationDelay: `${Math.min(idx, 20) * 30}ms` }}
+            className={"mhp-result-in border border-divider rounded p-3 " +
+                       (l.callback_count > 0 ? "mhp-critical-pulse" : "")}
+          >
             <div className="flex items-center gap-3 mb-2">
               <span className="text-[10px] uppercase border border-accent/40 text-accent rounded px-1.5">
                 {l.mode}
@@ -130,11 +141,10 @@ export default function C2Beacon() {
               <div className="text-[10px] text-ink-muted tracking-wider mb-1">SUGGESTED BEACONS</div>
               <div className="space-y-1">
                 {Object.entries(data.beacons[l.id] || {}).map(([name, cmd]) => (
-                  <div key={name} className="flex items-start gap-2 text-[11px]">
+                  <div key={name} className="group flex items-start gap-2 text-[11px]">
                     <span className="font-mono text-amber w-20 shrink-0">{name}:</span>
                     <code className="font-mono text-phos break-all flex-1">{cmd}</code>
-                    <button onClick={() => navigator.clipboard?.writeText(cmd)}
-                            className="text-[10px] text-accent hover:underline shrink-0">copy</button>
+                    <CopyButton text={cmd} alwaysVisible />
                   </div>
                 ))}
               </div>

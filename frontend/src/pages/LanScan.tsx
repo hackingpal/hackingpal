@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchLanInfo, openWs, type LanEvent, type LanInfo } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Host = { ip: string; hostname: string; mac: string; isSelf: boolean };
 
@@ -146,9 +149,23 @@ export default function LanScan() {
           </div>
         )}
 
-        {hosts.length === 0 && !scanning && !error && <EmptyState />}
+        {hosts.length === 0 && !scanning && !error && (
+          <EmptyStateComponent
+            icon="🏠"
+            title="LAN Scan"
+            description="Enumerate hosts on your local subnet with TCP probe, reverse DNS, and ARP MAC enrichment."
+            hint="No external traffic — only the subnet you're on."
+          />
+        )}
 
-        {(hosts.length > 0 || scanning) && <HostsTable hosts={hosts} />}
+        {(hosts.length > 0 || scanning) && (
+          <HostsTable
+            hosts={hosts}
+            scanning={scanning}
+            elapsed={elapsed}
+            stopped={stopped}
+          />
+        )}
       </div>
     </div>
   );
@@ -163,50 +180,44 @@ function InfoChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function HostsTable({ hosts }: { hosts: Host[] }) {
+function HostsTable({
+  hosts, scanning, elapsed, stopped,
+}: { hosts: Host[]; scanning: boolean; elapsed: number | null; stopped: boolean }) {
   return (
     <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
-      <div className="grid grid-cols-[40px_140px_1fr_180px] gap-3 px-3 py-1.5
+      <div className="grid grid-cols-[40px_140px_1fr_180px_60px] gap-3 px-3 py-1.5
                       bg-bg-panel border-b border-divider text-[10px]
                       uppercase tracking-[0.2em] text-ink-dim">
-        <span>#</span><span>IP Address</span><span>Hostname</span><span>MAC Address</span>
+        <span>#</span><span>IP Address</span><span>Hostname</span><span>MAC Address</span><span></span>
       </div>
       <div className="font-mono text-xs">
         {hosts.map((h, i) => (
-          <div key={h.ip}
-               className={"grid grid-cols-[40px_140px_1fr_180px] gap-3 px-3 py-1 " +
-                          (h.isSelf ? "bg-accent/10" : i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")}>
+          <div
+            key={h.ip}
+            style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+            className={
+              "group grid grid-cols-[40px_140px_1fr_180px_60px] gap-3 px-3 py-1 mhp-result-in" +
+              (h.isSelf ? " bg-accent/10" : i % 2 === 0 ? " bg-bg-card" : " bg-bg-row-alt")
+            }
+          >
             <span className="text-ink-dim tabular-nums">{i + 1}</span>
             <span className={h.isSelf ? "text-accent" : "text-ink-primary"}>
               {h.ip}{h.isSelf && <span className="ml-1 text-accent">★</span>}
             </span>
             <span className="text-ink-muted truncate">{h.hostname || "—"}</span>
             <span className="text-ink-primary tabular-nums">{h.mac || "—"}</span>
+            <span className="flex justify-end">
+              <CopyButton text={`${h.ip}\t${h.hostname || ""}\t${h.mac || ""}`} />
+            </span>
           </div>
         ))}
       </div>
+      <StatsBar
+        total={hosts.length}
+        elapsed={elapsed ?? undefined}
+        running={scanning}
+        extra={stopped ? "stopped" : undefined}
+      />
     </section>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  ⌂  ⌂  ⌂     │
-        │  LAN SWEEP   │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Press <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-            text-[10px] text-ink-primary">▶ Scan LAN</kbd> to enumerate hosts on your subnet
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          TCP probe · reverse DNS · ARP MAC enrichment
-        </div>
-      </div>
-    </div>
   );
 }

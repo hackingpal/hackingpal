@@ -1,22 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, type AuditEvent, type AuditOpenPort, type RiskTier } from "../api";
+import SeverityBadge, { type Severity } from "../components/SeverityBadge";
+import StatsBar from "../components/StatsBar";
+import EmptyStateComponent from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
+import { useCriticalPulseSet } from "../lib/useCriticalPulse";
 
 type Row = {
   ip: string; hostname: string; isSelf: boolean;
   openRisky: AuditOpenPort[]; risk: RiskTier;
 };
 
-const RISK_TINT: Record<RiskTier, { dot: string; text: string }> = {
-  clean:    { dot: "bg-phos",      text: "text-phos" },
-  low:      { dot: "bg-amber/70",  text: "text-amber" },
-  medium:   { dot: "bg-amber",     text: "text-amber" },
-  high:     { dot: "bg-danger/80", text: "text-danger" },
-  critical: { dot: "bg-danger",    text: "text-danger" },
-};
-
 const RISK_ORDER: Record<RiskTier, number> = {
   critical: 0, high: 1, medium: 2, low: 3, clean: 4,
 };
+
+function riskToSeverity(r: RiskTier): Severity {
+  if (r === "critical") return "critical";
+  if (r === "high") return "high";
+  if (r === "medium") return "medium";
+  if (r === "low") return "low";
+  return "info";
+}
 
 export default function NetworkAudit() {
   const [running, setRunning] = useState(false);
@@ -27,7 +32,14 @@ export default function NetworkAudit() {
   const [label,   setLabel]   = useState("");
   const [rows,    setRows]    = useState<Row[]>([]);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const pulsing = useCriticalPulseSet(
+    rows,
+    (r) => r.ip,
+    (r) => r.risk === "critical",
+  );
 
   useEffect(() => () => {
     try { wsRef.current?.close(); } catch { /* ignore */ }
@@ -38,6 +50,7 @@ export default function NetworkAudit() {
     if (running) return;
     setRunning(true); setStopped(false); setError(null);
     setPhase(null); setPct(0); setLabel(""); setRows([]); setElapsed(null);
+    setStartedAt(Date.now());
 
     const ws = openWs("/ws/audit");
     wsRef.current = ws;
@@ -145,23 +158,33 @@ export default function NetworkAudit() {
           </div>
         )}
 
-        {rows.length === 0 && !running && !error && <EmptyState />}
+        {rows.length === 0 && !running && !error && (
+          <EmptyStateComponent
+            icon="🛡️"
+            title="Network Audit"
+            description="Discovers live hosts on your subnet and checks each for insecure open ports (FTP, Telnet, SMB, RDP, etc.)."
+            hint={<>Phase 1: discover live hosts · Phase 2: probe 18 risky ports per host</>}
+          />
+        )}
 
         {(rows.length > 0 || running) && (
           <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
-            <div className="grid grid-cols-[140px_1fr_240px_100px] gap-3 px-3 py-1.5
+            <div className="grid grid-cols-[140px_1fr_240px_120px_60px] gap-3 px-3 py-1.5
                             bg-bg-panel border-b border-divider text-[10px]
                             uppercase tracking-[0.2em] text-ink-dim">
               <span>IP Address</span><span>Hostname</span>
-              <span>Risky Ports</span><span>Risk Level</span>
+              <span>Risky Ports</span><span>Risk Level</span><span></span>
             </div>
             <div className="font-mono text-xs">
               {rows.map((r, i) => {
-                const tint = RISK_TINT[r.risk];
+                const pulse = pulsing.has(r.ip) ? " mhp-critical-pulse" : "";
+                const sev = riskToSeverity(r.risk);
+                const copyText = `${r.ip}\t${r.hostname || ""}\t${r.openRisky.map((p) => `${p.port}/${p.service}`).join(",")}\t${r.risk}`;
                 return (
                   <div key={r.ip}
-                       className={"grid grid-cols-[140px_1fr_240px_100px] gap-3 px-3 py-1 items-start " +
-                                  (r.isSelf ? "bg-accent/10" : i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")}>
+                       style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                       className={"group grid grid-cols-[140px_1fr_240px_120px_60px] gap-3 px-3 py-1 items-start mhp-result-in" +
+                                  (r.isSelf ? " bg-accent/10" : i % 2 === 0 ? " bg-bg-card" : " bg-bg-row-alt") + pulse}>
                     <span className={r.isSelf ? "text-accent" : "text-ink-primary"}>
                       {r.ip}{r.isSelf && <span className="ml-1">★</span>}
                     </span>
@@ -172,38 +195,31 @@ export default function NetworkAudit() {
                         : r.openRisky.map((p) =>
                             `${p.port}/${p.service}`).join(", ")}
                     </span>
-                    <span className={"flex items-center gap-1.5 uppercase text-[11px] font-bold " + tint.text}>
-                      <span className={"inline-block w-1.5 h-1.5 rounded-full " + tint.dot} />
-                      {r.risk}
+                    <span>
+                      {r.risk === "clean"
+                        ? <span className="text-phos text-[11px] font-bold uppercase tracking-wider">● Clean</span>
+                        : <SeverityBadge severity={sev} />}
+                    </span>
+                    <span className="flex justify-end">
+                      <CopyButton text={copyText} />
                     </span>
                   </div>
                 );
               })}
             </div>
+            <StatsBar
+              total={rows.length}
+              critical={rows.filter((r) => r.risk === "critical").length}
+              high={rows.filter((r) => r.risk === "high").length}
+              medium={rows.filter((r) => r.risk === "medium").length}
+              low={rows.filter((r) => r.risk === "low").length}
+              elapsed={elapsed ?? undefined}
+              startedAt={startedAt}
+              running={running}
+              extra={stopped ? "stopped" : undefined}
+            />
           </section>
         )}
-      </div>
-    </div>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="h-full min-h-[260px] flex items-center justify-center">
-      <div className="text-center">
-        <pre className="text-ink-dim text-[11px] leading-tight select-none">
-{`        ┌──────────────┐
-        │  ⚠  AUDIT    │
-        │  RISKY PORTS │
-        └──────────────┘`}
-        </pre>
-        <div className="mt-4 text-xs text-ink-muted">
-          Press <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-            text-[10px] text-ink-primary">▶ Start Audit</kbd> to scan your subnet for insecure services
-        </div>
-        <div className="mt-2 text-[10px] text-ink-dim">
-          Phase 1: discover live hosts · Phase 2: probe 18 risky ports per host
-        </div>
       </div>
     </div>
   );

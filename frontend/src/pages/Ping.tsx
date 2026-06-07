@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, type PingEvent } from "../api";
+import EmptyStateComponent from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 export default function Ping() {
   const [target,   setTarget]   = useState("8.8.8.8");
@@ -87,10 +90,13 @@ export default function Ping() {
           </div>
         )}
         {lines.length === 0 && !running && !error && (
-          <div className="text-ink-dim text-xs font-mono">
-            Set a host and press <kbd className="px-1.5 py-0.5 rounded bg-bg-card border border-divider
-              text-[10px] text-ink-primary">▶ Ping</kbd>
-          </div>
+          <EmptyStateComponent
+            icon="📡"
+            title="Ping"
+            description="Send ICMP echo requests to check reachability and round-trip latency."
+            exampleTarget="8.8.8.8"
+            onExample={setTarget}
+          />
         )}
         {lines.length > 0 && (
           <pre className="font-mono text-[12px] leading-snug whitespace-pre-wrap
@@ -103,6 +109,20 @@ export default function Ping() {
               </div>
             ))}
           </pre>
+        )}
+        {lines.length > 0 && (
+          <div className="mt-2 relative">
+            <div className="absolute -top-9 right-1">
+              <CopyButton text={lines.join("\n")} alwaysVisible label="Copy all" />
+            </div>
+            <StatsBar
+              total={lines.filter((ln) => ln.includes("bytes from")).length}
+              running={running}
+              extra={lines.filter((ln) => ln.includes("Request timeout")).length > 0
+                ? `${lines.filter((ln) => ln.includes("Request timeout")).length} timeouts`
+                : undefined}
+            />
+          </div>
         )}
       </div>
     </div>

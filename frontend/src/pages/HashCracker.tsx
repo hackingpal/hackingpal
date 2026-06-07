@@ -3,6 +3,8 @@ import {
   identifyHash, computeHash, fetchHashAlgorithms, openWs,
   type HashCrackEvent, type HashIdentifyResp, type HashComputeResp,
 } from "../api";
+import EmptyState from "../components/EmptyState";
+import CopyButton from "../components/CopyButton";
 
 type Mode = "identify" | "compute" | "crack";
 
@@ -141,6 +143,14 @@ export default function HashCracker() {
               )}
             </Card>
 
+            {!idResult && !idHash && (
+              <EmptyState
+                icon="🆔"
+                title="Hash identifier"
+                description="Length + character-class heuristic. Paste a hash above to see candidate algorithms."
+                hint="Try `5f4dcc3b5aa765d61d8327deb882cf99` (md5 of 'password')."
+              />
+            )}
             {idResult && (
               <Card title={`Candidates · ${idResult.candidates.length}`}>
                 {idResult.candidates.length === 0 ? (
@@ -149,7 +159,8 @@ export default function HashCracker() {
                   <div className="flex flex-wrap gap-2">
                     {idResult.candidates.map((c, i) => (
                       <span key={i}
-                        className="px-2.5 py-1 rounded border border-accent/40 bg-accent/10
+                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                        className="mhp-result-in px-2.5 py-1 rounded border border-accent/40 bg-accent/10
                                    text-accent text-[11px] font-mono">{c}</span>
                     ))}
                   </div>
@@ -192,7 +203,10 @@ export default function HashCracker() {
 
             {cmpResult && (
               <Card title={`Result · ${cmpResult.algorithm}`}>
-                <div className="break-all text-ink-primary select-all">{cmpResult.hash}</div>
+                <div className="flex items-start gap-2">
+                  <div className="break-all text-ink-primary select-all flex-1">{cmpResult.hash}</div>
+                  <CopyButton text={cmpResult.hash} alwaysVisible />
+                </div>
                 <div className="mt-1 text-[10px] text-ink-dim">length: {cmpResult.hash.length}</div>
               </Card>
             )}
@@ -298,13 +312,18 @@ export default function HashCracker() {
             )}
 
             {crackState.done && (
-              <div className={"rounded-md border-l-4 border-y border-r border-divider px-4 py-3 " +
+              <div className={"mhp-result-in rounded-md border-l-4 border-y border-r border-divider px-4 py-3 " +
                 (crackState.done.cracked
-                  ? "border-l-phos bg-phos/10"
+                  ? "border-l-phos bg-phos/10 mhp-critical-pulse"
                   : "border-l-amber bg-amber/5")}>
-                <div className={"text-[10px] uppercase tracking-[0.25em] " +
-                  (crackState.done.cracked ? "text-phos" : "text-amber")}>
-                  {crackState.done.cracked ? "Cracked" : "Not in wordlist"}
+                <div className="flex items-center gap-2">
+                  <div className={"text-[10px] uppercase tracking-[0.25em] " +
+                    (crackState.done.cracked ? "text-phos" : "text-amber")}>
+                    {crackState.done.cracked ? "Cracked" : "Not in wordlist"}
+                  </div>
+                  {crackState.done.cracked && crackState.done.plaintext != null && (
+                    <CopyButton text={crackState.done.plaintext} alwaysVisible className="ml-auto" />
+                  )}
                 </div>
                 {crackState.done.cracked && crackState.done.plaintext !== null && (
                   <div className="mt-1 text-base font-mono text-ink-primary break-all select-all">

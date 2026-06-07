@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import EmptyState from "../components/EmptyState";
+import StatsBar from "../components/StatsBar";
+import CopyButton from "../components/CopyButton";
 
 type Network = {
   ssid: string | null;
@@ -119,44 +122,73 @@ export default function WifiScan() {
         </div>
       )}
 
+      {!result && !loading && !error && (
+        <EmptyState
+          icon="📡"
+          title="WiFi scan"
+          description="Enumerate visible 2.4 / 5 / 6 GHz networks with RSSI, channel, security."
+          hint="Auto-refresh every 5s to watch RSSI shift."
+        />
+      )}
+
       {result && (
-        <div className="bg-bg-card border border-divider rounded overflow-hidden">
-          <table className="w-full text-[11px]">
-            <thead className="bg-bg-panel border-b border-divider text-ink-muted text-[10px] tracking-wider">
-              <tr>
-                <th className="text-left px-3 py-1.5">SIGNAL</th>
-                <th className="text-left px-3 py-1.5">SSID</th>
-                <th className="text-left px-3 py-1.5">BSSID</th>
-                <th className="text-right px-3 py-1.5 w-12">RSSI</th>
-                <th className="text-right px-3 py-1.5 w-12">CH</th>
-                <th className="text-left px-3 py-1.5 w-12">BAND</th>
-                <th className="text-left px-3 py-1.5">SECURITY</th>
-                <th className="text-left px-3 py-1.5 w-12">CC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.networks.map((n, i) => (
-                <tr key={i} className="border-b border-divider hover:bg-bg-nav-hover">
-                  <td className="px-3 py-1 font-mono text-phos">{rssiBars(n.rssi)}</td>
-                  <td className="px-3 py-1 font-mono text-ink-primary">
-                    {n.ssid ?? <span className="text-ink-dim italic">(hidden)</span>}
-                  </td>
-                  <td className="px-3 py-1 font-mono text-ink-muted">{n.bssid ?? "—"}</td>
-                  <td className="px-3 py-1 font-mono tabular-nums">{n.rssi}</td>
-                  <td className="px-3 py-1 font-mono tabular-nums">{n.channel}</td>
-                  <td className="px-3 py-1 text-ink-muted">{bandLabel(n.band)}G</td>
-                  <td className={"px-3 py-1 " + securityColor(n.security)}>{n.security}</td>
-                  <td className="px-3 py-1 text-ink-dim uppercase">{n.country ?? ""}</td>
+        <>
+          <StatsBar
+            total={result.networks.length}
+            critical={result.networks.filter((n) => n.security === "None" || n.security === "WEP").length}
+            medium={result.networks.filter((n) => n.security.startsWith("WPA") && !n.security.startsWith("WPA2") && !n.security.startsWith("WPA3")).length}
+            extra={`interface: ${result.interface}`}
+            className="mb-2"
+          />
+          <div className="bg-bg-card border border-divider rounded overflow-hidden">
+            <table className="w-full text-[11px]">
+              <thead className="bg-bg-panel border-b border-divider text-ink-muted text-[10px] tracking-wider">
+                <tr>
+                  <th className="text-left px-3 py-1.5">SIGNAL</th>
+                  <th className="text-left px-3 py-1.5">SSID</th>
+                  <th className="text-left px-3 py-1.5">BSSID</th>
+                  <th className="text-right px-3 py-1.5 w-12">RSSI</th>
+                  <th className="text-right px-3 py-1.5 w-12">CH</th>
+                  <th className="text-left px-3 py-1.5 w-12">BAND</th>
+                  <th className="text-left px-3 py-1.5">SECURITY</th>
+                  <th className="text-left px-3 py-1.5 w-12">CC</th>
+                  <th className="px-3 py-1.5 w-10"></th>
                 </tr>
-              ))}
-              {result.networks.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-ink-dim italic">
-                  No networks found.
-                </td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {result.networks.map((n, i) => {
+                  const insecure = n.security === "None" || n.security === "WEP";
+                  const copyText = `${n.ssid ?? "(hidden)"} · ${n.bssid ?? "—"} · ${n.rssi}dBm · ch${n.channel} · ${bandLabel(n.band)}G · ${n.security}`;
+                  return (
+                    <tr
+                      key={i}
+                      style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                      className={"mhp-result-in group border-b border-divider hover:bg-bg-nav-hover " +
+                                 (insecure ? "mhp-critical-pulse" : "")}
+                    >
+                      <td className="px-3 py-1 font-mono text-phos">{rssiBars(n.rssi)}</td>
+                      <td className="px-3 py-1 font-mono text-ink-primary">
+                        {n.ssid ?? <span className="text-ink-dim italic">(hidden)</span>}
+                      </td>
+                      <td className="px-3 py-1 font-mono text-ink-muted">{n.bssid ?? "—"}</td>
+                      <td className="px-3 py-1 font-mono tabular-nums">{n.rssi}</td>
+                      <td className="px-3 py-1 font-mono tabular-nums">{n.channel}</td>
+                      <td className="px-3 py-1 text-ink-muted">{bandLabel(n.band)}G</td>
+                      <td className={"px-3 py-1 " + securityColor(n.security)}>{n.security}</td>
+                      <td className="px-3 py-1 text-ink-dim uppercase">{n.country ?? ""}</td>
+                      <td className="px-3 py-1"><CopyButton text={copyText} /></td>
+                    </tr>
+                  );
+                })}
+                {result.networks.length === 0 && (
+                  <tr><td colSpan={9} className="px-3 py-6 text-center text-ink-dim italic">
+                    No networks found.
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );
