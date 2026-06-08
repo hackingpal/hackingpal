@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   authFetch,
   fetchApiKeyStatus,
+  fetchChatConfig,
   formatDetail,
   setApiKey as putApiKey,
   deleteApiKey,
   type ApiKeyStatus,
+  type ChatConfig,
 } from "../api";
 import { snapshot, useSessionLog, clearLog } from "../lib/sessionLog";
 
@@ -96,6 +98,7 @@ type Props = { activePage: string };
 export default function AiAssistant({ activePage }: Props) {
   const [showSettings, setShowSettings] = useState(false);
   const [keyStatus, setKeyStatus] = useState<ApiKeyStatus | null>(null);
+  const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
   const [keyInput, setKeyInput] = useState("");
   const [savingKey, setSavingKey] = useState(false);
 
@@ -109,8 +112,13 @@ export default function AiAssistant({ activePage }: Props) {
 
   useEffect(() => { saveMessages(messages); }, [messages]);
 
-  useEffect(() => {
+  const refreshChatConfig = () => {
     fetchApiKeyStatus().then(setKeyStatus).catch(() => setKeyStatus({ present: false }));
+    fetchChatConfig().then(setChatConfig).catch(() => setChatConfig(null));
+  };
+
+  useEffect(() => {
+    refreshChatConfig();
   }, []);
 
   useEffect(() => {
@@ -127,6 +135,8 @@ export default function AiAssistant({ activePage }: Props) {
       setKeyStatus(s);
       setKeyInput("");
       setShowSettings(false);
+      // Provider may have flipped now that a key is present.
+      refreshChatConfig();
     } catch (e) {
       alert(`Failed to save key: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -137,12 +147,20 @@ export default function AiAssistant({ activePage }: Props) {
   async function clearKey() {
     if (!confirm("Remove the saved Anthropic API key from the Keychain?")) return;
     setKeyStatus(await deleteApiKey());
+    refreshChatConfig();
   }
 
   function send() {
     const text = input.trim();
     if (!text || sending) return;
-    if (!keyStatus?.present) {
+    // Gate on the backend's resolved provider so the CLI-fallback path
+    // works when there's no API key but the local CLI is installed.
+    if (chatConfig && !chatConfig.usable) {
+      setShowSettings(true);
+      return;
+    }
+    if (!chatConfig && !keyStatus?.present) {
+      // Conservative fallback if config didn't load yet.
       setShowSettings(true);
       return;
     }
@@ -211,7 +229,10 @@ export default function AiAssistant({ activePage }: Props) {
     <div className="h-full flex flex-col font-mono">
       <header className="flex items-center gap-2 px-4 py-2 border-b border-divider bg-bg-sidebar">
         <span className="text-accent text-[11px] font-bold tracking-widest">AI ASSISTANT</span>
-        <span className="text-ink-dim text-[10px]">claude-opus-4-7</span>
+        <span className="text-ink-dim text-[10px]">
+          {chatConfig?.model ?? "claude-sonnet-4-6"}
+        </span>
+        <ProviderPill cfg={chatConfig} keyPresent={!!keyStatus?.present} />
         <span className="flex-1" />
         <span className="text-[10px] text-ink-dim" title="Session log entries Claude can see">
           ctx {eventCount}
@@ -227,6 +248,28 @@ export default function AiAssistant({ activePage }: Props) {
           title="Clear chat"
         >⎚</button>
       </header>
+
+      {chatConfig && !chatConfig.usable && (
+        <div className="border-b border-amber/40 bg-amber/10 px-4 py-2 text-[11px] text-amber flex items-center gap-2">
+          <span>⚠</span>
+          <span className="flex-1">
+            Chat is unusable.{" "}
+            {chatConfig.provider === "anthropic"
+              ? "Add an Anthropic API key in Settings."
+              : "Claude Code CLI not found — install it, or add an Anthropic API key in Settings."}
+          </span>
+          <button onClick={() => setShowSettings(true)}
+                  className="text-amber underline decoration-dotted">
+            Open Settings
+          </button>
+        </div>
+      )}
+      {chatConfig?.usable && chatConfig.provider === "claude-cli" && !keyStatus?.present && (
+        <div className="border-b border-divider bg-bg-base px-4 py-1.5 text-[10px] text-ink-dim">
+          Using local <code className="text-amber">claude</code> CLI (your Claude Code subscription).
+          Add an API key in Settings to use the SDK directly + avoid 5-hour rate limits.
+        </div>
+      )}
 
       {showSettings ? (
         <div className="flex-1 overflow-y-auto p-6 text-[12px] space-y-4 max-w-2xl">
@@ -455,4 +498,22 @@ async function streamChat(
   } finally {
     cb.onDone();
   }
+}
+
+function ProviderPill({ cfg, keyPresent }: { cfg: ChatConfig | null; keyPresent: boolean }) {
+  if (!cfg) return null;
+  const label = cfg.provider === "anthropic" ? "anthropic" : "cli";
+  const tone = cfg.usable
+    ? (cfg.provider === "anthropic" ? "border-phos/40 text-phos" : "border-amber/40 text-amber")
+    : "border-danger/40 text-danger";
+  const title = cfg.provider === "anthropic"
+    ? (keyPresent ? "Using Anthropic SDK directly with your API key." : "Anthropic provider selected but no API key — chat won't work.")
+    : (cfg.cli_present ? "Using local `claude` CLI (your Claude Code subscription). May rate-limit." : "claude CLI not found — chat won't work.");
+  return (
+    <span className={"inline-flex items-center gap-1 border rounded px-1.5 py-0.5 text-[9px] uppercase tracking-widest " + tone}
+          title={title}>
+      <span className={"inline-block w-1 h-1 rounded-full " + (cfg.usable ? "bg-current" : "bg-current opacity-50")} />
+      {label}
+    </span>
+  );
 }

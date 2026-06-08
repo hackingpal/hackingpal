@@ -11,20 +11,107 @@ import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Literal
 
 import anthropic
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from lib.auth import require_local_auth
+from lib.platform_util import app_data_dir
 from .settings import keychain_get
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-MODEL = "claude-opus-4-7"
+# ── Defaults + persisted chat settings ──────────────────────────────────────
+
+# Sonnet is the default — ~3-4× faster than Opus, plenty smart for explaining
+# scan output. Override via env var or the /chat/settings endpoint (which
+# writes chat_settings.json to the per-user app data dir).
+DEFAULT_MODEL = "claude-sonnet-4-6"
+ALLOWED_MODELS = (
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+)
+
+# System prompt lives in backend/prompts/assistant.md by default so it can be
+# edited without recompiling the sidecar. Override path via
+# MHP_CHAT_SYSTEM_PROMPT_FILE, or supply a raw prompt via MHP_CHAT_SYSTEM_PROMPT.
+def _default_prompts_dir() -> Path:
+    # Inside a PyInstaller bundle the prompts/ folder ships alongside the
+    # bundled modules at sys._MEIPASS. Outside the bundle (dev / pytest) the
+    # repo layout is backend/routers/chat.py + backend/prompts/.
+    import sys as _sys
+    meipass = getattr(_sys, "_MEIPASS", None)
+    if meipass:
+        return Path(meipass) / "prompts"
+    return Path(__file__).resolve().parent.parent / "prompts"
+
+
+_PROMPTS_DIR = _default_prompts_dir()
+DEFAULT_PROMPT_PATH = _PROMPTS_DIR / "assistant.md"
+
+
+def _settings_path() -> Path:
+    return app_data_dir() / "chat_settings.json"
+
+
+def _load_settings() -> dict[str, Any]:
+    p = _settings_path()
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        logger.exception("failed to read chat_settings.json")
+        return {}
+
+
+def _save_settings(data: dict[str, Any]) -> None:
+    _settings_path().write_text(json.dumps(data, indent=2))
+
+
+def resolve_model() -> str:
+    env = os.getenv("MHP_CHAT_MODEL", "").strip()
+    if env:
+        return env
+    stored = _load_settings().get("model")
+    if isinstance(stored, str) and stored.strip():
+        return stored.strip()
+    return DEFAULT_MODEL
+
+
+def _read_prompt_file(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except Exception:
+        logger.exception("failed to read prompt file %s", path)
+        return None
+
+
+def resolve_system_prompt() -> str:
+    raw = os.getenv("MHP_CHAT_SYSTEM_PROMPT", "").strip()
+    if raw:
+        return raw
+    path_env = os.getenv("MHP_CHAT_SYSTEM_PROMPT_FILE", "").strip()
+    if path_env:
+        loaded = _read_prompt_file(Path(path_env))
+        if loaded is not None:
+            return loaded
+        logger.warning("MHP_CHAT_SYSTEM_PROMPT_FILE %s unreadable; falling back", path_env)
+    loaded = _read_prompt_file(DEFAULT_PROMPT_PATH)
+    if loaded is not None:
+        return loaded
+    # Last-ditch fallback so the chat never crashes if the file goes missing.
+    return "You are the in-app assistant for MyHackingPal."
+
 
 # Provider selection.
 #
@@ -36,6 +123,11 @@ MODEL = "claude-opus-4-7"
 # configured AND the CLI is on PATH; anthropic otherwise.
 CLAUDE_BIN = os.getenv("MHP_CLAUDE_BIN", "claude")
 
+# CLI cold-start timeout (seconds). If the CLI produces no output by this point
+# we assume something's wrong (e.g. credit exhaustion, no network) and emit a
+# concrete error rather than letting the request hang forever.
+CLI_FIRST_BYTE_TIMEOUT_SEC = 90
+
 
 def _resolve_provider() -> str:
     override = os.getenv("MHP_AI_PROVIDER", "").strip().lower()
@@ -45,196 +137,6 @@ def _resolve_provider() -> str:
         return "claude-cli"
     return "anthropic"
 
-SYSTEM_PROMPT = """You are the in-app assistant for **MyHackingPal**, a macOS desktop \
-security toolkit. The user runs network and forensics tools through the app's UI; \
-your job is to explain what's happening in each tool category, interpret scan \
-results the user has just produced, and suggest next steps.
-
-# Tool categories (what each one does)
-
-- **DISCOVERY** — LAN Scan (ARP sweep of local subnet), IP Checker (geo/ASN/DNSBL \
-lookup), DNS Recon (records + zone-transfer probe + subdomain brute), WHOIS/ASN, \
-Local Discovery (mDNS/SSDP/LLMNR sniffing), Ping.
-- **RECON** — Port Scanner (TCP connect scan), Nmap (full nmap surface, 600+ NSE \
-scripts), Network Audit (LAN scan + per-host risk grading), TLS Auditor \
-(cert/protocols/HSTS), Fingerprint (banner-grab service identification), HTTP Probe \
-(content-discovery brute), TCPDump (live packet capture).
-- **OSINT** — CT Logs (Certificate Transparency search for subdomains), Email Sec \
-(SPF/DMARC/DKIM/BIMI/MTA-STS audit), Takeover (subdomain-takeover signature check), \
-Reverse IP (other domains on the same IP), Breach Lookup (HIBP k-anonymity \
-password check — free — + email-breach lookup if a paid HIBP key is configured), \
-Google Dorking (generate site:/inurl:/filetype: dorks across categories — \
-optionally executed via Google CSE), GitHub Leak Scanner (search public code \
-for credentials + secrets referencing a target — needs GitHub token for higher \
-rate limits), Shodan · Censys (query both internet-scanning services with their \
-native syntax, results normalized), People · Email Enum (aggregator across \
-DuckDuckGo / crt.sh / HackerTarget / Hunter.io with email-format pattern \
-inference).
-- **WEB RECON** — Subdomain Enum (aggregator over crt.sh / HackerTarget / OTX / \
-RapidDNS, plus SecurityTrails / VirusTotal / Shodan when API keys are configured), \
-CMS/Stack (Wappalyzer-style fingerprint), JWT (decode + weak-secret check), \
-GraphQL (introspection enumeration).
-- **WEB EXPLOIT** — Active testing tools, all gated on user authorization + RFC1918 \
-opt-in. Each takes a request template with a `FUZZ` marker for payload substitution:
-  - **XSS** — reflected XSS with context-aware payloads (HTML body, attribute, JS \
-string, URL); confirmed = payload reflected unescaped in executable context.
-  - **SQL Injection** — error / boolean / time / union detection across MySQL, \
-PostgreSQL, MSSQL, SQLite, Oracle. On confirm, extracts DBMS version.
-  - **Command Injection** — time-based (`; sleep 5` and variants) + output-based \
-(`; id`, `; whoami`); supports Unix and Windows. On confirm, reads /etc/passwd.
-  - **LFI / Path Traversal** — `../` traversal, encoded variants, absolute paths, \
-PHP wrappers (`php://filter/convert.base64-encode`), `/proc/self/environ`. Detects \
-via `/etc/passwd` signature, base64-PHP decode. Exploit: pull shadow / hosts / env.
-  - **SSRF** — internal-IP variants (loopback, dec/hex/octal IPv4) and cloud IMDS \
-(AWS, Azure with `Metadata: true`, GCP with `Metadata-Flavor: Google`), plus \
-file:// and gopher://. Exploit: full IMDS dump including credentials.
-  - **IDOR** — iterates IDs through a URL marker, comparing one OWNER auth profile \
-against one or more ATTACKER profiles per-ID. Flags rows where attacker gets a \
-near-identical response (within 10% length).
-- **CLOUD** — Three full-recon tools (AWS, Azure, GCP) that audit the user's \
-own accounts read-only via the native SDKs (boto3 / azure-identity / \
-google-auth — each reads from `aws configure`, `az login`, or \
-`gcloud auth application-default login` respectively). They flag common \
-misconfigurations: AWS IAM stale-keys + missing-MFA + admin roles, S3 \
-public-access, EC2 public IPs + 0.0.0.0/0 SGs, Lambda env vars with secret \
-names, RDS public-accessible; Azure storage allow-public-blob + non-HTTPS + \
-NSG rules from Internet + Key-Vault default-allow; GCP IAM allUsers / \
-allAuthenticatedUsers, storage IAM public, Compute public IPs + default \
-SAs + firewall 0.0.0.0/0. Also: IMDS Tester (focused AWS / Azure / GCP \
-metadata probe through an SSRF sink) and S3 Bucket Scanner (permutation-based \
-public bucket discovery, flags listable vs private vs missing).
-- **WIRELESS** — WiFi Scan (passive CoreWLAN scan of nearby networks — flag: \
-on macOS Sequoia, SSID/BSSID are masked unless the app has Location Services \
-permission), Evil Twin Detector (repeated scans + correlation, flags duplicate \
-SSIDs with different security/OUI/channel/intermittent visibility), Bluetooth \
-Recon (paired / connected / recent devices via `system_profiler` — addresses, \
-manufacturers, services, battery, RSSI), WPA Handshake / PMKID (wrapper around \
-aircrack-ng / hcxdumptool — macOS removed monitor-mode from the internal card, \
-this is here for users with an external USB adapter on a Linux VM).
-- Also in **OSINT**: Profile Finder — discovers LinkedIn / GitHub / X profiles \
-via Google dorks (no LinkedIn API hits), cross-references with the People \
-Aggregator pattern to suggest predicted emails per discovered name.
-- More **OSINT** additions: **Email Harvest** (aggregates emails from crt.sh \
-SANs + live mailto scraping + Hunter.io if a key is configured); **Wayback URLs** \
-(pulls historical URLs from the Internet Archive CDX index, buckets interesting/ \
-JS/API/all + diffs recent vs. 6-month-old to surface forgotten endpoints); \
-**URLScan** (search-only against urlscan.io's public history — never submits, \
-which would expose target on a public feed); **Dork Generator** (builds Google / \
-Bing / DuckDuckGo dork strings across categories — open in user's own browser \
-to avoid triggering anti-bot on shared Google sessions); **Shodan InternetDB** \
-(free no-auth /shodan/host/{ip} for open ports + CVEs + hostnames + tags + CPEs, \
-cached 1h to avoid hammering the API during /24 enrichment passes).
-- **ACTIVE DIRECTORY** — LDAP Enumerator (users / groups / DCs / password policy \
-/ GPOs / SPNs / Domain Admins — flags PASSWD_NOTREQD, DONT_REQUIRE_PREAUTH, and \
-accounts with SPNs as Kerberoastable hints), SMB Enumerator (shares + read-access \
-probe + logged-in users via Impacket — supports null sessions and \
-pass-the-hash), Password Sprayer (LDAP NTLM bind; reads lockoutThreshold up-front \
-and stops at threshold-1 to avoid lockouts), Kerberos Roasting (Kerberoasting \
-mode 13100 via GetUserSPNs + AS-REP Roasting mode 18200 — outputs hashcat-ready \
-strings), BloodHound Ingestor (runs the bloodhound.py SharpHound-equivalent \
-collection, produces a ZIP of JSON files the user imports into their own \
-BloodHound instance — Neo4j not bundled), Lateral Movement Planner (upload \
-BloodHound JSON ZIP, computes shortest attack paths to Domain Admins via BFS \
-across MemberOf / AdminTo / GenericAll / DCSync / ForceChangePassword and other \
-edges — plus a static technique reference for each edge type).
-- **Exploits · SearchSploit** (in RED TEAM) — search ExploitDB locally via \
-the searchsploit binary, falls back to the public exploit-db.com API when \
-searchsploit isn't installed. Per-platform install hints (brew / apt / choco). \
-Port Scanner enrichment: pass scan rows to `POST /exploits/search-from-scan` to \
-get a `{port: [exploits...]}` map keyed off service+version.
-- **Nmap NSE Script Picker** (in the Nmap page) — three tabs: \
-**Presets** (curated recipes: quick_vuln, web_enum, auth_check, full_recon, \
-smb_enum, ssl_audit, each with a risk badge), **Categories** (accordion \
-across all NSE categories with per-script checkboxes + search), **Custom** \
-(raw --script and --script-args). All three feed into the same live command \
-preview and emit an intrusive-script warning banner when triggered.
-- **Subdomain Permutation Engine** (Phase 2 of Subdomain Enum) — after the \
-external sources settle, mutates discovered labels with prefix/env/number/ \
-common-suffix wordlists and resolves each via DNS. Bounded to ~3000 candidates \
-with a 32-concurrent semaphore on the resolver. Streams as `permutation_found` \
-events.
-- **RED TEAM** — Reverse Shell builder/listener; Payload Obfuscator (chainable \
-client-side transforms: base64, hex, URL-encode, XOR, PowerShell -enc, JS \
-eval-concat, etc — purely local, useful for naive-WAF / signature bypass); \
-Pivoting Helper (SSH tunnel / SOCKS / sshuttle / autossh command builder with \
-ASCII diagrams); Credential Harvester (read-only audit of local credential \
-stores — aws/credentials, ~/.ssh, ~/.netrc, ~/.docker/config.json, ~/.gitconfig, \
-~/.npmrc, .env files — flags world-readable private keys and token-shaped \
-strings in plaintext, redacts secrets); C2 Beacon Simulator (spin up egress-test \
-listeners on chosen ports — gives beacon one-liners + live callback log to \
-confirm your firewall blocks what you assume it does).
-- **ENGAGEMENT** — Named container for a piece of work. Scope + exclusions + \
-notes are tracked per engagement. When one is **active** (pill in the top bar), \
-every scan result auto-records into it. The **Findings** page tracks promoted \
-issues with severity (critical/high/medium/low/info), CVSS, description, \
-evidence, and status (open/triaged/fixed/wont_fix). Screenshots can be \
-attached to findings (drag-drop or paste) — they embed inline in the report. \
-The user can export a per-engagement HTML or Markdown report, and also push \
-findings to a GitHub repo as issues (severity-labeled, one issue per finding). \
-When the user asks "what should I track as a finding" or "promote this to a \
-finding", help them pick a severity, write a tight title, and quote the \
-relevant evidence from the scan log.
-- **CRYPTO** — Hash Cracker (identify + dictionary attack against fast/slow hashes), \
-CVSS Calculator (CVSS v3.1 Base score from metric pickers or a vector string — \
-populates the cvss field in the Findings editor).
-- **MONITORING** — IDS (lightweight host-IDS: new listening ports, failed-auth \
-events).
-- **FORENSICS** — Persistence (LaunchAgents/LaunchDaemons audit with codesign), \
-Processes (running processes + listeners + signature status), Steganography \
-(LSB embed/extract, chi-square analysis, AES-GCM), macOS Posture (SIP / Gatekeeper \
-/ FileVault / firewall / XProtect).
-- **UTILITIES** — WiFi Integrity (SSID/BSSID/gateway sanity check), VPN Manager \
-(WireGuard wg0), Terminal (one-shot shell exec), Brew (homebrew search/install).
-- **PLAYBOOKS** — Composable presets that chain multiple tools into one run \
-against a single target. Two schemas:
-  - **v1 (legacy)**: flat `steps` array. Six built-ins ship with v0.3.0 \
-(`quick_win`, `passive_recon_domain`, `local_posture_macos`, `local_posture_linux`, \
-`surface_inventory`, `web_app_first_look`).
-  - **v2 (phased)**: `phases` array with feed-forward (`{phase_N.step_id.key}` \
-templates), per-step `condition` evaluation, per-phase `rate_limit`, finding \
-auto-promotion from step results, and `stop_on_critical` pause/resume.
-Built-in v2 playbooks (1.0):
-  1. **full_external_red_team** — domain target, 6 phases, ~45-90 min, high risk. \
-Passive intel → DNS recon → surface mapping → vuln discovery → web exploit → report.
-  2. **full_internal_network** — CIDR target, 6 phases, ~60-120 min, critical. \
-Discovery → service enum → AD enum → credential attacks → persistence hunt → report.
-  3. **web_app_full_assessment** — URL target, 7 phases, ~30-60 min, high. \
-Footprint → auth recon → content discovery → input validation → access control → \
-infrastructure → report.
-  4. **active_directory_kill_chain** — IP target, 6 phases, ~45-90 min, critical. \
-Network position → unauth enum → cred capture → authed enum → priv esc → report.
-  5. **cloud_aws_assessment** — domain target, 5 phases, ~30-60 min, high. \
-External recon → IMDS abuse → service enum → misconfig analysis → report.
-  6. **wifi_physical_assessment** — org target, 4 phases, ~30-60 min, high. \
-Passive survey → active wifi → post-connect → report.
-  7. **phishing_campaign_recon** — org target, 5 phases, ~20-40 min, medium. \
-Org mapping → mail infra → delivery surface → pretext intel → report. No active sending.
-  8. **container_kubernetes_escape** — IP target, 5 phases, ~20-40 min, critical. \
-Container fingerprint → cluster network recon → escape attempts → cluster enum → report.
-  9. **bug_bounty_stealth** — domain target, 4 phases, ~20-30 min, low. \
-Pure passive → careful active → in-scope testing → bounty-style report.
-  10. **compromise_assessment** — IP target, 5 phases, ~20-40 min, low. \
-Host integrity → network integrity → credential exposure → external exposure → IOC \
-summary. Lab-mode-friendly defensive sweep — checks your own posture.
-Every playbook requires the engagement-first auth checkbox before running and runs \
-under the active engagement's scope.
-
-# How to answer
-
-- When the user asks "what does this mean" and you can see relevant tool output \
-in the session log, interpret it concretely — call out specific ports, findings, \
-severities, and what they imply.
-- Severities you'll see: `clean`/`info`/`warn`/`high` (or sometimes `low`/`medium`/\
-`critical`). Treat `warn`/`medium` and above as worth surfacing.
-- Be direct and technically dense — the user is doing security work, not learning \
-networking from scratch. No fluff, no disclaimers about "consult a professional".
-- If asked about a category in the abstract (no recent results), explain what \
-the tools in that category do and what kinds of findings to expect.
-- If the session log is empty, say so and offer to explain whichever tool the \
-user is looking at.
-- Format with markdown — short paragraphs, bullet lists, inline code for ports/\
-flags/hostnames. No giant tables unless asked.
-"""
 
 
 class ChatMessage(BaseModel):
@@ -281,12 +183,72 @@ def chat_config() -> dict[str, Any]:
     provider = _resolve_provider()
     return {
         "key_present": key_present,
-        "model": MODEL,
+        "model": resolve_model(),
         "provider": provider,
         "cli_present": cli_present,
         "usable": (provider == "anthropic" and key_present)
                   or (provider == "claude-cli" and cli_present),
     }
+
+
+# ── Persisted settings endpoints ────────────────────────────────────────────
+
+
+class ChatSettings(BaseModel):
+    model: str
+    available_models: list[str]
+    system_prompt: str
+    system_prompt_path: str | None
+    system_prompt_editable: bool
+
+
+class ChatSettingsUpdate(BaseModel):
+    model: str | None = Field(default=None)
+    system_prompt: str | None = Field(default=None)
+
+
+def _system_prompt_path_for_settings() -> Path | None:
+    raw = os.getenv("MHP_CHAT_SYSTEM_PROMPT", "").strip()
+    if raw:
+        return None
+    path_env = os.getenv("MHP_CHAT_SYSTEM_PROMPT_FILE", "").strip()
+    if path_env:
+        return Path(path_env)
+    return DEFAULT_PROMPT_PATH
+
+
+@router.get("/settings", response_model=ChatSettings, dependencies=[Depends(require_local_auth)])
+def get_chat_settings() -> ChatSettings:
+    path = _system_prompt_path_for_settings()
+    return ChatSettings(
+        model=resolve_model(),
+        available_models=list(ALLOWED_MODELS),
+        system_prompt=resolve_system_prompt(),
+        system_prompt_path=str(path) if path else None,
+        # Editable when we have a real file path (not the raw env var case).
+        system_prompt_editable=path is not None,
+    )
+
+
+@router.put("/settings", response_model=ChatSettings, dependencies=[Depends(require_local_auth)])
+def update_chat_settings(body: ChatSettingsUpdate) -> ChatSettings:
+    if body.model is not None:
+        if body.model not in ALLOWED_MODELS:
+            raise HTTPException(400, f"Model must be one of {ALLOWED_MODELS}")
+        settings = _load_settings()
+        settings["model"] = body.model
+        _save_settings(settings)
+    if body.system_prompt is not None:
+        path = _system_prompt_path_for_settings()
+        if path is None:
+            raise HTTPException(
+                400,
+                "System prompt is locked because MHP_CHAT_SYSTEM_PROMPT env var is set.",
+            )
+        # Ensure parent dir exists before write.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.system_prompt, encoding="utf-8")
+    return get_chat_settings()
 
 
 @router.post("/stream")
@@ -321,17 +283,20 @@ def _stream_via_anthropic(req: ChatRequest) -> StreamingResponse:
         else:
             api_messages.append({"role": m.role, "content": m.content})
 
+    model_name = resolve_model()
+    system_prompt = resolve_system_prompt()
+
     def gen():
         try:
             with client.messages.stream(
-                model=MODEL,
+                model=model_name,
                 max_tokens=4096,
                 # Adaptive thinking with summarized display so a "thinking…"
                 # state can show on long answers without surfacing raw CoT.
                 thinking={"type": "adaptive", "display": "summarized"},
                 system=[{
                     "type": "text",
-                    "text": SYSTEM_PROMPT,
+                    "text": system_prompt,
                     "cache_control": {"type": "ephemeral"},
                 }],
                 messages=api_messages,
@@ -427,11 +392,12 @@ def _render_conversation(req: ChatRequest) -> str:
 
 def _stream_via_cli(req: ChatRequest) -> StreamingResponse:
     prompt = _render_conversation(req)
+    system_prompt = resolve_system_prompt()
 
     cmd = [
         CLAUDE_BIN,
         "-p",
-        "--system-prompt", SYSTEM_PROMPT,
+        "--system-prompt", system_prompt,
         "--tools", "",
         "--no-session-persistence",
         "--output-format", "stream-json",
@@ -440,6 +406,8 @@ def _stream_via_cli(req: ChatRequest) -> StreamingResponse:
     ]
 
     def gen():
+        import selectors
+        import time
         proc = None
         try:
             proc = subprocess.Popen(
@@ -458,40 +426,99 @@ def _stream_via_cli(req: ChatRequest) -> StreamingResponse:
             input_tokens = 0
             output_tokens = 0
             stop_reason = "end_turn"
+            credits_blocked = False  # set true if CLI emits an "out_of_credits"
+            rate_limited_msg: str | None = None
 
             assert proc.stdout is not None
-            for raw_line in proc.stdout:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    evt = json.loads(line)
-                except json.JSONDecodeError:
+
+            # Drain stdout via selector so we can apply a first-byte timeout.
+            # Once anything has streamed, the original line-loop behavior is fine.
+            sel = selectors.DefaultSelector()
+            sel.register(proc.stdout, selectors.EVENT_READ)
+            first_byte_seen = False
+            t0 = time.monotonic()
+            buffer = ""
+
+            while True:
+                events = sel.select(timeout=2.0)
+                if not events:
+                    if proc.poll() is not None:
+                        # Process exited without producing more output.
+                        break
+                    if not first_byte_seen and (time.monotonic() - t0) > CLI_FIRST_BYTE_TIMEOUT_SEC:
+                        try: proc.kill()
+                        except Exception: pass
+                        yield sse_event({
+                            "type": "error",
+                            "detail": (
+                                f"claude CLI gave no output in {CLI_FIRST_BYTE_TIMEOUT_SEC}s. "
+                                "Likely out of Claude Code credits — add an Anthropic API "
+                                "key in Settings to use the SDK directly."
+                            ),
+                        })
+                        return
                     continue
 
-                etype = evt.get("type")
-                if etype == "stream_event":
-                    inner = evt.get("event", {}) or {}
-                    if inner.get("type") == "content_block_delta":
-                        delta = inner.get("delta", {}) or {}
-                        if delta.get("type") == "text_delta":
-                            text = delta.get("text", "")
-                            if text:
-                                if not text_started:
-                                    yield sse_event({"type": "text_start"})
-                                    text_started = True
-                                yield sse_event({
-                                    "type": "text_delta",
-                                    "text": text,
-                                })
-                elif etype == "result":
-                    usage = evt.get("usage", {}) or {}
-                    input_tokens = int(usage.get("input_tokens", 0) or 0)
-                    output_tokens = int(usage.get("output_tokens", 0) or 0)
-                    if evt.get("subtype") and evt["subtype"] != "success":
-                        stop_reason = str(evt["subtype"])
+                chunk = proc.stdout.read1() if hasattr(proc.stdout, "read1") else proc.stdout.readline()
+                if not chunk:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                first_byte_seen = True
+                buffer += chunk
+                while "\n" in buffer:
+                    raw_line, buffer = buffer.split("\n", 1)
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        evt = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    etype = evt.get("type")
+                    if etype == "stream_event":
+                        inner = evt.get("event", {}) or {}
+                        if inner.get("type") == "content_block_delta":
+                            delta = inner.get("delta", {}) or {}
+                            if delta.get("type") == "text_delta":
+                                text = delta.get("text", "")
+                                if text:
+                                    if not text_started:
+                                        yield sse_event({"type": "text_start"})
+                                        text_started = True
+                                    yield sse_event({
+                                        "type": "text_delta",
+                                        "text": text,
+                                    })
+                    elif etype == "result":
+                        usage = evt.get("usage", {}) or {}
+                        input_tokens = int(usage.get("input_tokens", 0) or 0)
+                        output_tokens = int(usage.get("output_tokens", 0) or 0)
+                        if evt.get("subtype") and evt["subtype"] != "success":
+                            stop_reason = str(evt["subtype"])
+                    elif etype == "rate_limit_event":
+                        info = evt.get("rate_limit_info", {}) or {}
+                        # CLI's stream-json emits this even on success ("status":"allowed").
+                        # We only flag it as a hard error when the user is *blocked* —
+                        # i.e. overage rejected because of exhausted credits.
+                        overage = (info.get("overageStatus") or "").lower()
+                        reason = (info.get("overageDisabledReason") or "").lower()
+                        status = (info.get("status") or "").lower()
+                        if status == "blocked" or reason == "out_of_credits":
+                            credits_blocked = True
+                            rate_limited_msg = (
+                                "Claude Code subscription is out of credits "
+                                f"(reset {info.get('resetsAt')}). "
+                                "Add an Anthropic API key in Settings to use the SDK directly."
+                            )
 
             rc = proc.wait()
+            if credits_blocked and not text_started:
+                yield sse_event({"type": "error",
+                                 "detail": rate_limited_msg
+                                           or "Claude Code subscription is out of credits."})
+                return
             if rc != 0:
                 err = (proc.stderr.read() if proc.stderr else "")[:500]
                 logger.warning("claude CLI exited %d: %s", rc, err)

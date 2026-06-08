@@ -19,6 +19,11 @@ _optional_datas = []
 if os.path.exists("wordlists/rockyou.txt.gz"):
     _optional_datas.append(("wordlists/rockyou.txt.gz", "wordlists"))
 
+# Assistant system prompt — chat router loads from backend/prompts/assistant.md
+# at runtime. Must be bundled or the prod sidecar falls back to a stub prompt.
+if os.path.exists("prompts/assistant.md"):
+    _optional_datas.append(("prompts/assistant.md", "prompts"))
+
 hiddenimports = [
     # uvicorn runtime — pulled in dynamically by uvicorn.run()
     "uvicorn.lifespan.on",

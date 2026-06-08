@@ -334,8 +334,32 @@ export const deleteNamedKey = (name: string) =>
     method: "DELETE",
   });
 
-export const fetchChatConfig = () =>
-  api<{ key_present: boolean; model: string }>("/chat/config");
+export type ChatConfig = {
+  key_present: boolean;
+  model: string;
+  provider: "anthropic" | "claude-cli";
+  cli_present: boolean;
+  usable: boolean;
+};
+
+export const fetchChatConfig = () => api<ChatConfig>("/chat/config");
+
+export type ChatSettings = {
+  model: string;
+  available_models: string[];
+  system_prompt: string;
+  system_prompt_path: string | null;
+  system_prompt_editable: boolean;
+};
+
+export const fetchChatSettings = () => api<ChatSettings>("/chat/settings");
+
+export const updateChatSettings = (body: { model?: string; system_prompt?: string }) =>
+  api<ChatSettings>("/chat/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 export type DnsblEntry = { name: string; status: string; listed: boolean };
 

@@ -23,9 +23,11 @@ import {
   deleteApiKey, deleteNamedKey,
   fetchApiKeyStatus, fetchNamedKeys, fetchSystemInfo,
   fetchTcpdumpStatus, fetchNmapStatus,
+  fetchChatSettings, updateChatSettings,
   setApiKey, setNamedKey,
   type ApiKeyStatus, type NamedKeyStatus,
   type SystemInfo, type TcpdumpStatus, type NmapStatus,
+  type ChatSettings,
 } from "../api";
 import { useTheme } from "../lib/theme";
 import { setMode, useMode } from "../lib/mode";
@@ -56,6 +58,7 @@ export default function Settings({ onJumpTo }: Props) {
       <div className="p-6 space-y-6 max-w-3xl">
         <SystemSection />
         <AnthropicKeySection />
+        <AssistantSection />
         <NamedKeysSection />
         <PrivilegedToolsSection />
         <ModeSection onJumpTo={onJumpTo} />
@@ -186,6 +189,178 @@ function AnthropicKeySection() {
         </div>
       )}
       {error && <div className="mt-2 text-[11px] text-danger">⚠ {error}</div>}
+    </Section>
+  );
+}
+
+// ── Assistant (model + system prompt) ──────────────────────────────────────
+
+const MODEL_LABELS: Record<string, { label: string; hint: string }> = {
+  "claude-opus-4-7": {
+    label: "Opus 4.7",
+    hint: "Smartest, slowest, most expensive.",
+  },
+  "claude-sonnet-4-6": {
+    label: "Sonnet 4.6",
+    hint: "Recommended default — fast + plenty smart for explaining scans.",
+  },
+  "claude-haiku-4-5-20251001": {
+    label: "Haiku 4.5",
+    hint: "Fastest + cheapest. Weaker on multi-step reasoning.",
+  },
+};
+
+function AssistantSection() {
+  const [settings, setSettings] = useState<ChatSettings | null>(null);
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [savedFlash, setSavedFlash] = useState("");
+
+  const refresh = useCallback(async () => {
+    try {
+      const s = await fetchChatSettings();
+      setSettings(s);
+      setPrompt(s.system_prompt);
+      setError("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  async function pickModel(m: string) {
+    setBusy(true); setError("");
+    try {
+      const updated = await updateChatSettings({ model: m });
+      setSettings(updated);
+      setSavedFlash("Model updated.");
+      window.setTimeout(() => setSavedFlash(""), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePrompt() {
+    setBusy(true); setError("");
+    try {
+      const updated = await updateChatSettings({ system_prompt: prompt });
+      setSettings(updated);
+      setSavedFlash("System prompt saved.");
+      window.setTimeout(() => setSavedFlash(""), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function resetPrompt() {
+    if (settings) setPrompt(settings.system_prompt);
+  }
+
+  if (!settings) {
+    return (
+      <Section title="Assistant" hint="Model + system prompt for the in-app AI chat.">
+        <div className="text-[11px] text-ink-dim">Loading…</div>
+      </Section>
+    );
+  }
+
+  const dirty = settings.system_prompt !== prompt;
+
+  return (
+    <Section title="Assistant" hint="Model + system prompt for the in-app AI chat.">
+      <div className="space-y-4">
+        <div>
+          <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-1.5">
+            Model
+          </div>
+          <div className="flex flex-col gap-1.5">
+            {settings.available_models.map((m) => {
+              const meta = MODEL_LABELS[m] ?? { label: m, hint: "" };
+              const active = settings.model === m;
+              return (
+                <label key={m}
+                       className={"flex items-start gap-2 px-2.5 py-2 rounded border cursor-pointer transition " +
+                         (active
+                           ? "border-accent/60 bg-accent/10"
+                           : "border-divider bg-bg-card hover:border-ink-muted")}>
+                  <input type="radio" checked={active}
+                         disabled={busy}
+                         onChange={() => void pickModel(m)}
+                         className="mt-0.5" />
+                  <div className="flex-1">
+                    <div className="text-[12px] font-bold text-ink-primary">
+                      {meta.label}
+                      <span className="ml-2 font-mono font-normal text-[10px] text-ink-dim">{m}</span>
+                    </div>
+                    {meta.hint && (
+                      <div className="text-[10px] text-ink-muted mt-0.5">{meta.hint}</div>
+                    )}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className="text-[10px] uppercase tracking-widest text-ink-dim">
+              System prompt
+            </span>
+            {settings.system_prompt_path && (
+              <span className="text-[10px] font-mono text-ink-dim truncate">
+                {settings.system_prompt_path}
+              </span>
+            )}
+          </div>
+          {settings.system_prompt_editable ? (
+            <>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                rows={10}
+                disabled={busy}
+                spellCheck={false}
+                className="w-full bg-bg-base border border-divider rounded
+                           px-2.5 py-2 text-[11px] font-mono text-ink-primary
+                           focus:outline-none focus:border-accent resize-y"
+              />
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={savePrompt}
+                        disabled={busy || !dirty}
+                        className="px-3 py-1.5 rounded bg-accent text-white text-[11px] font-bold
+                                   disabled:opacity-40 disabled:cursor-not-allowed">
+                  {busy ? "Saving…" : "Save prompt"}
+                </button>
+                <button onClick={resetPrompt}
+                        disabled={busy || !dirty}
+                        className="px-3 py-1.5 rounded bg-bg-base border border-divider
+                                   text-[11px] text-ink-muted hover:text-ink-primary
+                                   disabled:opacity-40">
+                  Revert
+                </button>
+                <span className="ml-auto text-[10px] text-ink-dim">
+                  {prompt.length.toLocaleString()} chars
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="text-[11px] text-amber bg-amber/10 border border-amber/30 rounded p-2">
+              System prompt is read-only — <code>MHP_CHAT_SYSTEM_PROMPT</code> env var is set,
+              which overrides the file.
+            </div>
+          )}
+        </div>
+
+        {savedFlash && <div className="text-[11px] text-phos">{savedFlash}</div>}
+        {error && <div className="text-[11px] text-danger">⚠ {error}</div>}
+      </div>
     </Section>
   );
 }
