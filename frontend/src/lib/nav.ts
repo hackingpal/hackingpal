@@ -26,6 +26,7 @@ export const TOP_NAV: NavItem[] = [
   { id: "engagements", label: "Engagements"  },
   { id: "targets",     label: "Targets"      },
   { id: "playbooks",   label: "Playbooks"    },
+  { id: "labs",        label: "Labs"         },
   { id: "tools",       label: "Tool Library" },
   { id: "evidence",    label: "Evidence"     },
   { id: "findings",    label: "Findings"     },

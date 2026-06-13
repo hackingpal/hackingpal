@@ -31,7 +31,7 @@ from routers import (
     dns_recon, dorking, email_harvest, email_security, engagements, evil_twin,
     exploits, fingerprint, gcp_recon, github_leak, graphql, hash_cracker,
     http_probe, ids, idor, imds, ip_checker, jwt_analyzer, kerberos_roast,
-    lan_scan, lateral, ldap_enum, lfi, local_discovery, linux_posture,
+    labs, lan_scan, lateral, ldap_enum, lfi, local_discovery, linux_posture,
     macos_posture, nmap, people_enum, persistence, ping, port_scanner,
     presets, processes, profile_finder, reverse_ip, reverse_shell, s3_scanner,
     scope, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
@@ -125,6 +125,7 @@ app.include_router(wifi.router)
 app.include_router(vpn.router)
 app.include_router(terminal.router)
 app.include_router(brew.router)
+app.include_router(labs.router)
 app.include_router(persistence.router)
 app.include_router(processes.router)
 app.include_router(stego.router)

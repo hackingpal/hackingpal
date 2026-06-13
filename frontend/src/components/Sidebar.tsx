@@ -25,7 +25,7 @@ function BrandMark() {
 
 export type NavId =
   | "home" | "targets" | "tools" | "evidence" | "reports" | "assistant"
-  | "playbooks"
+  | "playbooks" | "labs"
   | "dashboard" | "engagements" | "findings"
   | "lan" | "ip" | "ping" | "dns" | "whois" | "localdisco"
   | "ports" | "nmap" | "audit" | "tcpdump" | "tls" | "fingerprint" | "http"

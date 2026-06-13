@@ -4,6 +4,7 @@ import RequestForm, { initialRequestState, requestToInit, type RequestState }
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import AttackResults, { type Attempt, type Finding }
   from "../components/webattack/AttackResults";
+import { useLabIntent } from "../lib/labIntent";
 
 type Mode = "time" | "output";
 
@@ -19,7 +20,10 @@ type CmdiEvent =
   | { type: "error"; detail: string };
 
 export default function Cmdi() {
-  const [req, setReq] = useState<RequestState>(initialRequestState);
+  const intent = useLabIntent("cmdi");
+  const [req, setReq] = useState<RequestState>(
+    intent?.target ? { ...initialRequestState, url: intent.target } : initialRequestState,
+  );
   const [modes, setModes] = useState<Set<Mode>>(new Set(["time", "output"]));
   const [exploit, setExploit] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);

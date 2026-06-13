@@ -8,6 +8,7 @@ import {
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
+import { useLabIntent } from "../lib/labIntent";
 
 // ── Profile presets (partial overrides applied on top of `defaultOptions()`) ──
 
@@ -147,7 +148,10 @@ type AdvancedTab = "discovery" | "scantype" | "ports" | "service" | "os"
 type ResultsTab = "hosts" | "ports" | "scripts" | "raw";
 
 export default function Nmap() {
-  const [targetsText, setTargetsText] = useState("127.0.0.1\n");
+  const intent = useLabIntent("nmap");
+  const [targetsText, setTargetsText] = useState(
+    intent?.target ? `${intent.target}\n` : "127.0.0.1\n",
+  );
   const [excludeText, setExcludeText] = useState("");
   const [opts, setOpts] = useState<NmapOptions>(() => defaultOptions());
   const [activeProfile, setActiveProfile] = useState<string>("");

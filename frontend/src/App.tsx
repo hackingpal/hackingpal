@@ -50,6 +50,7 @@ import Engagements from "./pages/Engagements";
 import EngagementDashboard from "./pages/EngagementDashboard";
 import Findings from "./pages/Findings";
 import Presets from "./pages/Presets";
+import Labs from "./pages/Labs";
 import CvssCalculator from "./pages/CvssCalculator";
 import Obfuscator from "./pages/Obfuscator";
 import Imds from "./pages/Imds";
@@ -288,6 +289,7 @@ export default function App() {
            active === "assistant"   ? <AiAssistant activePage={active} /> :
            active === "findings"    ? <Findings /> :
            active === "playbooks"   ? <Presets /> :
+           active === "labs"        ? <Labs onJumpTo={setActive} /> :
            active === "ip"          ? <IpChecker /> :
            active === "dns"         ? <DnsRecon /> :
            active === "whois"       ? <Whois /> :

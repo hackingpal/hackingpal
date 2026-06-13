@@ -4,6 +4,7 @@ import RequestForm, { initialRequestState, requestToInit, type RequestState }
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import AttackResults, { type Attempt, type Finding }
   from "../components/webattack/AttackResults";
+import { useLabIntent } from "../lib/labIntent";
 
 type LfiEvent =
   | { type: "started"; url: string; total_payloads: number }
@@ -16,7 +17,10 @@ type LfiEvent =
   | { type: "error"; detail: string };
 
 export default function Lfi() {
-  const [req, setReq] = useState<RequestState>(initialRequestState);
+  const intent = useLabIntent("lfi");
+  const [req, setReq] = useState<RequestState>(
+    intent?.target ? { ...initialRequestState, url: intent.target } : initialRequestState,
+  );
   const [exploit, setExploit] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);

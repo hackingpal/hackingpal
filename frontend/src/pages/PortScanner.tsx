@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
 import ScopeBanner from "../components/ScopeBanner";
 import { useActiveEngagementId } from "../lib/engagement";
+import { useLabIntent } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
@@ -20,8 +21,9 @@ const PRESETS: { label: string; spec: string; hint: string }[] = [
 
 export default function PortScanner() {
   const engagementId = useActiveEngagementId();
-  const [target,  setTarget]  = useState("127.0.0.1");
-  const [ports,   setPorts]   = useState("1-1024");
+  const intent = useLabIntent("ports");
+  const [target,  setTarget]  = useState(intent?.target ?? "127.0.0.1");
+  const [ports,   setPorts]   = useState(intent?.ports  ?? "1-1024");
   const [threads, setThreads] = useState(100);
   const [timeout, setTimeout] = useState(1.0);
   // Sticky bit so a user who accepted a warn-level scope verdict and clicked

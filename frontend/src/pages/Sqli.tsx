@@ -4,6 +4,7 @@ import RequestForm, { initialRequestState, requestToInit, type RequestState }
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import AttackResults, { type Attempt, type Finding }
   from "../components/webattack/AttackResults";
+import { useLabIntent } from "../lib/labIntent";
 
 type Method = "error" | "boolean" | "time" | "union";
 
@@ -19,7 +20,10 @@ type SqliEvent =
   | { type: "error"; detail: string };
 
 export default function Sqli() {
-  const [req, setReq] = useState<RequestState>(initialRequestState);
+  const intent = useLabIntent("sqli");
+  const [req, setReq] = useState<RequestState>(
+    intent?.target ? { ...initialRequestState, url: intent.target } : initialRequestState,
+  );
   const [methods, setMethods] = useState<Set<Method>>(new Set(["error", "boolean", "time"]));
   const [exploit, setExploit] = useState(false);
   const [attempts, setAttempts] = useState<Attempt[]>([]);

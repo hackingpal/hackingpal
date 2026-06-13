@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchFingerprintBulk, type FingerprintResult } from "../api";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
@@ -7,7 +8,8 @@ import CopyButton from "../components/CopyButton";
 const COMMON = "22, 80, 443, 21, 25, 53, 110, 143, 3306, 5432, 5900, 6379, 8080, 8443";
 
 export default function Fingerprint() {
-  const [host, setHost] = useState("127.0.0.1");
+  const intent = useLabIntent("fingerprint");
+  const [host, setHost] = useState(intentHost(intent) ?? "127.0.0.1");
   const [portsText, setPortsText] = useState(COMMON);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

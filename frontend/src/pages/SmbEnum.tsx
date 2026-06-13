@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import { authFetch, parseError } from "../api";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import CopyButton from "../components/CopyButton";
 import EmptyState from "../components/EmptyState";
@@ -25,8 +26,9 @@ type EnumResponse = {
 };
 
 export default function SmbEnum() {
+  const intent = useLabIntent("smb");
   const [creds, setCreds] = useAdCreds();
-  const [target, setTarget] = useState("");
+  const [target, setTarget] = useState(intentHost(intent) ?? "");
   const [result, setResult] = useState<EnumResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

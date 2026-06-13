@@ -4,6 +4,7 @@ import RequestForm, { initialRequestState, requestToInit, type RequestState }
 import { useAttackWS } from "../components/webattack/useAttackWS";
 import AttackResults, { type Attempt, type Finding }
   from "../components/webattack/AttackResults";
+import { useLabIntent } from "../lib/labIntent";
 
 type XssEvent =
   | { type: "started"; url: string; total_payloads: number }
@@ -16,7 +17,10 @@ type XssEvent =
   | { type: "error"; detail: string };
 
 export default function Xss() {
-  const [req, setReq] = useState<RequestState>(initialRequestState);
+  const intent = useLabIntent("xss");
+  const [req, setReq] = useState<RequestState>(
+    intent?.target ? { ...initialRequestState, url: intent.target } : initialRequestState,
+  );
   const [attempts, setAttempts] = useState<Attempt[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [progress, setProgress] = useState({ done: 0, total: 0 });

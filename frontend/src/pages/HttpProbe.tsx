@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { openWs, watchWsLiveness, type HttpProbeEvent, type HttpProbeFinding } from "../api";
+import { useLabIntent } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
@@ -22,7 +23,8 @@ function statusColor(s: number): string {
 }
 
 export default function HttpProbe() {
-  const [url, setUrl] = useState("https://example.com");
+  const intent = useLabIntent("http");
+  const [url, setUrl] = useState(intent?.target ?? "https://example.com");
   const [wordlist, setWordlist] = useState<"small" | "medium">("small");
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
