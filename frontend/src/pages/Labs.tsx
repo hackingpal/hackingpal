@@ -199,6 +199,28 @@ export default function Labs({ onJumpTo }: Props) {
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
+        {/* Self-assess CTA — labs are practice targets; SelfAssess is for
+            the user's own apps. Keeps the "test apps I built at home" idea
+            one click away from the practice playground. */}
+        <button
+          onClick={() => onJumpTo("selfassess")}
+          className="w-full text-left border border-accent/40 bg-accent/5 hover:bg-accent/10
+                     rounded px-4 py-3 transition flex items-center gap-3"
+        >
+          <span className="text-accent text-lg leading-none">→</span>
+          <div className="flex-1">
+            <div className="text-[12px] font-bold text-ink-primary">
+              Have an app of your own to assess?
+            </div>
+            <div className="text-[11px] text-ink-muted mt-0.5">
+              Run a baseline security check and get an AI-tailored playbook for it.
+            </div>
+          </div>
+          <span className="text-[10px] uppercase tracking-wider text-accent font-bold">
+            Self-Assess
+          </span>
+        </button>
+
         {error && (
           <div className="border border-danger/40 bg-danger/10 text-danger
                           rounded px-3 py-2 text-sm font-mono">

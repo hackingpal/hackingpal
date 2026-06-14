@@ -146,10 +146,21 @@ def status() -> VpnStatus:
 
 def _toggle(direction: str) -> dict[str, Any]:
     require_unix(_WG_VPN_HINT)
-    ok, missing, _, wg_quick = _is_installed()
+    ok, missing, wg, wg_quick = _is_installed()
     if not ok:
         raise HTTPException(status_code=400,
                             detail=f"wireguard not set up — missing: {missing}")
+    # Check current state before raising an admin prompt — stopping an
+    # already-stopped tunnel (or starting an already-started one) is a state
+    # conflict, not a tool failure, and shouldn't pop a sudo dialog.
+    show = subprocess.run([wg, "show", "wg0"], capture_output=True, text=True, timeout=10)
+    is_up = show.returncode == 0
+    if direction == "up" and is_up:
+        raise MhpError("wg0 is already running",
+                       code=ErrorCode.CONFLICT, status_code=409)
+    if direction == "down" and not is_up:
+        raise MhpError("wg0 is not running",
+                       code=ErrorCode.CONFLICT, status_code=409)
     cmd = f"{shlex.quote(wg_quick)} {direction} {shlex.quote(str(SERVER_CFG))}"
     rc, out = _admin_run(cmd)
     if rc != 0:

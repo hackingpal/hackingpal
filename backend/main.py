@@ -26,18 +26,19 @@ from lib import logging_setup
 from lib.auth import AUTH_TOKEN, require_localhost
 
 from routers import (
-    ad_spray, audit, audit_log, aws_recon, azure_recon, bloodhound_ingest,
-    breach, brew, bt_recon, c2_beacon, chat, cmdi, cms, cred_harvest, ct_log,
-    dns_recon, dorking, email_harvest, email_security, engagements, evil_twin,
-    exploits, fingerprint, gcp_recon, github_leak, graphql, hash_cracker,
-    http_probe, ids, idor, imds, ip_checker, jwt_analyzer, kerberos_roast,
-    labs, lan_scan, lateral, ldap_enum, lfi, local_discovery, linux_posture,
-    macos_posture, nmap, people_enum, persistence, ping, port_scanner,
-    presets, processes, profile_finder, reverse_ip, reverse_shell, s3_scanner,
-    scope, settings, shodan_censys, smb_enum, sqli, ssrf, stego,
-    subdomain_enum, system_info, takeover, tcpdump, terminal, tls_audit,
-    urlscan, vpn, wayback, whois, wifi, wifi_scan, windows_posture,
-    wpa_capture, xss, systemd_units, firewall_rules, users_audit,
+    ad_spray, audit, audit_log, aws_recon, azure_recon, basic_check,
+    bloodhound_ingest, breach, brew, bt_recon, c2_beacon, chat, cmdi, cms,
+    cred_harvest, ct_log, dns_recon, dorking, email_harvest, email_security,
+    engagements, evil_twin, exploits, fingerprint, gcp_recon, github_leak,
+    graphql, hash_cracker, http_probe, ids, idor, imds, ip_checker,
+    jwt_analyzer, kerberos_roast, labs, lan_scan, lateral, ldap_enum, lfi,
+    local_discovery, linux_posture, macos_posture, nmap, people_enum,
+    persistence, ping, playbook_suggest, port_scanner, presets, processes,
+    profile_finder, reverse_ip, reverse_shell, s3_scanner, scope, settings,
+    shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, system_info,
+    takeover, tcpdump, terminal, tls_audit, triage, urlscan, vpn, wayback,
+    whois, wifi, wifi_scan, windows_posture, wpa_capture, xss, systemd_units,
+    firewall_rules, users_audit,
 )
 
 logging_setup.configure()
@@ -172,6 +173,9 @@ app.include_router(email_harvest.router)
 app.include_router(dorking.osint_router)
 app.include_router(audit_log.router)
 app.include_router(scope.router)
+app.include_router(triage.router)
+app.include_router(playbook_suggest.router)
+app.include_router(basic_check.router)
 
 
 @app.get("/health")

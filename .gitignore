@@ -53,3 +53,9 @@ backend/wordlists/*.txt.gz
 
 # --- Standalone CLI scan output (scripts/ writes here) ---
 scans/
+
+# --- Local idea capture (stik CLI writes here) ---
+ideas/
+
+# --- Local-only notes / bug backlog (never committed) ---
+notes/

@@ -25,7 +25,8 @@ function BrandMark() {
 
 export type NavId =
   | "home" | "targets" | "tools" | "evidence" | "reports" | "assistant"
-  | "playbooks" | "labs"
+  | "workspace" | "playbook-builder"
+  | "playbooks" | "labs" | "selfassess"
   | "dashboard" | "engagements" | "findings"
   | "lan" | "ip" | "ping" | "dns" | "whois" | "localdisco"
   | "ports" | "nmap" | "audit" | "tcpdump" | "tls" | "fingerprint" | "http"
@@ -57,14 +58,18 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
 
   return (
     <nav className="w-60 shrink-0 border-r border-divider bg-bg-sidebar flex flex-col">
-      {/* Top inset — on macOS (hiddenInset) and Windows (hidden+overlay) the
-          OS title bar is gone, so we need pt-10 to fully clear the overlaid
-          window controls. On Linux the native title bar is still visible above
-          us so pt-2 is enough. `platform` is null on first paint; default to
-          the taller inset to avoid a layout jump. */}
+      {/* Top inset — on macOS (hiddenInset) the OS traffic-light controls
+          overlay the top-left ~80px, so we inset the brand area right of them
+          on darwin. On Windows the overlay sits in the top-right (the App.tsx
+          top strip handles that). On Linux the native title bar is still
+          visible above us so pt-2 + px-4 is enough. `platform` is null on
+          first paint; default to the macOS treatment to avoid a layout jump
+          that would briefly slide the logo across the traffic lights after
+          auto-update reloads. */}
       <header className={
-        "app-drag pb-3 px-4 border-b border-divider bg-bg-sidebar " +
-        (platform === "linux" ? "pt-2" : "pt-10")
+        "app-drag pb-3 pr-4 border-b border-divider bg-bg-sidebar " +
+        (platform === "linux" ? "pt-2 pl-4" : "pt-10 ") +
+        (platform === "linux" || platform === "win32" ? "" : "pl-[78px]")
       }>
         <div className="flex items-center gap-2.5">
           <BrandMark />

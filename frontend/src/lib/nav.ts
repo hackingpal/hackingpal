@@ -21,18 +21,22 @@ export const WINDOWS_ONLY: Platform[] = ["win32"];
 export const NOT_WINDOWS:  Platform[] = ["darwin", "linux"];
 
 // The flat top-level sidebar. Workflow-first per the roadmap pivot.
+// Evidence + Findings + Reports are collapsed into a single "Workspace"
+// entry (lab mode → simple report; engagement mode → unified methodology
+// timeline + findings + report). The AI Assistant tab is gone — chat
+// lives in the floating ChatBubble that follows every page; the AiAssistant
+// page is still reachable from Settings for key configuration.
 export const TOP_NAV: NavItem[] = [
-  { id: "home",        label: "Home"         },
-  { id: "engagements", label: "Engagements"  },
-  { id: "targets",     label: "Targets"      },
-  { id: "playbooks",   label: "Playbooks"    },
-  { id: "labs",        label: "Labs"         },
-  { id: "tools",       label: "Tool Library" },
-  { id: "evidence",    label: "Evidence"     },
-  { id: "findings",    label: "Findings"     },
-  { id: "reports",     label: "Reports"      },
-  { id: "assistant",   label: "AI Assistant" },
-  { id: "settings",    label: "Settings"     },
+  { id: "home",             label: "Home"             },
+  { id: "engagements",      label: "Engagements"      },
+  { id: "targets",          label: "Targets"          },
+  { id: "playbooks",        label: "Playbooks"        },
+  { id: "playbook-builder", label: "Playbook Builder" },
+  { id: "labs",             label: "Labs"             },
+  { id: "selfassess",       label: "Self-Assess"      },
+  { id: "tools",            label: "Tool Library"     },
+  { id: "workspace",        label: "Workspace"        },
+  { id: "settings",         label: "Settings"         },
 ];
 
 export const TOOL_GROUPS: NavGroup[] = [

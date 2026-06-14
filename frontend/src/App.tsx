@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Sidebar, { type NavId } from "./components/Sidebar";
 import { fetchSystemInfo, type SystemInfo } from "./api";
 import IpChecker from "./pages/IpChecker";
@@ -48,9 +48,9 @@ import Placeholder from "./pages/Placeholder";
 import PlannedToolPage from "./pages/PlannedToolPage";
 import Engagements from "./pages/Engagements";
 import EngagementDashboard from "./pages/EngagementDashboard";
-import Findings from "./pages/Findings";
 import Presets from "./pages/Presets";
 import Labs from "./pages/Labs";
+import SelfAssess from "./pages/SelfAssess";
 import CvssCalculator from "./pages/CvssCalculator";
 import Obfuscator from "./pages/Obfuscator";
 import Imds from "./pages/Imds";
@@ -87,16 +87,20 @@ import Settings from "./pages/Settings";
 import AiAssistant from "./pages/AiAssistant";
 import ToolLibrary from "./pages/ToolLibrary";
 import Targets from "./pages/Targets";
-import Evidence from "./pages/Evidence";
-import Reports from "./pages/Reports";
+import EngagementWorkspace from "./pages/EngagementWorkspace";
+import PlaybookBuilder from "./pages/PlaybookBuilder";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import EngagementPill from "./components/EngagementPill";
 import ModePill from "./components/ModePill";
 import ErrorBoundary from "./components/ErrorBoundary";
+import ChatBubble from "./components/ChatBubble";
+import EngagementTabs from "./components/EngagementTabs";
+import PageBackBar from "./components/PageBackBar";
+import { getTabs, getActiveTabId, setTabPage } from "./lib/engagementTabs";
 import { useTheme } from "./lib/theme";
 import { isPlannedId } from "./lib/plannedTools";
-import { api } from "./api";
+import { api, resetAuthToken } from "./api";
 
 type Health = { status: string; version: string; pid: string };
 
@@ -111,7 +115,19 @@ export default function App() {
   // the active engagement at a glance (scope, findings, next-step checklist)
   // when one is active, or a soft onboarding card pointing at the
   // Engagements list when none is.
-  const [active, setActive] = useState<NavId | string>("home");
+  const [active, setActive] = useState<NavId | string>(() => {
+    const t = getTabs().find((x) => x.id === getActiveTabId());
+    return t?.activePage ?? "home";
+  });
+  // navigate() is the "user-initiated" nav setter — pushes the destination
+  // into the active tab's history so Back/Forward in EngagementTabs work.
+  // The EngagementTabs component itself wires through the *raw* setActive
+  // when switching tabs or invoking back/forward — otherwise it would
+  // re-push the destination and corrupt the history stack.
+  const navigate = (page: NavId | string) => {
+    setActive(page);
+    setTabPage(getActiveTabId(), String(page));
+  };
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
   // `everConnected` distinguishes "still booting" (show CONNECTING) from a
@@ -150,6 +166,12 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // Track the backend pid we last successfully talked to. If it changes
+  // (cold-start race where the renderer cached a token against an old
+  // backend, or a mid-session sidecar restart), clear the auth-token cache
+  // so the next api() call fetches a fresh token from the live backend.
+  const lastBackendPid = useRef<string | null>(null);
+
   useEffect(() => {
     let stop = false;
     let delay = 250; // poll fast at first so we catch the backend booting
@@ -157,6 +179,10 @@ export default function App() {
       try {
         const h = await api<Health>("/health");
         if (stop) return;
+        if (lastBackendPid.current !== h.pid) {
+          resetAuthToken();
+          lastBackendPid.current = h.pid;
+        }
         setHealth(h);
         setEverConnected(true);
         delay = 5000; // back off once we've seen it
@@ -190,7 +216,7 @@ export default function App() {
   return (
     <div className="flex h-full bg-bg-base text-ink-primary">
       {!sidebarHidden && (
-        <Sidebar active={active} onSelect={setActive} platform={platform} />
+        <Sidebar active={active} onSelect={navigate} platform={platform} />
       )}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top status strip — also draggable.
@@ -245,8 +271,8 @@ export default function App() {
             </button>
           </div>
           <div className="flex items-center gap-3 text-[10px] tracking-widest text-ink-dim app-no-drag">
-            <ModePill onOpenEngagementsPage={() => setActive("engagements")} />
-            <EngagementPill onOpenEngagementsPage={() => setActive("engagements")} />
+            <ModePill onOpenEngagementsPage={() => navigate("engagements")} />
+            <EngagementPill onOpenEngagementsPage={() => navigate("engagements")} />
             <button
               onClick={theme.cycle}
               title={`Theme: ${themeLabel} — click to cycle (dark → light → system)`}
@@ -277,19 +303,24 @@ export default function App() {
           </div>
         </div>
 
+        <EngagementTabs onChange={setActive} />
+        <PageBackBar />
         <main className="flex-1 overflow-hidden">
          <ErrorBoundary resetKey={String(active)}>
-          {active === "home"       ? <EngagementDashboard onNavigate={setActive} /> :
-           active === "dashboard"  ? <EngagementDashboard onNavigate={setActive} /> :
+          {active === "home"       ? <EngagementDashboard onNavigate={navigate} /> :
+           active === "dashboard"  ? <EngagementDashboard onNavigate={navigate} /> :
            active === "engagements" ? <Engagements /> :
-           active === "targets"     ? <Targets onJumpTo={setActive} /> :
-           active === "tools"       ? <ToolLibrary onOpenTool={setActive} /> :
-           active === "evidence"    ? <Evidence onJumpTo={setActive} /> :
-           active === "reports"     ? <Reports onJumpTo={setActive} /> :
+           active === "targets"     ? <Targets onJumpTo={navigate} /> :
+           active === "tools"       ? <ToolLibrary onOpenTool={navigate} /> :
+           active === "workspace"   ? <EngagementWorkspace onJumpTo={navigate} /> :
+           active === "evidence"    ? <EngagementWorkspace onJumpTo={navigate} /> :
+           active === "reports"     ? <EngagementWorkspace onJumpTo={navigate} /> :
+           active === "findings"    ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "assistant"   ? <AiAssistant activePage={active} /> :
-           active === "findings"    ? <Findings /> :
            active === "playbooks"   ? <Presets /> :
-           active === "labs"        ? <Labs onJumpTo={setActive} /> :
+           active === "playbook-builder" ? <PlaybookBuilder onJumpTo={navigate} /> :
+           active === "labs"        ? <Labs onJumpTo={navigate} /> :
+           active === "selfassess"  ? <SelfAssess onJumpTo={navigate} /> :
            active === "ip"          ? <IpChecker /> :
            active === "dns"         ? <DnsRecon /> :
            active === "whois"       ? <Whois /> :
@@ -365,11 +396,11 @@ export default function App() {
            active === "emailharvest" ? <EmailHarvest /> :
            active === "dorksgen"    ? <DorksGen /> :
            active === "audit-log"   ? <Audit /> :
-           active === "settings"    ? <Settings onJumpTo={setActive} /> :
+           active === "settings"    ? <Settings onJumpTo={navigate} /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}
                                           onOpenCatalog={() => setCatalogOpen(true)}
-                                          onAfterRemove={() => setActive("home")}
+                                          onAfterRemove={() => navigate("home")}
                                         /> :
                                       <Placeholder name={active} />}
          </ErrorBoundary>
@@ -378,14 +409,15 @@ export default function App() {
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        onSelect={(id) => setActive(id)}
+        onSelect={(id) => navigate(id)}
         platform={platform}
       />
       <ToolCatalog
         open={catalogOpen}
         onClose={() => setCatalogOpen(false)}
-        onOpenTool={(id) => setActive(id)}
+        onOpenTool={(id) => navigate(id)}
       />
+      <ChatBubble activePage={String(active)} />
     </div>
   );
 }
