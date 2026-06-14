@@ -11,6 +11,7 @@ import {
   type Engagement,
 } from "../lib/engagement";
 import { snapshot } from "../lib/sessionLog";
+import { chatBubbleIn, popIn } from "../lib/anim";
 
 type ChatRole = "user" | "assistant";
 
@@ -25,60 +26,27 @@ type ChatMessage = {
 
 type TabKey = string;
 
-const POS_KEY = "mhp:chatbubble:pos";
 const BUBBLE_SIZE = 56;
+const BUBBLE_MARGIN = 24;
 const PANEL_W = 380;
-const PANEL_H = 520;
+const PANEL_H = 560;
 const GENERAL_TAB: TabKey = "general";
 
-const BRAND_COLORS = [
-  "#61BC47", "#FDB813", "#F58220", "#E03C31",
-  "#963D97", "#2966C6", "#039CDE",
-];
-
-type Pos = { x: number; y: number };
-
-function loadPos(): Pos {
-  try {
-    const raw = localStorage.getItem(POS_KEY);
-    if (raw) {
-      const p = JSON.parse(raw) as Pos;
-      if (typeof p.x === "number" && typeof p.y === "number") return p;
-    }
-  } catch { /* ignore */ }
-  return {
-    x: Math.max(0, window.innerWidth - BUBBLE_SIZE - 24),
-    y: Math.max(0, window.innerHeight - BUBBLE_SIZE - 24),
-  };
-}
-
-function savePos(p: Pos): void {
-  try { localStorage.setItem(POS_KEY, JSON.stringify(p)); } catch { /* quota */ }
-}
-
-function clampPos(p: Pos): Pos {
-  const maxX = Math.max(0, window.innerWidth - BUBBLE_SIZE);
-  const maxY = Math.max(0, window.innerHeight - BUBBLE_SIZE);
-  return {
-    x: Math.min(Math.max(0, p.x), maxX),
-    y: Math.min(Math.max(0, p.y), maxY),
-  };
-}
-
-function BrandMark({ size = 28 }: { size?: number }) {
-  const padY = size * 0.16;
-  const padX = size * 0.10;
-  const usable = size - 2 * padY;
-  const bar = usable / 10.6;
-  const gap = bar * 0.6;
+function SparkleIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}
-         aria-label="MyHackingPal" className="shrink-0 rounded-sm">
-      <rect width={size} height={size} fill="black" />
-      {BRAND_COLORS.map((c, i) => (
-        <rect key={c} x={padX} y={padY + i * (bar + gap)}
-              width={size - 2 * padX} height={bar} fill={c} />
-      ))}
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.8}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M5.5 18.5l2-2M16.5 7.5l2-2" />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -92,7 +60,17 @@ function renderInline(text: string): React.ReactNode[] {
   while ((m = re.exec(text)) !== null) {
     if (m.index > last) parts.push(text.slice(last, m.index));
     parts.push(
-      <code key={key++} className="bg-bg-base px-1 py-0.5 rounded text-amber text-[11px]">
+      <code
+        key={key++}
+        style={{
+          fontFamily: "var(--font-mono)",
+          background: "var(--bg-base)",
+          color: "var(--medium)",
+          padding: "1px 6px",
+          borderRadius: 4,
+          fontSize: 11,
+        }}
+      >
         {m[1]}
       </code>,
     );
@@ -118,11 +96,33 @@ function MessageBody({ msg }: { msg: ChatMessage }) {
     <>
       {blocks.map((b, i) =>
         b.kind === "code" ? (
-          <pre key={i} className="my-1.5 p-2 rounded bg-bg-base border border-divider overflow-x-auto text-[11px] text-phos">
+          <pre
+            key={i}
+            style={{
+              margin: "6px 0",
+              padding: 10,
+              background: "var(--bg-base)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              overflowX: "auto",
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              color: "var(--success)",
+            }}
+          >
             {b.body}
           </pre>
         ) : (
-          <div key={i} className="whitespace-pre-wrap text-[12px] leading-relaxed">
+          <div
+            key={i}
+            style={{
+              whiteSpace: "pre-wrap",
+              fontFamily: "var(--font-sans)",
+              fontSize: 12.5,
+              lineHeight: 1.55,
+              color: "var(--text-primary)",
+            }}
+          >
             {renderInline(b.body)}
           </div>
         ),
@@ -219,11 +219,7 @@ async function streamChat(
 }
 
 export default function ChatBubble({ activePage }: { activePage: string }): JSX.Element {
-  const [pos, setPos] = useState<Pos>(() => loadPos());
   const [open, setOpen] = useState(false);
-  const [dragging, setDragging] = useState(false);
-  // Per-tab message history is in-memory only — closing/reopening the bubble
-  // preserves it, but a full page reload clears it (panel chat is ephemeral).
   const [tabMessages, setTabMessages] = useState<Record<TabKey, ChatMessage[]>>({});
   const [activeTab, setActiveTab] = useState<TabKey>(GENERAL_TAB);
   const [engagements, setEngagements] = useState<Engagement[]>([]);
@@ -232,10 +228,10 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
 
   const activeEid = useActiveEngagementId();
-  const dragStartRef = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
-  const movedRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bubbleRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchChatConfig().then(setChatConfig).catch(() => setChatConfig(null));
@@ -253,7 +249,6 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
     return () => { cancelled = true; };
   }, [open]);
 
-  // When the user picks an engagement in the rest of the app, jump to its tab.
   useEffect(() => {
     if (activeEid) setActiveTab(activeEid);
     else setActiveTab(GENERAL_TAB);
@@ -266,36 +261,17 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
     if (el) el.scrollTop = el.scrollHeight;
   }, [tabMessages, activeTab, open]);
 
+  // First-mount entrance for the bubble itself
   useEffect(() => {
-    const onResize = () => setPos((p) => clampPos(p));
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    chatBubbleIn(bubbleRef.current);
   }, []);
 
-  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (open) return;
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragStartRef.current = { mx: e.clientX, my: e.clientY, ox: pos.x, oy: pos.y };
-    movedRef.current = false;
-    setDragging(true);
-  }, [open, pos]);
+  // Open-panel entrance
+  useEffect(() => {
+    if (open) popIn(panelRef.current);
+  }, [open]);
 
-  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const s = dragStartRef.current;
-    if (!s) return;
-    const dx = e.clientX - s.mx;
-    const dy = e.clientY - s.my;
-    if (!movedRef.current && Math.hypot(dx, dy) > 4) movedRef.current = true;
-    setPos(clampPos({ x: s.ox + dx, y: s.oy + dy }));
-  }, []);
-
-  const onPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    (e.target as Element).releasePointerCapture?.(e.pointerId);
-    dragStartRef.current = null;
-    setDragging(false);
-    setPos((p) => { savePos(p); return p; });
-    if (!movedRef.current) setOpen((o) => !o);
-  }, []);
+  const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 
   const messages = tabMessages[activeTab] ?? [];
 
@@ -391,63 +367,147 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
 
   return (
     <>
-      <div
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
+      <button
+        ref={bubbleRef}
+        type="button"
+        onClick={toggleOpen}
         style={{
           position: "fixed",
-          left: pos.x,
-          top: pos.y,
+          right: BUBBLE_MARGIN,
+          bottom: BUBBLE_MARGIN,
           width: BUBBLE_SIZE,
           height: BUBBLE_SIZE,
           zIndex: 9999,
-          cursor: dragging ? "grabbing" : "grab",
-          touchAction: "none",
+          borderRadius: "50%",
+          background: "var(--accent)",
+          border: "1px solid var(--border-accent)",
+          boxShadow: open
+            ? "0 12px 32px -8px var(--accent-glow), 0 0 0 4px var(--accent-dim)"
+            : "0 8px 24px -8px var(--accent-glow)",
+          color: "white",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          transition: "transform 150ms ease, box-shadow 200ms ease, background 150ms ease",
         }}
-        className={
-          "rounded-full bg-bg-sidebar border border-divider shadow-lg " +
-          "flex items-center justify-center hover:border-accent transition-colors " +
-          (open ? "ring-2 ring-accent" : "")
-        }
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "var(--accent-bright)";
+          e.currentTarget.style.transform = "scale(1.06)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "var(--accent)";
+          e.currentTarget.style.transform = "scale(1)";
+        }}
         title="MyHackingPal Assistant"
         aria-label="Open chat assistant"
       >
-        <BrandMark size={32} />
-      </div>
+        <SparkleIcon size={22} />
+      </button>
 
       {open && (
         <div
+          ref={panelRef}
           style={{
             position: "fixed",
-            left: clampPanelLeft(pos.x),
-            top: clampPanelTop(pos.y),
+            right: BUBBLE_MARGIN,
+            bottom: BUBBLE_MARGIN + BUBBLE_SIZE + 12,
             width: PANEL_W,
-            height: PANEL_H,
+            height: `min(${PANEL_H}px, calc(100vh - ${BUBBLE_MARGIN * 2 + BUBBLE_SIZE + 24}px))`,
+            maxHeight: `calc(100vh - ${BUBBLE_MARGIN * 2 + BUBBLE_SIZE + 24}px)`,
             zIndex: 9998,
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border-bright)",
+            borderRadius: 16,
+            boxShadow: "0 32px 64px -16px rgba(0,0,0,0.55), 0 0 0 1px var(--border-accent)",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            opacity: 0, // GSAP fades in
           }}
-          className="rounded-md bg-bg-sidebar border border-divider shadow-2xl flex flex-col font-mono overflow-hidden"
         >
-          <header className="flex items-center gap-2 px-3 py-2 border-b border-divider bg-bg-card">
-            <BrandMark size={18} />
-            <span className="text-accent text-[11px] font-bold tracking-widest">ASSISTANT</span>
-            <span className="text-ink-dim text-[10px] truncate">
+          <header
+            className="flex items-center gap-2 px-3"
+            style={{
+              height: 44,
+              borderBottom: "1px solid var(--border)",
+              background: "var(--bg-surface)",
+            }}
+          >
+            <span
+              style={{
+                color: "var(--accent-bright)",
+                display: "inline-flex",
+                alignItems: "center",
+              }}
+            >
+              <SparkleIcon size={16} />
+            </span>
+            <span
+              style={{
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--text-primary)",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              AI Assistant
+            </span>
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+                color: "var(--text-muted)",
+                letterSpacing: "0.06em",
+              }}
+              className="truncate"
+            >
               {chatConfig?.model ?? "claude"}
             </span>
             <span className="flex-1" />
             <button
               onClick={scanThisPage}
               disabled={sending}
-              className="text-[10px] px-2 py-0.5 rounded border border-divider text-ink-muted
-                         hover:text-accent hover:border-accent transition-colors
-                         disabled:opacity-40 disabled:cursor-not-allowed"
               title={`Ask about the ${labelFor(activePage)} page`}
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text-secondary)",
+                cursor: sending ? "not-allowed" : "pointer",
+                opacity: sending ? 0.45 : 1,
+                transition: "color 150ms ease, border-color 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                if (sending) return;
+                e.currentTarget.style.color = "var(--accent-bright)";
+                e.currentTarget.style.borderColor = "var(--border-accent)";
+              }}
+              onMouseLeave={(e) => {
+                if (sending) return;
+                e.currentTarget.style.color = "var(--text-secondary)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
             >
-              Scan this page
+              Scan page
             </button>
             <button
               onClick={() => setOpen(false)}
-              className="text-ink-muted hover:text-ink-primary text-sm leading-none px-1"
+              style={{
+                color: "var(--text-muted)",
+                background: "transparent",
+                border: "none",
+                fontSize: 18,
+                lineHeight: 1,
+                cursor: "pointer",
+                padding: 2,
+              }}
               title="Close"
               aria-label="Close chat"
             >
@@ -456,34 +516,72 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
           </header>
 
           {tabs.length > 1 && (
-            <div className="flex items-center gap-1 px-2 py-1.5 border-b border-divider bg-bg-base overflow-x-auto">
-              {tabs.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setActiveTab(t.key)}
-                  className={
-                    "text-[10px] px-2 py-1 rounded whitespace-nowrap transition-colors " +
-                    (t.key === activeTab
-                      ? "bg-accentDim/40 text-accent border border-accentDim"
-                      : "text-ink-muted hover:text-ink-primary border border-transparent")
-                  }
-                  title={t.label}
-                >
-                  {t.label.length > 22 ? t.label.slice(0, 22) + "…" : t.label}
-                </button>
-              ))}
+            <div
+              className="flex items-center gap-1 px-2 py-2 overflow-x-auto"
+              style={{
+                borderBottom: "1px solid var(--border)",
+                background: "var(--bg-base)",
+              }}
+            >
+              {tabs.map((t) => {
+                const isActive = t.key === activeTab;
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveTab(t.key)}
+                    title={t.label}
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      letterSpacing: "0.06em",
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      whiteSpace: "nowrap",
+                      background: isActive ? "var(--accent-dim)" : "transparent",
+                      color: isActive ? "var(--text-accent)" : "var(--text-secondary)",
+                      border: `1px solid ${isActive ? "var(--border-accent)" : "transparent"}`,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {t.label.length > 22 ? t.label.slice(0, 22) + "…" : t.label}
+                  </button>
+                );
+              })}
             </div>
           )}
 
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-2 text-ink-primary">
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto"
+            style={{
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
             {messages.length === 0 && (
-              <div className="text-ink-dim text-[11px] leading-relaxed">
-                <p>
-                  On the <span className="text-accent">{labelFor(activePage)}</span> page.
-                  Ask anything, or hit <span className="text-accent">Scan this page</span> for ideas.
+              <div
+                style={{
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                  lineHeight: 1.55,
+                }}
+              >
+                <p style={{ margin: 0 }}>
+                  On the{" "}
+                  <span style={{ color: "var(--accent-bright)", fontWeight: 600 }}>
+                    {labelFor(activePage)}
+                  </span>{" "}
+                  page. Ask anything, or hit{" "}
+                  <span style={{ color: "var(--accent-bright)", fontWeight: 600 }}>
+                    Scan page
+                  </span>{" "}
+                  for ideas.
                 </p>
                 {activeTab !== GENERAL_TAB && (
-                  <p className="mt-1 text-ink-dim">
+                  <p style={{ margin: "8px 0 0", color: "var(--text-muted)", fontSize: 11 }}>
                     This tab is scoped to the active engagement.
                   </p>
                 )}
@@ -491,30 +589,86 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
             )}
 
             {messages.map((m) => (
-              <div key={m.id} className={m.role === "user" ? "flex justify-end" : ""}>
+              <div
+                key={m.id}
+                className="animate-in"
+                style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}
+              >
                 <div
-                  className={
-                    m.role === "user"
-                      ? "max-w-[85%] bg-accentDim/40 border border-accentDim rounded-md px-2.5 py-1.5 text-[12px]"
-                      : "max-w-full w-full"
-                  }
+                  style={{
+                    maxWidth: m.role === "user" ? "85%" : "100%",
+                    width: m.role === "user" ? "auto" : "100%",
+                    background: m.role === "user" ? "var(--accent)" : "var(--bg-hover)",
+                    color: m.role === "user" ? "white" : "var(--text-primary)",
+                    borderRadius: 10,
+                    padding: "8px 12px",
+                    border: m.role === "user"
+                      ? "1px solid var(--accent-bright)"
+                      : "1px solid var(--border)",
+                  }}
                 >
                   {m.role === "assistant" && m.thinking && m.streaming && !m.content && (
-                    <div className="text-ink-dim text-[10px] italic mb-1">thinking…</div>
+                    <div
+                      style={{
+                        color: "var(--text-muted)",
+                        fontSize: 10,
+                        fontStyle: "italic",
+                        marginBottom: 4,
+                      }}
+                    >
+                      thinking…
+                    </div>
                   )}
-                  <MessageBody msg={m} />
+                  {m.role === "user" ? (
+                    <div
+                      style={{
+                        fontFamily: "var(--font-sans)",
+                        fontSize: 12.5,
+                        lineHeight: 1.55,
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {m.content}
+                    </div>
+                  ) : (
+                    <MessageBody msg={m} />
+                  )}
                   {m.role === "assistant" && m.streaming && m.content && (
-                    <span className="inline-block w-1.5 h-2.5 bg-accent align-text-bottom animate-pulse ml-0.5" />
+                    <span
+                      className="caret-blink"
+                      style={{
+                        display: "inline-block",
+                        marginLeft: 2,
+                        height: 12,
+                        verticalAlign: "text-bottom",
+                      }}
+                    />
                   )}
                   {m.error && (
-                    <div className="text-danger text-[10px] mt-1">{m.error}</div>
+                    <div
+                      style={{
+                        color: "var(--critical)",
+                        fontSize: 10.5,
+                        marginTop: 4,
+                      }}
+                    >
+                      {m.error}
+                    </div>
                   )}
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="border-t border-divider p-2 flex gap-2">
+          <div
+            style={{
+              borderTop: "1px solid var(--border)",
+              padding: 10,
+              display: "flex",
+              gap: 8,
+              background: "var(--bg-surface)",
+            }}
+          >
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -526,14 +680,42 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
               }}
               placeholder="Ask the assistant…"
               rows={2}
-              className="flex-1 resize-none bg-bg-base border border-divider rounded px-2 py-1.5
-                         text-[12px] text-ink-primary focus:outline-none focus:border-accent
-                         max-h-32"
+              style={{
+                flex: 1,
+                resize: "none",
+                background: "var(--bg-base)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "8px 10px",
+                fontFamily: "var(--font-sans)",
+                fontSize: 12.5,
+                color: "var(--text-primary)",
+                outline: "none",
+                maxHeight: 128,
+              }}
+              onFocus={(e) => {
+                e.currentTarget.style.borderColor = "var(--accent)";
+                e.currentTarget.style.boxShadow = "0 0 0 3px var(--accent-dim)";
+              }}
+              onBlur={(e) => {
+                e.currentTarget.style.borderColor = "var(--border)";
+                e.currentTarget.style.boxShadow = "none";
+              }}
             />
             {sending ? (
               <button
                 onClick={onStop}
-                className="px-2.5 py-1 rounded bg-bg-base border border-danger text-danger text-[11px]"
+                style={{
+                  padding: "0 12px",
+                  borderRadius: 8,
+                  background: "var(--critical-dim)",
+                  color: "var(--critical)",
+                  border: "1px solid var(--critical)",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
               >
                 Stop
               </button>
@@ -541,8 +723,18 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
               <button
                 onClick={onSend}
                 disabled={!input.trim()}
-                className="px-3 py-1 rounded bg-accent text-white text-[11px] font-bold
-                           disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{
+                  padding: "0 14px",
+                  borderRadius: 8,
+                  background: input.trim() ? "var(--accent)" : "color-mix(in srgb, var(--accent) 30%, transparent)",
+                  color: "white",
+                  border: "1px solid var(--accent-bright)",
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: input.trim() ? "pointer" : "not-allowed",
+                  opacity: input.trim() ? 1 : 0.55,
+                }}
               >
                 Send
               </button>
@@ -552,22 +744,4 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
       )}
     </>
   );
-}
-
-function clampPanelLeft(bubbleX: number): number {
-  // Prefer anchoring to the bubble's left edge but flip into view when the
-  // bubble is too close to the right edge of the window.
-  const maxLeft = Math.max(8, window.innerWidth - PANEL_W - 8);
-  const candidate = bubbleX + BUBBLE_SIZE - PANEL_W;
-  if (candidate < 8) return Math.min(bubbleX, maxLeft);
-  return Math.min(candidate, maxLeft);
-}
-
-function clampPanelTop(bubbleY: number): number {
-  // Float above the bubble if there isn't room below.
-  const wantBelow = bubbleY + BUBBLE_SIZE + 8;
-  if (wantBelow + PANEL_H <= window.innerHeight - 8) return wantBelow;
-  const wantAbove = bubbleY - PANEL_H - 8;
-  if (wantAbove >= 8) return wantAbove;
-  return Math.max(8, window.innerHeight - PANEL_H - 8);
 }

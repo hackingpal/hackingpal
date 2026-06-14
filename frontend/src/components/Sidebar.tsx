@@ -8,12 +8,11 @@ function BrandMark() {
   const PAD_Y = SIZE * 0.16;
   const PAD_X = SIZE * 0.10;
   const usable = SIZE - 2 * PAD_Y;
-  // 7 bars + 6 gaps where gap = 0.6 × bar  →  7B + 3.6B = usable
   const bar = usable / 10.6;
   const gap = bar * 0.6;
   return (
     <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-label="MyHackingPal"
-         className="shrink-0 rounded-sm">
+         className="shrink-0 rounded-[6px]">
       <rect width={SIZE} height={SIZE} fill="black" />
       {COLORS.map((c, i) => (
         <rect key={c} x={PAD_X} y={PAD_Y + i * (bar + gap)}
@@ -50,34 +49,147 @@ import { topNav, type Platform } from "../lib/nav";
 type Props = {
   active: NavId | string;
   onSelect: (id: NavId | string) => void;
-  platform: Platform | null;   // null = backend hasn't told us yet → show everything
+  platform: Platform | null;
 };
+
+// Single-glyph icons per nav id. Drawn inline for crispness and theme
+// inheritance — they pick up `currentColor` from the surrounding state.
+function NavIcon({ id, className = "" }: { id: string; className?: string }) {
+  const common = {
+    width: 14, height: 14, viewBox: "0 0 24 24",
+    fill: "none", stroke: "currentColor", strokeWidth: 1.8,
+    strokeLinecap: "round" as const, strokeLinejoin: "round" as const,
+    className: "shrink-0 " + className,
+    "aria-hidden": true,
+  };
+  switch (id) {
+    case "home":
+      return (
+        <svg {...common}>
+          <path d="M3 12 12 4l9 8" />
+          <path d="M5 10v9h14v-9" />
+        </svg>
+      );
+    case "engagements":
+      return (
+        <svg {...common}>
+          <path d="M5 4h14v6H5z" />
+          <path d="M5 14h14v6H5z" />
+        </svg>
+      );
+    case "targets":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="8" />
+          <circle cx="12" cy="12" r="4" />
+          <circle cx="12" cy="12" r="1" />
+        </svg>
+      );
+    case "playbooks":
+      return (
+        <svg {...common}>
+          <path d="M4 6h13a2 2 0 0 1 2 2v11" />
+          <path d="M4 6v13h13" />
+          <path d="M4 6a2 2 0 0 1 2-2h13" />
+        </svg>
+      );
+    case "labs":
+      return (
+        <svg {...common}>
+          <path d="M9 3v6L5 18a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-4-9V3" />
+          <path d="M9 3h6" />
+        </svg>
+      );
+    case "selfassess":
+      return (
+        <svg {...common}>
+          <path d="M12 22s-8-4.5-8-12V5l8-3 8 3v5c0 7.5-8 12-8 12z" />
+          <path d="m9 12 2 2 4-4" />
+        </svg>
+      );
+    case "tools":
+      return (
+        <svg {...common}>
+          <path d="m14 6 3-3 4 4-3 3" />
+          <path d="m18 10-8 8-6 1 1-6 8-8" />
+        </svg>
+      );
+    case "tool-status":
+      return (
+        <svg {...common}>
+          <path d="M3 12h4l2-7 4 14 2-7h6" />
+        </svg>
+      );
+    case "workspace":
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="18" height="14" rx="2" />
+          <path d="M8 21h8M12 18v3" />
+        </svg>
+      );
+    case "settings":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4.9a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.5a7 7 0 0 0-2 1.2l-2.4-.9-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-.9a7 7 0 0 0 2 1.2L10 21h4l.5-2.5a7 7 0 0 0 2-1.2l2.4.9 2-3.4-2-1.6c0-.4.1-.8.1-1.2Z" />
+        </svg>
+      );
+    default:
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="3" />
+        </svg>
+      );
+  }
+}
 
 export default function Sidebar({ active, onSelect, platform }: Props) {
   const items = useMemo(() => topNav(platform), [platform]);
 
   return (
-    <nav className="w-60 shrink-0 border-r border-divider bg-bg-sidebar flex flex-col">
-      {/* Top inset — on macOS (hiddenInset) the OS traffic-light controls
-          overlay the top-left ~80px, so we inset the brand area right of them
-          on darwin. On Windows the overlay sits in the top-right (the App.tsx
-          top strip handles that). On Linux the native title bar is still
-          visible above us so pt-2 + px-4 is enough. `platform` is null on
-          first paint; default to the macOS treatment to avoid a layout jump
-          that would briefly slide the logo across the traffic lights after
-          auto-update reloads. */}
-      <header className={
-        "app-drag pb-3 pr-4 border-b border-divider bg-bg-sidebar " +
-        (platform === "linux" ? "pt-2 pl-4" : "pt-10 ") +
-        (platform === "linux" || platform === "win32" ? "" : "pl-[78px]")
-      }>
+    <nav
+      className="w-60 shrink-0 flex flex-col app-no-drag"
+      style={{
+        background: "var(--bg-surface)",
+        borderRight: "1px solid var(--border)",
+      }}
+    >
+      {/* Brand header.
+          - macOS hiddenInset overlays top-left ~80px (traffic lights), so
+            pt-14 + pl-[92px] drops the brand block well clear of them.
+          - Windows reserves the top-right for titleBarOverlay (handled in
+            App.tsx top strip), so no left inset here.
+          - Linux uses the native title bar above us — pt-3 + pl-4 is enough. */}
+      <header
+        className={
+          "app-drag pb-3 pr-4 " +
+          (platform === "linux" ? "pt-3 pl-4" : "pt-14 ") +
+          (platform === "linux" || platform === "win32" ? "" : "pl-[92px]")
+        }
+        style={{ borderBottom: "1px solid var(--border)" }}
+      >
         <div className="flex items-center gap-2.5">
           <BrandMark />
-          <h1 className="text-[13px] font-bold tracking-[0.08em] text-ink-primary leading-tight">
+          <h1
+            className="text-[14px] leading-tight"
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontWeight: 600,
+              color: "var(--text-primary)",
+              letterSpacing: "-0.01em",
+            }}
+          >
             MyHackingPal
           </h1>
         </div>
-        <p className="text-[10px] text-ink-dim mt-1 tracking-wider">
+        <p
+          className="mt-1 text-[10px]"
+          style={{
+            fontFamily: "var(--font-mono)",
+            color: "var(--text-muted)",
+            letterSpacing: "0.08em",
+          }}
+        >
           v0.1 · hybrid build
         </p>
       </header>
@@ -89,23 +201,54 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
             <button
               key={item.id}
               onClick={() => onSelect(item.id)}
-              className={
-                "w-full text-left text-sm px-4 py-2 transition flex items-center " +
-                (isActive
-                  ? "bg-bg-nav-active text-accent font-semibold border-l-2 border-accent -ml-px"
-                  : "text-ink-primary font-medium hover:bg-bg-nav-hover border-l-2 border-transparent")
-              }
+              className="w-full text-left flex items-center gap-2.5 relative"
+              style={{
+                height: 32,
+                margin: "1px 8px",
+                width: "calc(100% - 16px)",
+                padding: "0 12px",
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 500,
+                fontFamily: "var(--font-sans)",
+                background: isActive ? "var(--accent-dim)" : "transparent",
+                color: isActive ? "var(--text-accent)" : "var(--text-secondary)",
+                borderLeft: isActive
+                  ? "2px solid var(--accent)"
+                  : "2px solid transparent",
+                transition: "background 150ms ease, color 150ms ease, border-color 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                if (isActive) return;
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = "var(--text-primary)";
+              }}
+              onMouseLeave={(e) => {
+                if (isActive) return;
+                e.currentTarget.style.background = "transparent";
+                e.currentTarget.style.color = "var(--text-secondary)";
+              }}
             >
-              <span className={(isActive ? "text-accent" : "text-ink-dim") + " mr-2 w-2 inline-block"}>
-                {isActive ? "▸" : ""}
-              </span>
-              {item.label}
+              <NavIcon
+                id={item.id as string}
+                className=""
+                /* color matches the text via currentColor */
+              />
+              <span className="truncate">{item.label}</span>
             </button>
           );
         })}
       </div>
 
-      <footer className="px-4 py-2 text-[10px] text-ink-dim border-t border-divider flex items-center gap-2">
+      <footer
+        className="px-4 py-2 text-[10px] flex items-center gap-2"
+        style={{
+          borderTop: "1px solid var(--border)",
+          color: "var(--text-muted)",
+          fontFamily: "var(--font-mono)",
+          letterSpacing: "0.06em",
+        }}
+      >
         <span>Python · React</span>
       </footer>
     </nav>

@@ -12,42 +12,39 @@ type Config = {
   label: string;
 };
 
-// Tailwind palette colours for critical/high/medium/low render the same in
-// light + dark mode (severity meaning shouldn't depend on theme). The "info"
-// row binds to project CSS variables so it inherits the theme.
 const config: Record<Severity, Config> = {
   critical: {
-    bg: "bg-red-500/15",
-    border: "border-red-500/50",
-    text: "text-red-400",
-    icon: "💀",
+    bg: "var(--critical-dim)",
+    border: "var(--critical)",
+    text: "var(--critical)",
+    icon: "▲",
     label: "Critical",
   },
   high: {
-    bg: "bg-orange-500/15",
-    border: "border-orange-500/50",
-    text: "text-orange-400",
-    icon: "🔥",
+    bg: "var(--high-dim)",
+    border: "var(--high)",
+    text: "var(--high)",
+    icon: "◆",
     label: "High",
   },
   medium: {
-    bg: "bg-yellow-500/15",
-    border: "border-yellow-500/50",
-    text: "text-yellow-400",
-    icon: "⚠️",
+    bg: "var(--medium-dim)",
+    border: "var(--medium)",
+    text: "var(--medium)",
+    icon: "■",
     label: "Medium",
   },
   low: {
-    bg: "bg-blue-400/15",
-    border: "border-blue-400/50",
-    text: "text-blue-400",
-    icon: "ℹ️",
+    bg: "var(--low-dim)",
+    border: "var(--low)",
+    text: "var(--low)",
+    icon: "●",
     label: "Low",
   },
   info: {
-    bg: "bg-[rgb(var(--ink-muted)/0.15)]",
-    border: "border-[rgb(var(--divider))]",
-    text: "text-[rgb(var(--ink-muted))]",
+    bg: "transparent",
+    border: "var(--border)",
+    text: "var(--text-muted)",
     icon: "○",
     label: "Info",
   },
@@ -55,7 +52,7 @@ const config: Record<Severity, Config> = {
 
 type Props = {
   severity: Severity;
-  label?: string;             // override default label (e.g. "CRITICAL")
+  label?: string;
   size?: "sm" | "xs";
   className?: string;
 };
@@ -67,18 +64,29 @@ export default function SeverityBadge({
   className = "",
 }: Props) {
   const c = config[severity];
-  const sizing =
-    size === "sm"
-      ? "px-2 py-0.5 text-[11px]"
-      : "px-1.5 py-[1px] text-[10px]";
+  const fs = size === "sm" ? 11 : 10;
+  const padX = size === "sm" ? 8 : 6;
+  const padY = size === "sm" ? 2 : 1;
   return (
     <span
-      className={
-        "inline-flex items-center gap-1 rounded border font-bold uppercase tracking-wider " +
-        `${c.bg} ${c.border} ${c.text} ${sizing} ${className}`
-      }
+      className={"inline-flex items-center gap-1 " + className}
+      style={{
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        color: c.text,
+        borderRadius: 999,
+        padding: `${padY}px ${padX}px`,
+        fontFamily: "var(--font-mono)",
+        fontSize: fs,
+        fontWeight: 700,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        lineHeight: 1.2,
+      }}
     >
-      <span aria-hidden className="leading-none">{c.icon}</span>
+      <span aria-hidden style={{ lineHeight: 1, fontSize: fs - 1 }}>
+        {c.icon}
+      </span>
       <span>{label ?? c.label}</span>
     </span>
   );

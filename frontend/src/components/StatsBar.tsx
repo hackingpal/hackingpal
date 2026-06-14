@@ -8,14 +8,10 @@ type Props = {
   high?: number;
   medium?: number;
   low?: number;
-  // Either pass elapsed seconds directly, or pass startedAt (ms epoch) and
-  // we'll tick once a second while `running` is true.
   elapsed?: number;
   startedAt?: number | null;
   running?: boolean;
-  // Results-per-second; if absent we derive it from total / elapsed.
   rate?: number;
-  // Optional extras (e.g. "stopped", "phase: probe")
   extra?: string;
   className?: string;
 };
@@ -41,14 +37,12 @@ export default function StatsBar({
   extra,
   className = "",
 }: Props) {
-  // Tick once a second while running so the elapsed display stays live.
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!running || startedAt == null) return;
     const id = window.setInterval(() => setTick((t) => t + 1), 1000);
     return () => window.clearInterval(id);
   }, [running, startedAt]);
-  // tick is referenced so React re-renders; the value itself is unused.
   void tick;
 
   const effElapsed =
@@ -69,43 +63,54 @@ export default function StatsBar({
     <div
       role="status"
       aria-live="polite"
-      className={
-        "flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-divider " +
-        "bg-bg-panel px-3 py-1.5 text-[11px] font-mono text-ink-muted " +
-        className
-      }
+      className={"flex flex-wrap items-center gap-x-3 gap-y-1 " + className}
+      style={{
+        padding: "8px 14px",
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg-elevated)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        color: "var(--text-secondary)",
+        letterSpacing: "0.02em",
+      }}
     >
-      <span className="text-ink-primary">
-        <strong className="font-bold">{total}</strong>
-        <span className="ml-1 text-ink-muted">{total === 1 ? "result" : "results"}</span>
+      <span style={{ color: "var(--text-primary)" }}>
+        <strong style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+          {total}
+        </strong>
+        <span style={{ marginLeft: 4, color: "var(--text-secondary)" }}>
+          {total === 1 ? "result" : "results"}
+        </span>
       </span>
 
       {critical > 0 && (
-        <span className="text-red-400">· {critical} critical</span>
+        <span style={{ color: "var(--critical)" }}>· {critical} critical</span>
       )}
       {high > 0 && (
-        <span className="text-orange-400">· {high} high</span>
+        <span style={{ color: "var(--high)" }}>· {high} high</span>
       )}
       {medium > 0 && (
-        <span className="text-yellow-400">· {medium} medium</span>
+        <span style={{ color: "var(--medium)" }}>· {medium} medium</span>
       )}
       {low > 0 && (
-        <span className="text-blue-400">· {low} low</span>
+        <span style={{ color: "var(--low)" }}>· {low} low</span>
       )}
 
       {(running || effElapsed > 0) && (
-        <span className="text-ink-muted">
+        <span style={{ color: "var(--text-secondary)" }}>
           · {running ? "running" : "ran"} {formatDuration(effElapsed)}
         </span>
       )}
 
       {effRate > 0 && (
-        <span className="text-ink-muted">
+        <span style={{ color: "var(--text-secondary)" }}>
           · {effRate.toFixed(effRate >= 10 ? 0 : 1)}/s
         </span>
       )}
 
-      {extra && <span className="text-ink-dim">· {extra}</span>}
+      {extra && (
+        <span style={{ color: "var(--text-muted)" }}>· {extra}</span>
+      )}
     </div>
   );
 }

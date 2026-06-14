@@ -9,10 +9,14 @@
  * Filtering is a tiny subsequence-match scorer: characters of the query must
  * appear in order in (label + section), case-insensitive. Adjacent matches
  * and matches at word boundaries score higher.
+ *
+ * Reads navigation from src/lib/nav.ts (filterGroups) — structure, names,
+ * and ordering are unchanged from before; only the chrome was restyled.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { filterGroups, type Platform } from "../lib/nav";
 import { usePlannedTools } from "../lib/plannedTools";
+import { popIn } from "../lib/anim";
 import type { NavId } from "./Sidebar";
 
 type FlatItem = {
@@ -23,20 +27,6 @@ type FlatItem = {
 
 type Scored = FlatItem & { score: number; hits: Set<number> };
 
-/**
- * Score how well `query` matches `target`. Returns
- *   {score: 0, hits: empty}  on no match
- *   {score: >0, hits: set of indexes in target that matched}  on hit.
- *
- * Score = sum of per-character contributions:
- *   +1   base hit
- *   +3   adjacent to the previous hit
- *   +5   matches at a word boundary (start, after non-alphanum, or capital)
- *   +10  matches at position 0
- *
- * Result is normalized by `target.length` so shorter labels rank higher when
- * everything else ties (LFI beats "Local Discovery" for "lf").
- */
 function score(query: string, target: string): { score: number; hits: Set<number> } {
   const q = query.toLowerCase();
   const t = target.toLowerCase();
@@ -66,7 +56,7 @@ function Highlight({ text, hits }: { text: string; hits: Set<number> }) {
   return (
     <>
       {[...text].map((ch, i) => hits.has(i)
-        ? <span key={i} className="text-accent font-bold">{ch}</span>
+        ? <span key={i} style={{ color: "var(--accent-bright)", fontWeight: 600 }}>{ch}</span>
         : <span key={i}>{ch}</span>)}
     </>
   );
@@ -84,6 +74,7 @@ export default function CommandPalette({ open, onClose, onSelect, platform }: Pr
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
 
   const planned = usePlannedTools();
   const flatItems = useMemo<FlatItem[]>(() => {
@@ -96,38 +87,48 @@ export default function CommandPalette({ open, onClose, onSelect, platform }: Pr
     return out;
   }, [platform, planned]);
 
+  // When the query is empty, show items grouped by section. When the user
+  // types, switch to a flat ranked list (grouping after fuzzy ranking would
+  // re-order the matches).
+  const grouped = useMemo(() => {
+    const map = new Map<string, FlatItem[]>();
+    for (const it of flatItems) {
+      const arr = map.get(it.section) ?? [];
+      arr.push(it);
+      map.set(it.section, arr);
+    }
+    return [...map.entries()];
+  }, [flatItems]);
+
   const results = useMemo<Scored[]>(() => {
     if (!query.trim()) {
       return flatItems.map((it) => ({ ...it, score: 1, hits: new Set<number>() }));
     }
     const scored: Scored[] = [];
     for (const it of flatItems) {
-      // Try the label first; if no hit, try "label · section" so e.g. "exploit"
-      // matches the WEB EXPLOIT section.
       const a = score(query, it.label);
       if (a.score > 0) { scored.push({ ...it, score: a.score, hits: a.hits }); continue; }
       const b = score(query, it.section);
       if (b.score > 0) scored.push({ ...it, score: b.score * 0.4, hits: new Set() });
     }
     scored.sort((x, y) => y.score - x.score);
-    return scored.slice(0, 12);
+    return scored.slice(0, 14);
   }, [query, flatItems]);
 
-  // Reset selection when the result set changes
   useEffect(() => { setSelected(0); }, [query]);
 
-  // Focus the input and clear query on open
   useEffect(() => {
     if (open) {
       setQuery("");
       setSelected(0);
       setTimeout(() => inputRef.current?.focus(), 0);
+      popIn(modalRef.current);
     }
   }, [open]);
 
-  // Scroll selected item into view
+  // Scroll selected row into view.
   useEffect(() => {
-    const el = listRef.current?.children?.[selected] as HTMLElement | undefined;
+    const el = listRef.current?.querySelector(`[data-cmd-row="${selected}"]`) as HTMLElement | null;
     el?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
@@ -148,62 +149,248 @@ export default function CommandPalette({ open, onClose, onSelect, platform }: Pr
     }
   }
 
+  const showGrouped = query.trim().length === 0;
+  // Flat ranked view: render `results` (already truncated to 14).
+  // Grouped view: render `grouped` keeping section order from nav.ts.
+
+  // Linear index → row index so keyboard nav lines up with rendered rows.
+  // In grouped mode we walk the groups in order and only the flat `results`
+  // indexes are kept in keyboard nav, so map the keyboard selection back to
+  // the matching id when rendering.
+  const activeId = results[selected]?.id;
+
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center pt-[18vh] px-4
-                 bg-bg-base/70 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-start justify-center pt-[14vh] px-4 animate-in"
+      style={{
+        background: "rgba(10, 10, 15, 0.55)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
+      }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="w-full max-w-lg bg-bg-card border border-divider rounded-lg shadow-2xl
-                      flex flex-col overflow-hidden">
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-divider">
-          <span className="text-ink-dim text-[11px] tracking-widest">⌘K</span>
+      <div
+        ref={modalRef}
+        className="w-full"
+        style={{
+          maxWidth: 560,
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border-bright)",
+          borderRadius: 12,
+          boxShadow: "0 24px 64px -16px rgba(0,0,0,0.55), 0 0 0 1px var(--border-accent)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          opacity: 0,   // GSAP fades it in via popIn() on open
+        }}
+      >
+        {/* Search input */}
+        <div
+          className="flex items-center gap-3 px-4"
+          style={{
+            height: 48,
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <svg
+            width={16} height={16} viewBox="0 0 24 24"
+            fill="none" stroke="var(--text-muted)" strokeWidth={2}
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden
+          >
+            <circle cx={11} cy={11} r={7} />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onKey}
             placeholder="Jump to tool…"
-            className="flex-1 bg-transparent text-ink-primary text-[14px] focus:outline-none
-                       placeholder:text-ink-dim"
+            style={{
+              flex: 1,
+              background: "transparent",
+              outline: "none",
+              border: "none",
+              fontFamily: "var(--font-sans)",
+              fontSize: 14,
+              color: "var(--text-primary)",
+            }}
           />
-          <span className="text-ink-dim text-[10px]">{results.length} of {flatItems.length}</span>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              color: "var(--text-muted)",
+            }}
+          >
+            {results.length} of {flatItems.length}
+          </span>
         </div>
 
-        <div ref={listRef}
-             className="max-h-[55vh] overflow-y-auto py-1">
+        {/* Results list */}
+        <div
+          ref={listRef}
+          style={{
+            maxHeight: "55vh",
+            overflowY: "auto",
+            padding: "6px 0",
+          }}
+        >
           {results.length === 0 && (
-            <div className="px-3 py-6 text-center text-ink-dim text-[12px]">
+            <div
+              style={{
+                padding: "32px 16px",
+                textAlign: "center",
+                color: "var(--text-muted)",
+                fontFamily: "var(--font-sans)",
+                fontSize: 12,
+              }}
+            >
               No matches for "{query}".
             </div>
           )}
-          {results.map((r, i) => (
-            <button
-              key={r.id}
-              onClick={() => { onSelect(r.id); onClose(); }}
-              onMouseMove={() => setSelected(i)}
-              className={
-                "w-full flex items-center gap-3 px-3 py-2 text-left text-[13px] " +
-                (i === selected
-                  ? "bg-bg-nav-active text-ink-primary"
-                  : "text-ink-primary hover:bg-bg-nav-hover")
-              }
-            >
-              <span className="flex-1 truncate">
-                <Highlight text={r.label} hits={r.hits} />
-              </span>
-              <span className="text-[10px] tracking-widest text-ink-dim">{r.section}</span>
-            </button>
-          ))}
+
+          {showGrouped
+            ? grouped.map(([section, items]) => (
+                <div key={section}>
+                  <div
+                    style={{
+                      padding: "8px 16px 4px",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: "0.16em",
+                      textTransform: "uppercase",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    {section}
+                  </div>
+                  {items.map((it) => {
+                    const isActive = it.id === activeId;
+                    const idx = results.findIndex((r) => r.id === it.id);
+                    return (
+                      <PaletteRow
+                        key={it.id}
+                        label={it.label}
+                        section={it.section}
+                        active={isActive}
+                        dataIndex={idx}
+                        onMouseEnter={() => idx >= 0 && setSelected(idx)}
+                        onClick={() => { onSelect(it.id); onClose(); }}
+                      />
+                    );
+                  })}
+                </div>
+              ))
+            : results.map((r, i) => (
+                <PaletteRow
+                  key={r.id}
+                  label={<Highlight text={r.label} hits={r.hits} />}
+                  section={r.section}
+                  active={i === selected}
+                  dataIndex={i}
+                  onMouseEnter={() => setSelected(i)}
+                  onClick={() => { onSelect(r.id); onClose(); }}
+                />
+              ))}
         </div>
 
-        <div className="border-t border-divider px-3 py-1.5 flex items-center gap-3
-                        text-[10px] text-ink-dim">
-          <span><kbd className="text-ink-muted">↑↓</kbd> navigate</span>
-          <span><kbd className="text-ink-muted">↵</kbd> open</span>
-          <span><kbd className="text-ink-muted">esc</kbd> close</span>
+        {/* Footer */}
+        <div
+          className="flex items-center gap-4 px-4"
+          style={{
+            height: 32,
+            borderTop: "1px solid var(--border)",
+            background: "var(--bg-surface)",
+            fontFamily: "var(--font-mono)",
+            fontSize: 10,
+            color: "var(--text-muted)",
+            letterSpacing: "0.06em",
+          }}
+        >
+          <Hint k="↑↓">navigate</Hint>
+          <Hint k="↵">open</Hint>
+          <Hint k="esc">close</Hint>
         </div>
       </div>
     </div>
+  );
+}
+
+function PaletteRow({
+  label, section, active, onClick, onMouseEnter, dataIndex,
+}: {
+  label: React.ReactNode;
+  section: string;
+  active: boolean;
+  onClick: () => void;
+  onMouseEnter: () => void;
+  dataIndex: number;
+}) {
+  return (
+    <button
+      data-cmd-row={dataIndex}
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        padding: "8px 16px",
+        background: active ? "var(--accent-dim)" : "transparent",
+        borderLeft: active
+          ? "2px solid var(--accent)"
+          : "2px solid transparent",
+        color: active ? "var(--text-accent)" : "var(--text-primary)",
+        fontFamily: "var(--font-sans)",
+        fontSize: 13,
+        textAlign: "left",
+        cursor: "pointer",
+        border: "none",
+        borderTop: "none",
+        borderRight: "none",
+        borderBottom: "none",
+        transition: "background 100ms ease, color 100ms ease",
+      }}
+    >
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {label}
+      </span>
+      <span
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          letterSpacing: "0.12em",
+          color: "var(--text-muted)",
+          textTransform: "uppercase",
+        }}
+      >
+        {section}
+      </span>
+    </button>
+  );
+}
+
+function Hint({ k, children }: { k: string; children: React.ReactNode }) {
+  return (
+    <span className="flex items-center gap-1">
+      <kbd
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 9,
+          padding: "1px 5px",
+          borderRadius: 4,
+          background: "var(--bg-elevated)",
+          color: "var(--text-secondary)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        {k}
+      </kbd>
+      <span>{children}</span>
+    </span>
   );
 }

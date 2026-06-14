@@ -9,7 +9,6 @@ type Props = {
   exampleTarget?: string;     // safe example (e.g. "scanme.nmap.org")
   onExample?: (target: string) => void;
   className?: string;
-  // Optional secondary line (e.g. "Press ▶ Start to scan")
   hint?: ReactNode;
 };
 
@@ -24,38 +23,93 @@ export default function EmptyState({
 }: Props) {
   return (
     <div
-      className={
-        "h-full min-h-[260px] flex items-center justify-center " + className
-      }
+      className={"flex items-center justify-center " + className}
+      style={{ minHeight: 260 }}
     >
       <div className="max-w-md text-center px-6">
-        <div className="text-5xl mb-3 select-none" aria-hidden>
+        <div
+          aria-hidden
+          style={{
+            fontSize: 48,
+            lineHeight: 1,
+            color: "var(--text-muted)",
+            marginBottom: 16,
+            userSelect: "none",
+          }}
+        >
           {icon}
         </div>
-        <div className="text-sm font-bold tracking-wide text-ink-primary">
+        <div
+          style={{
+            fontFamily: "var(--font-sans)",
+            fontSize: 15,
+            fontWeight: 600,
+            color: "var(--text-primary)",
+            letterSpacing: "-0.01em",
+          }}
+        >
           {title}
         </div>
-        <div className="mt-1 text-xs text-ink-muted leading-relaxed">
+        <div
+          style={{
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            color: "var(--text-secondary)",
+            lineHeight: 1.5,
+            marginTop: 6,
+          }}
+        >
           {description}
         </div>
         {exampleTarget && (
-          <div className="mt-4 text-[11px] text-ink-dim">
+          <div
+            style={{
+              marginTop: 16,
+              fontFamily: "var(--font-sans)",
+              fontSize: 11,
+              color: "var(--text-muted)",
+            }}
+          >
             Try{" "}
             {onExample ? (
               <button
                 onClick={() => onExample(exampleTarget)}
-                className="font-mono text-accent hover:text-accentDim underline
-                           underline-offset-2 decoration-dotted"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--accent-bright)",
+                  background: "var(--accent-dim)",
+                  border: "1px solid var(--border-accent)",
+                  borderRadius: 6,
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                  fontSize: 12,
+                }}
+                className="hover:!bg-[color:var(--accent-glow)]"
               >
                 {exampleTarget}
               </button>
             ) : (
-              <span className="font-mono text-accent">{exampleTarget}</span>
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--accent-bright)",
+                }}
+              >
+                {exampleTarget}
+              </span>
             )}
           </div>
         )}
         {hint && (
-          <div className="mt-3 text-[10px] text-ink-dim leading-relaxed">
+          <div
+            style={{
+              marginTop: 12,
+              fontFamily: "var(--font-sans)",
+              fontSize: 11,
+              color: "var(--text-muted)",
+              lineHeight: 1.5,
+            }}
+          >
             {hint}
           </div>
         )}
