@@ -238,6 +238,26 @@ def _check_hsts_and_redirect(host: str, port: int, timeout: float = 5.0) -> tupl
 
 @router.get("/tls/audit/{host}")
 async def tls_audit(host: str, request: Request, port: int = 443) -> dict[str, Any]:
+    # Accept "host:port" shape in the path param for consistency with
+    # /fingerprint/bulk and friends. The hostname validator rejects colons,
+    # so we split *before* validating. IPv6 has colons of its own — we keep
+    # this simple by only splitting when exactly one ':' is present (which
+    # excludes both bracket-form "[::1]:443" and bare "::1"). Users wanting
+    # IPv6 + non-default port should pass the `?port=` query string instead.
+    raw = host.strip()
+    if raw.count(":") == 1:
+        h_part, _, port_str = raw.rpartition(":")
+        if h_part and port_str:
+            host = h_part
+            try:
+                port = int(port_str)
+            except ValueError:
+                raise MhpError(
+                    "port must be a number",
+                    code=ErrorCode.INVALID_PORT,
+                    extra={"target": raw},
+                ) from None
+
     host = validate_hostname(host, field="host")
     port = validate_port(port, field="port")
 

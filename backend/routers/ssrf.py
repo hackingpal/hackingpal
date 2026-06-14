@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import time
 
 from urllib.parse import urlparse
@@ -139,9 +140,47 @@ async def ssrf_ws(ws: WebSocket) -> None:
         except Exception:
             logger.exception("audit_log.start failed (scan continues)")
 
+        # Reflection / catch-all oracle.
+        #
+        # Many endpoints that accept a URL parameter (e.g. a ping page that
+        # echoes the input back, or a static landing page) return the SAME
+        # response regardless of what the marker is replaced with. Without an
+        # oracle the scanner reported every loopback-bypass payload as a
+        # high-severity SSRF finding — 7 false positives observed against a
+        # cmdi page 2026-06-13.
+        #
+        # Fix: substitute the marker with a URL that's guaranteed not to
+        # resolve (RFC 6761 — `.invalid` TLD) and capture (status, length).
+        # Any payload whose response closely matches that signature is the
+        # endpoint reflecting input, not the server actually fetching the
+        # SSRF target — suppress the finding (still emit `attempt`).
+        bogus_url = f"http://_mhp_probe_{secrets.token_hex(6)}.invalid/"
+        baseline_resp = await web_fuzz.baseline(tmpl, sentinel=bogus_url, timeout=15.0)
+        baseline_sig: tuple[int, int] | None = None
+        if baseline_resp.status is not None:
+            baseline_sig = (baseline_resp.status, baseline_resp.length)
+
         await ws.send_json({"type": "started", "url": url,
                             "total_payloads": len(PAYLOADS),
-                            "audit_id": audit_id})
+                            "audit_id": audit_id,
+                            "baseline": (
+                                {"status": baseline_sig[0],
+                                 "length": baseline_sig[1],
+                                 "probe": bogus_url}
+                                if baseline_sig else None
+                            )})
+
+        def _matches_baseline(status: int | None, length: int) -> bool:
+            """True if a response is indistinguishable from the bogus-host
+            baseline within 2% length slop or 64 bytes — meaning the
+            endpoint is reflecting input rather than fetching the SSRF
+            target."""
+            if baseline_sig is None or status is None:
+                return False
+            if status != baseline_sig[0]:
+                return False
+            slop = max(64, baseline_sig[1] // 50)
+            return abs(length - baseline_sig[1]) <= slop
 
         listener = asyncio.create_task(listen_for_stop())
         t0 = time.monotonic()
@@ -160,12 +199,18 @@ async def ssrf_ws(ws: WebSocket) -> None:
             )
             r = await web_fuzz.baseline(local_tmpl, sentinel=p_url, timeout=15.0)
             hit_sig = web_fuzz.contains_any(r.body, sigs) if sigs else None
+            reflected = _matches_baseline(r.status, r.length)
             await ws.send_json({
                 "type": "attempt", "label": label, "payload": p_url,
                 "status": r.status, "length": r.length,
                 "elapsed_ms": r.elapsed_ms, "hit": hit_sig,
+                "reflected": reflected,
             })
-            if hit_sig:
+            # Gate findings on the oracle: a hit-signature match against a
+            # response that's indistinguishable from the bogus-host baseline
+            # is reflection, not real SSRF. Suppress the finding (the
+            # `attempt` row above already carries the visible state).
+            if hit_sig and not reflected:
                 findings += 1
                 if label.startswith("aws"):    confirmed_clouds.add("aws")
                 if label.startswith("azure"):  confirmed_clouds.add("azure")
@@ -206,6 +251,15 @@ async def ssrf_ws(ws: WebSocket) -> None:
                         headers={**tmpl.headers, **extra}, cookies=tmpl.cookies,
                     )
                     r = await web_fuzz.baseline(local_tmpl, sentinel=p, timeout=20.0)
+                    # Same oracle check — only emit when the response
+                    # materially differs from the bogus-host baseline.
+                    if _matches_baseline(r.status, r.length):
+                        await ws.send_json({
+                            "type": "attempt", "label": f"{cloud}-exploit",
+                            "payload": p, "status": r.status,
+                            "length": r.length, "reflected": True,
+                        })
+                        continue
                     await ws.send_json({
                         "type": "finding", "severity": "high",
                         "label": f"{cloud}-exploit",

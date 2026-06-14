@@ -78,19 +78,34 @@ SIGNATURES: list[tuple[str, str, list[tuple]]] = [
         ("html", r"data-reactroot=", None),
         ("html", r"_react(Listening|Container)", None),
         ("html", r"react(?:\.production)?\.min\.js", None),
+        ("html", r"<div\s+[^>]*id=[\"']root[\"'][^>]*>", None),
+        ("html", r"__REACT_DEVTOOLS_GLOBAL_HOOK__", None),
+        ("html", r"/[^\"'\s]*react[-.][^\"'\s]*\.js", None),
     ]),
     ("Vue.js", "JS framework", [
         ("html", r"data-v-[a-f0-9]{8}", None),
         ("html", r"vue(?:\.runtime)?(?:\.min)?\.js", None),
+        ("html", r"<div\s+[^>]*id=[\"']app[\"'][^>]*>", None),
+        ("html", r"__VUE_HMR_RUNTIME__", None),
     ]),
     ("Angular", "JS framework", [
-        ("html", r"ng-app=|ng-controller=|ng-version=\"([\d.]+)", 1),
+        # ng-version attribute is canonical — high-confidence on its own.
+        ("html", r"ng-version=\"([\d.]+)\"", 1),
+        ("html", r"<app-root[\s>]", None),
+        ("html", r"ng-app=|ng-controller=", None),
         ("html", r"@angular/", None),
+        # CLI default bundle filenames (runtime/polyfills/main with hashes).
+        ("html", r"runtime[.\-][a-f0-9]{8,}\.js", None),
+        ("html", r"polyfills[.\-][a-f0-9]{8,}\.js", None),
     ]),
     ("Next.js", "Framework", [
         ("html", r"/_next/static/", None),
+        ("html", r"<script[^>]+id=[\"']__NEXT_DATA__[\"']", None),
         ("html", r"__NEXT_DATA__", None),
         ("header", "x-powered-by", r"Next\.js ?([\d.]+)?", 1),
+    ]),
+    ("Node.js", "Backend", [
+        ("header", "x-powered-by", r"Express", None),
     ]),
     ("Nuxt.js", "Framework", [
         ("html", r"window\.__NUXT__", None),
@@ -190,15 +205,24 @@ SIGNATURES: list[tuple[str, str, list[tuple]]] = [
 ]
 
 
-def _fetch(url: str, timeout: float = 10.0) -> tuple[int, dict[str, str], str, str]:
-    """GET the URL (following up to 3 redirects).
+def _fetch(url: str, timeout: float = 10.0) -> tuple[int, dict[str, str], str, str, str]:
+    """GET the URL, following up to 5 redirects and aggregating signals across hops.
 
-    Returns (status, headers_lower, body_text_truncated, final_url).
+    Returns (final_status, merged_headers_lower, merged_body_text, final_url,
+    merged_set_cookie). Signals from intermediate redirect responses (server
+    header, set-cookie, X-Powered-By, etc.) are preserved so apps that redirect
+    `/` → `/login` still fingerprint their stack from the redirect hop.
     """
     import http.client
     seen: set[str] = set()
     cur = url
-    for _ in range(4):
+    merged_headers: dict[str, str] = {}
+    merged_cookies: list[str] = []
+    bodies: list[str] = []
+    last_status = 0
+    final_url = cur
+    MAX_HOPS = 6  # original + up to 5 redirects
+    for _ in range(MAX_HOPS):
         if cur in seen:
             break
         seen.add(cur)
@@ -225,20 +249,50 @@ def _fetch(url: str, timeout: float = 10.0) -> tuple[int, dict[str, str], str, s
                 "Connection": "close",
             })
             resp = conn.getresponse()
-            headers = {k.lower(): v for k, v in resp.getheaders()}
-            if resp.status in (301, 302, 307, 308) and headers.get("location"):
-                loc = headers["location"]
+            hop_headers = {k.lower(): v for k, v in resp.getheaders()}
+            # Aggregate every fingerprint-bearing header across hops (do not
+            # let a bland 200 page overwrite signals from the redirect hop).
+            for hk, hv in hop_headers.items():
+                if hk == "set-cookie":
+                    merged_cookies.append(hv)
+                elif hk not in merged_headers or not merged_headers[hk]:
+                    merged_headers[hk] = hv
+            last_status = resp.status
+            final_url = cur
+            if resp.status in (301, 302, 303, 307, 308) and hop_headers.get("location"):
+                loc = hop_headers["location"]
                 if not loc.startswith("http"):
                     loc = f"{scheme}://{host}{loc if loc.startswith('/') else '/' + loc}"
+                # Read (and keep) any body the redirect hop served — sometimes
+                # the HTML includes <meta refresh> or framework markers.
+                try:
+                    hop_body = resp.read(64 * 1024).decode("utf-8", errors="replace")
+                    if hop_body.strip():
+                        bodies.append(hop_body)
+                except Exception:
+                    pass
                 cur = loc
                 conn.close()
                 continue
             body = resp.read(200 * 1024).decode("utf-8", errors="replace")
+            bodies.append(body)
             conn.close()
-            return resp.status, headers, body, cur
+            merged_cookie_str = "\n".join(merged_cookies)
+            if "set-cookie" not in merged_headers and merged_cookie_str:
+                merged_headers["set-cookie"] = merged_cookie_str
+            return last_status, merged_headers, "\n".join(bodies), final_url, merged_cookie_str
         except Exception as exc:
-            return 0, {}, str(exc), cur
-    return 0, {}, "(too many redirects)", cur
+            # Only return a hard failure if we have not yet collected ANY
+            # successful response. Otherwise return what we managed to gather.
+            if not merged_headers and not bodies:
+                return 0, {}, str(exc), cur, ""
+            break
+    merged_cookie_str = "\n".join(merged_cookies)
+    if "set-cookie" not in merged_headers and merged_cookie_str:
+        merged_headers["set-cookie"] = merged_cookie_str
+    if not merged_headers and not bodies:
+        return 0, {}, "(too many redirects)", cur, ""
+    return last_status or 0, merged_headers, "\n".join(bodies), final_url, merged_cookie_str
 
 
 def _match_signatures(
@@ -298,12 +352,16 @@ def _match_signatures(
             except IndexError:
                 continue
 
-    # Confidence: 2+ signals = high; otherwise med (if version) or low
+    # Confidence: 2+ signals = high; otherwise med (if version) or low.
+    # Special case: Angular ng-version is canonical — promote to high even
+    # on a single signal.
     for f in found:
         if len(f["signals"]) >= 2:
             f["confidence"] = "high"
         elif f["version"]:
             f["confidence"] = "med"
+        if f["name"] == "Angular" and any("ng-version" in s for s in f["signals"]):
+            f["confidence"] = "high"
 
     return found
 
@@ -326,7 +384,7 @@ async def cms_fingerprint(request: Request,
     )
 
     t0 = time.monotonic()
-    status, headers, body, final_url = await asyncio.to_thread(_fetch, url)
+    status, headers, body, final_url, set_cookie = await asyncio.to_thread(_fetch, url)
     if status == 0:
         logger.info("cms fingerprint fetch failed host=%s", host)
         raise MhpError(
@@ -336,7 +394,6 @@ async def cms_fingerprint(request: Request,
             extra={"target": host},
         )
 
-    set_cookie = headers.get("set-cookie", "")
     matches = _match_signatures(headers, body, set_cookie)
 
     by_cat: dict[str, list[dict[str, Any]]] = {}

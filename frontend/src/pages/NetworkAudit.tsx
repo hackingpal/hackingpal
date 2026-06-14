@@ -33,6 +33,7 @@ export default function NetworkAudit() {
   const [rows,    setRows]    = useState<Row[]>([]);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [targetHost, setTargetHost] = useState("");
   const wsRef = useRef<WebSocket | null>(null);
 
   const pulsing = useCriticalPulseSet(
@@ -52,9 +53,12 @@ export default function NetworkAudit() {
     setPhase(null); setPct(0); setLabel(""); setRows([]); setElapsed(null);
     setStartedAt(Date.now());
 
+    const trimmedTarget = targetHost.trim();
     const ws = openWs("/ws/audit");
     wsRef.current = ws;
-    ws.onopen = () => ws.send(JSON.stringify({}));
+    ws.onopen = () => ws.send(JSON.stringify(
+      trimmedTarget ? { target_host: trimmedTarget } : {},
+    ));
 
     ws.onmessage = (e) => {
       const ev = JSON.parse(e.data) as AuditEvent;
@@ -110,6 +114,27 @@ export default function NetworkAudit() {
           <div className="flex-1 text-xs text-ink-muted">
             Discovers live hosts on your subnet and checks each for insecure
             open ports (FTP, Telnet, SMB, RDP, etc.).
+          </div>
+          <div className="flex flex-col">
+            <label className="text-[10px] uppercase tracking-[0.2em] text-ink-dim mb-1">
+              Target host (optional)
+            </label>
+            <input
+              type="text"
+              value={targetHost}
+              onChange={(e) => setTargetHost(e.target.value)}
+              disabled={running}
+              placeholder="e.g. 127.0.0.1"
+              className="bg-bg-card border border-divider rounded px-2 py-1
+                         text-xs font-mono text-ink-primary placeholder:text-ink-dim
+                         focus:border-accent focus:outline-none w-48
+                         disabled:opacity-50"
+            />
+            {targetHost.trim() && (
+              <div className="mt-1 text-[10px] text-amber font-mono">
+                Discovery skipped — auditing this host only
+              </div>
+            )}
           </div>
           {!running ? (
             <button onClick={start}

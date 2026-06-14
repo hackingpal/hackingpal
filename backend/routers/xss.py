@@ -17,6 +17,7 @@ WS  /ws/xss
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -58,6 +59,36 @@ PAYLOAD_TEMPLATES = [
     "<details open ontoggle=alert('{S}')>",
     "<body onload=alert('{S}')>",
 ]
+
+
+def _is_json_content_type(headers: dict[str, str]) -> bool:
+    """True if the response Content-Type is application/json or application/*+json."""
+    ct = (headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+    if not ct:
+        return False
+    if ct == "application/json":
+        return True
+    # application/*+json (e.g. application/vnd.api+json, application/hal+json)
+    if ct.startswith("application/") and ct.endswith("+json"):
+        return True
+    return False
+
+
+def _find_payload_in_json(node, payload: str, path: str = ""):
+    """Walk a parsed JSON tree depth-first; yield (json_path, value) for every
+    string value that contains the payload as a substring. Path uses dotted/
+    bracketed notation: `data[0].name`."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            child_path = f"{path}.{k}" if path else k
+            yield from _find_payload_in_json(v, payload, child_path)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            child_path = f"{path}[{i}]"
+            yield from _find_payload_in_json(v, payload, child_path)
+    elif isinstance(node, str):
+        if payload in node:
+            yield path or "$", node
 
 
 def classify_context(body: str, payload: str) -> str:
@@ -188,6 +219,30 @@ async def xss_ws(ws: WebSocket) -> None:
                     "payload": r.payload, "context": context,
                     "evidence": evidence, "confirmed": confirmed,
                 })
+            # JSON-reflected XSS — SPA frontends (e.g. Juice Shop) often render
+            # JSON responses through client-side templates. The HTML-reflection
+            # check above misses these because the payload lands inside an
+            # escaped JSON string value, not raw HTML. Additive only: we still
+            # run after the HTML check so the existing logic is unchanged.
+            elif _is_json_content_type(r.headers) and r.body:
+                try:
+                    parsed = json.loads(r.body)
+                except (ValueError, json.JSONDecodeError):
+                    parsed = None
+                if parsed is not None:
+                    for json_path, value in _find_payload_in_json(parsed, r.payload):
+                        findings += 1
+                        snippet = value if len(value) <= 100 else value[:100] + "…"
+                        evidence = f"{json_path}: {snippet!r}"
+                        await ws.send_json({
+                            "type": "finding", "severity": "info",
+                            "payload": r.payload, "context": "json-reflected",
+                            "evidence": evidence, "confirmed": False,
+                            "detail": "Reflected in JSON — verify manually in any client-side template render",
+                        })
+                        # One finding per response is enough; further matches
+                        # within the same JSON tree are noise.
+                        break
             if done % 2 == 0 or done == total:
                 await ws.send_json({"type": "progress",
                                     "done": done, "total": total, "findings": findings})

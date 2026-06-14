@@ -19,6 +19,7 @@ WS    /ws/dns-recon
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import socket
 import subprocess
@@ -29,11 +30,30 @@ from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
 
 from lib import hids_notify
 from lib.auth import require_local_auth
-from lib.errors import ErrorCode, ws_error
+from lib.errors import ErrorCode, MhpError, ws_error
 from lib import scope
 from lib.mode import get_mode
 from lib.target_policy import check_target, require_target
 from lib.validators import validate_domain
+
+
+def _reject_if_ip(domain: str, *, field: str = "domain") -> None:
+    """Reject IP-shaped input on DNS recon endpoints.
+
+    `validate_domain` accepts all-numeric labels like "127.0.0.1" because
+    they technically satisfy the hostname grammar, but DNS recon on a bare
+    IP is meaningless and produces a confusingly empty result. Detect
+    IPv4/IPv6 literals here and reject with INVALID_DOMAIN so the caller
+    sees the same error envelope shape as the localhost rejection.
+    """
+    try:
+        ipaddress.ip_address(domain)
+    except ValueError:
+        return
+    raise MhpError(
+        f"{field} is an IP address — use /whois/<ip> for IP intel",
+        code=ErrorCode.INVALID_DOMAIN,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +147,7 @@ def _try_axfr(domain: str, ns: str) -> tuple[bool, int, str]:
 
 @router.get("/dns/recon/{domain}")
 async def dns_recon(domain: str, confirm: bool = Query(default=False)) -> dict[str, Any]:
+    _reject_if_ip(domain.strip().rstrip("."))
     domain = validate_domain(domain)
     require_target(domain, confirm=confirm)
 
@@ -239,6 +260,7 @@ async def dns_recon_ws(ws: WebSocket) -> None:
         )
 
         try:
+            _reject_if_ip(raw_domain.rstrip("."))
             domain = validate_domain(raw_domain, field="domain")
         except Exception as exc:
             await ws.send_json(ws_error(

@@ -8,6 +8,7 @@ Protocol (`/ws/audit`):
     client -> server:
         {}                                 // auto-detect subnet
         {"network": "192.168.0.0/24"}
+        {"target_host": "127.0.0.1"}        // skip Phase 1, audit single host
         {"action": "stop"}                  // any time
 
     server -> client:
@@ -32,8 +33,8 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from lib import audit, hids_notify, lan
-from lib.errors import ErrorCode, ws_error
-from lib.validators import MAX_TARGET_LEN
+from lib.errors import ErrorCode, MhpError, ws_error
+from lib.validators import MAX_TARGET_LEN, validate_target
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +64,42 @@ async def audit_ws(ws: WebSocket) -> None:
     try:
         init: dict[str, Any] = await ws.receive_json()
         my_ip = lan.local_ip()
+        raw_target = init.get("target_host")
+        if isinstance(raw_target, str):
+            raw_target = raw_target.strip()
+        else:
+            raw_target = ""
         raw_net = init.get("network")
-        if raw_net:
+        if raw_target:
+            # Single-host override: validate, resolve, skip Phase 1.
+            if len(raw_target) > MAX_TARGET_LEN:
+                await ws.send_json(ws_error(
+                    ErrorCode.INVALID_TARGET,
+                    f"target_host too long (max {MAX_TARGET_LEN} chars)",
+                ))
+                await ws.close(); return
+            try:
+                normalised = validate_target(raw_target, field="target_host")
+            except MhpError as exc:
+                await ws.send_json(ws_error(
+                    exc.code, str(exc),
+                ))
+                await ws.close(); return
+            # Resolve hostname -> IP if needed so downstream code sees an IP.
+            try:
+                ipaddress.ip_address(normalised)
+                target_ip = normalised
+            except ValueError:
+                try:
+                    target_ip = socket.gethostbyname(normalised)
+                except OSError as exc:
+                    await ws.send_json(ws_error(
+                        ErrorCode.INVALID_TARGET,
+                        f"could not resolve target_host: {exc}",
+                    ))
+                    await ws.close(); return
+            base, prefix = target_ip, 32
+        elif raw_net:
             # Strip + length cap before letting ipaddress parse: the network
             # spec is user input and ipaddress will happily parse a 10 MB
             # string before failing.
@@ -89,60 +124,86 @@ async def audit_ws(ws: WebSocket) -> None:
 
         listener = asyncio.create_task(listen_for_stop())
         try:
-            targets = [h for h in lan.subnet_hosts(base, prefix) if h != my_ip]
-            arp     = lan.arp_cache()
-            t0      = time.monotonic()
-
-            await ws.send_json({
-                "type": "started",
-                "local_ip":    my_ip,
-                "network":     f"{base}/{prefix}",
-                "total_hosts": len(targets) + 1,
-            })
-
-            # ── Phase 1: discovery ────────────────────────────────────────
-            await ws.send_json({"type": "phase", "phase": "discovery"})
-
-            last_progress_at = 0.0
-            discovered: list[tuple[str, str, bool]] = []   # (ip, hostname, is_self)
-            try:
-                my_hostname = socket.gethostname()
-            except Exception:
-                my_hostname = ""
-            discovered.append((my_ip, my_hostname, True))
-
-            disc_lock = asyncio.Lock()
-
-            def on_disc_host(ip: str, hostname: str, mac: str) -> None:
-                # We don't surface every alive host yet — we wait for audit
-                # results. Just buffer for Phase 2.
-                discovered.append((ip, hostname, False))
-
-            def on_disc_progress(d: int, tot: int, found: int) -> None:
-                nonlocal last_progress_at
-                now = time.monotonic()
-                if d < tot and now - last_progress_at < 0.07:
-                    return
-                last_progress_at = now
-                pct = (d / tot) * 0.5 if tot else 0.5
-                asyncio.run_coroutine_threadsafe(
-                    ws.send_json({"type": "progress", "pct": pct,
-                                  "label": f"Discovering {d}/{tot} · {found} found"}),
-                    loop,
-                )
+            single_host_mode = bool(raw_target)
+            t0 = time.monotonic()
 
             def should_stop() -> bool:
                 return stop.is_set()
 
-            await loop.run_in_executor(
-                None,
-                lambda: lan.scan_stream(
-                    targets, arp,
-                    on_host=on_disc_host,
-                    on_progress=on_disc_progress,
-                    should_stop=should_stop,
-                ),
-            )
+            discovered: list[tuple[str, str, bool]] = []   # (ip, hostname, is_self)
+
+            if single_host_mode:
+                # Skip Phase 1 entirely — treat target_ip as the sole live host.
+                target_hostname = ""
+                if raw_target != target_ip:
+                    # User typed a hostname; preserve it for the row label.
+                    target_hostname = raw_target
+                else:
+                    try:
+                        target_hostname = socket.gethostbyaddr(target_ip)[0]
+                    except (OSError, socket.herror):
+                        target_hostname = ""
+                discovered.append((target_ip, target_hostname, target_ip == my_ip))
+
+                await ws.send_json({
+                    "type": "started",
+                    "local_ip":    my_ip,
+                    "network":     f"{base}/{prefix}",
+                    "total_hosts": 1,
+                })
+                await ws.send_json({"type": "phase", "phase": "discovery"})
+                await ws.send_json({
+                    "type": "progress", "pct": 0.5,
+                    "label": f"Discovery skipped · auditing {target_ip}",
+                })
+            else:
+                targets = [h for h in lan.subnet_hosts(base, prefix) if h != my_ip]
+                arp     = lan.arp_cache()
+
+                await ws.send_json({
+                    "type": "started",
+                    "local_ip":    my_ip,
+                    "network":     f"{base}/{prefix}",
+                    "total_hosts": len(targets) + 1,
+                })
+
+                # ── Phase 1: discovery ────────────────────────────────────
+                await ws.send_json({"type": "phase", "phase": "discovery"})
+
+                last_progress_at = 0.0
+                try:
+                    my_hostname = socket.gethostname()
+                except Exception:
+                    my_hostname = ""
+                discovered.append((my_ip, my_hostname, True))
+
+                def on_disc_host(ip: str, hostname: str, mac: str) -> None:
+                    # We don't surface every alive host yet — we wait for audit
+                    # results. Just buffer for Phase 2.
+                    discovered.append((ip, hostname, False))
+
+                def on_disc_progress(d: int, tot: int, found: int) -> None:
+                    nonlocal last_progress_at
+                    now = time.monotonic()
+                    if d < tot and now - last_progress_at < 0.07:
+                        return
+                    last_progress_at = now
+                    pct = (d / tot) * 0.5 if tot else 0.5
+                    asyncio.run_coroutine_threadsafe(
+                        ws.send_json({"type": "progress", "pct": pct,
+                                      "label": f"Discovering {d}/{tot} · {found} found"}),
+                        loop,
+                    )
+
+                await loop.run_in_executor(
+                    None,
+                    lambda: lan.scan_stream(
+                        targets, arp,
+                        on_host=on_disc_host,
+                        on_progress=on_disc_progress,
+                        should_stop=should_stop,
+                    ),
+                )
 
             if stop.is_set():
                 await ws.send_json({"type": "done",

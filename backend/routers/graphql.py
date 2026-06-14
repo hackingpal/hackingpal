@@ -128,6 +128,37 @@ async def graphql_introspect(
         )
 
     elapsed = round(time.monotonic() - t0, 2)
+    content_type = (headers.get("content-type") or "").lower().strip()
+    ct_main = content_type.split(";", 1)[0].strip()
+    valid_ct = ct_main in ("application/json", "application/graphql-response+json")
+
+    # Gate 1: HTTP status must be exactly 200.
+    if status != 200:
+        return {
+            "url": url, "host": host_used, "status_code": status,
+            "introspection_enabled": False,
+            "elapsed_seconds": elapsed,
+            "raw_preview": data[:600].decode("utf-8", errors="replace"),
+            "findings": [{"severity": "info",
+                          "label": "Not a GraphQL introspection response",
+                          "detail": f"Response was status={status}, content-type={ct_main or 'unknown'} — not a GraphQL endpoint"}],
+            "policy": {"verdict": verdict, "reason": reason},
+        }
+
+    # Gate 2: Content-Type must be application/json or application/graphql-response+json.
+    if not valid_ct:
+        return {
+            "url": url, "host": host_used, "status_code": status,
+            "introspection_enabled": False,
+            "elapsed_seconds": elapsed,
+            "raw_preview": data[:600].decode("utf-8", errors="replace"),
+            "findings": [{"severity": "info",
+                          "label": "Not a GraphQL introspection response",
+                          "detail": f"Response was status={status}, content-type={ct_main or 'unknown'} — not a GraphQL endpoint"}],
+            "policy": {"verdict": verdict, "reason": reason},
+        }
+
+    # Gate 3: Body must parse as JSON.
     try:
         resp = json.loads(data)
     except Exception:
@@ -138,7 +169,18 @@ async def graphql_introspect(
             "raw_preview": data[:600].decode("utf-8", errors="replace"),
             "findings": [{"severity": "info",
                           "label": "Response is not JSON",
-                          "detail": "Endpoint may not be GraphQL"}],
+                          "detail": f"Response was status={status}, content-type={ct_main} but body did not parse as JSON"}],
+            "policy": {"verdict": verdict, "reason": reason},
+        }
+
+    if not isinstance(resp, dict):
+        return {
+            "url": url, "host": host_used, "status_code": status,
+            "introspection_enabled": False,
+            "elapsed_seconds": elapsed,
+            "findings": [{"severity": "info",
+                          "label": "Unexpected JSON shape",
+                          "detail": "Top-level JSON was not an object — not a GraphQL response"}],
             "policy": {"verdict": verdict, "reason": reason},
         }
 
@@ -154,7 +196,21 @@ async def graphql_introspect(
             "policy": {"verdict": verdict, "reason": reason},
         }
 
-    schema = (resp.get("data") or {}).get("__schema") or {}
+    # Gate 4: Parsed JSON must have a data.__schema object.
+    data_obj = resp.get("data")
+    schema_obj = (data_obj or {}).get("__schema") if isinstance(data_obj, dict) else None
+    if not isinstance(schema_obj, dict):
+        return {
+            "url": url, "host": host_used, "status_code": status,
+            "introspection_enabled": False,
+            "elapsed_seconds": elapsed,
+            "findings": [{"severity": "info",
+                          "label": "No introspection schema in response",
+                          "detail": "Response parsed as JSON but did not contain data.__schema — endpoint may not be GraphQL or introspection is disabled"}],
+            "policy": {"verdict": verdict, "reason": reason},
+        }
+
+    schema = schema_obj
     types_raw = schema.get("types") or []
 
     query_type = (schema.get("queryType") or {}).get("name") or ""
