@@ -8,6 +8,7 @@ import {
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
+import ToolRequirements from "../components/ToolRequirements";
 import { useLabIntent } from "../lib/labIntent";
 
 // ── Profile presets (partial overrides applied on top of `defaultOptions()`) ──
@@ -361,6 +362,7 @@ export default function Nmap() {
 
   return (
     <div className="h-full flex flex-col">
+      <div className="px-6 pt-3"><ToolRequirements toolId="nmap" /></div>
       {/* Header */}
       <header className="border-b border-divider px-6 pt-4 pb-3 space-y-3">
         <div className="flex items-end gap-6">

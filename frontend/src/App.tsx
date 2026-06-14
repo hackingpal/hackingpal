@@ -89,6 +89,7 @@ import ToolLibrary from "./pages/ToolLibrary";
 import Targets from "./pages/Targets";
 import EngagementWorkspace from "./pages/EngagementWorkspace";
 import PlaybookBuilder from "./pages/PlaybookBuilder";
+import ToolStatus from "./pages/ToolStatus";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import EngagementPill from "./components/EngagementPill";
@@ -312,6 +313,7 @@ export default function App() {
            active === "engagements" ? <Engagements /> :
            active === "targets"     ? <Targets onJumpTo={navigate} /> :
            active === "tools"       ? <ToolLibrary onOpenTool={navigate} /> :
+           active === "tool-status" ? <ToolStatus onJumpTo={navigate} /> :
            active === "workspace"   ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "evidence"    ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "reports"     ? <EngagementWorkspace onJumpTo={navigate} /> :
