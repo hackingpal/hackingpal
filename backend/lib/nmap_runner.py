@@ -336,6 +336,15 @@ def build_argv(opts: NmapOptions, nmap_bin: str, xml_path: str) -> list[str]:
         s = s.strip()
         if s and re.fullmatch(r"[A-Za-z0-9_\-*?,./]+", s):
             scripts.append(s)
+
+    # Auto-include the MyHackingPal Node/Express/Juice Shop fingerprint NSE
+    # whenever the caller asked for service+version detection. Plugs the gap
+    # where stock nmap returns `us-srv?` for Node app servers (see GH #7).
+    if opts.service_version:
+        mhp_nse = Path(__file__).parent / "nse" / "mhp-http-fingerprint.nse"
+        if mhp_nse.is_file():
+            scripts.append(str(mhp_nse))
+
     if scripts:
         argv += ["--script", ",".join(scripts)]
     if opts.nse_args.strip():
