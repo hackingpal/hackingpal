@@ -608,9 +608,14 @@ export type HttpProbeEvent =
       type: "started"; base: string; host: string; scheme: string;
       methods_allowed: string[]; wordlist_size: number;
       headers: Record<string, string>;
+      // Present when the backend's pre-probe detected a single-page-app
+      // catch-all: a bogus path returned 200 + this length, so hits with
+      // the same fingerprint are likely SPA fallbacks, not real exposures.
+      spa_fallback: { status: number; length: number } | null;
     }
   | { type: "finding";  severity: "info" | "warn" | "high"; label: string; detail: string }
-  | { type: "hit";      path: string; status: number; length: number; location: string }
+  | { type: "hit";      path: string; status: number; length: number; location: string;
+                        spa_fallback?: boolean }
   | { type: "progress"; done: number; total: number; hits: number }
   | { type: "done";     elapsed: number; hits: number; stopped: boolean }
   | { type: "error";    detail: string; need_confirm?: boolean };

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 import ssl
 import time
 from typing import Any
@@ -223,12 +224,37 @@ async def http_probe_ws(ws: WebSocket) -> None:
             wordlist = PATHS_MEDIUM if wordlist_key == "medium" else PATHS_SMALL
             total = len(wordlist)
 
+            # SPA / catch-all probe.
+            #
+            # Single-page apps (Juice Shop, modern React/Vue/Angular apps)
+            # serve the same index.html for any path the client-side router
+            # doesn't recognise. Without detecting this we report every
+            # wordlist entry as "Sensitive path exposed" — 13 false-positive
+            # highs on Juice Shop, observed 2026-06-13.
+            #
+            # Fix: request a path that cannot possibly exist on a real
+            # backend. If that returns 200, record the (status, length)
+            # signature; any subsequent hit matching that signature is the
+            # SPA fallback, not a real exposure.
+            bogus_path = f"/_mhp_probe_{secrets.token_hex(6)}"
+            spa_status, spa_headers, spa_len, _ = await asyncio.to_thread(
+                _http_request, scheme, host, port, base + bogus_path,
+                method="HEAD", timeout=4.0,
+            )
+            spa_signature: tuple[int, int] | None = None
+            if spa_status == 200 and spa_len > 0:
+                spa_signature = (spa_status, spa_len)
+
             await ws.send_json({
                 "type": "started",
                 "base": f"{scheme}://{host}:{port}{base}",
                 "host": host, "scheme": scheme,
                 "methods_allowed": methods,
                 "wordlist_size": total,
+                "spa_fallback": (
+                    {"status": spa_signature[0], "length": spa_signature[1]}
+                    if spa_signature else None
+                ),
                 "headers": {k: base_headers.get(k, "") for k in (
                     "server", "x-powered-by", "strict-transport-security",
                     "content-security-policy", "x-frame-options",
@@ -239,6 +265,19 @@ async def http_probe_ws(ws: WebSocket) -> None:
 
             # Pre-emit header-based findings
             await _emit_security_findings(ws, base_headers, scheme)
+
+            if spa_signature:
+                await ws.send_json({
+                    "type": "finding", "severity": "info",
+                    "label": "Catch-all 200 response detected",
+                    "detail": (
+                        f"Bogus path {bogus_path} returned 200 "
+                        f"({spa_signature[1]} bytes). Likely a single-page "
+                        f"app — hits with the same size are flagged as "
+                        f"spa-fallback and suppressed from sensitive-path "
+                        f"findings."
+                    ),
+                })
 
             # Step 2 — concurrent path probe
             sem = asyncio.Semaphore(concurrency)
@@ -259,6 +298,14 @@ async def http_probe_ws(ws: WebSocket) -> None:
                         method="HEAD", timeout=4.0,
                     )
                 done += 1
+                # A hit is "SPA fallback" if it matches the catch-all signature
+                # we captured pre-loop. Allow a small slop (2% or 64 bytes) for
+                # CSRF tokens / nonces that shift the body length slightly.
+                is_spa_fallback = (
+                    spa_signature is not None
+                    and status == spa_signature[0]
+                    and abs(length - spa_signature[1]) <= max(64, spa_signature[1] // 50)
+                )
                 if status is None:
                     pass
                 elif status in INTERESTING_STATUSES:
@@ -270,8 +317,11 @@ async def http_probe_ws(ws: WebSocket) -> None:
                         "status": status,
                         "length": length,
                         "location": location,
+                        "spa_fallback": is_spa_fallback,
                     })
-                    if status == 200 and any(full.startswith(pre) for pre in DANGEROUS_PATHS_PREFIXES):
+                    if (status == 200
+                            and any(full.startswith(pre) for pre in DANGEROUS_PATHS_PREFIXES)
+                            and not is_spa_fallback):
                         await ws.send_json({
                             "type": "finding", "severity": "high",
                             "label": "Sensitive path exposed",

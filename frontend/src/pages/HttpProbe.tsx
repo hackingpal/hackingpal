@@ -5,7 +5,7 @@ import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
 
-type Hit = { path: string; status: number; length: number; location: string };
+type Hit = { path: string; status: number; length: number; location: string; spa_fallback?: boolean };
 
 const SEV: Record<string, { text: string; dot: string }> = {
   info: { text: "text-ink-muted", dot: "bg-ink-dim" },
@@ -34,6 +34,7 @@ export default function HttpProbe() {
   const [started, setStarted] = useState<{
     base: string; methods_allowed: string[]; wordlist_size: number;
     headers: Record<string, string>;
+    spa_fallback: { status: number; length: number } | null;
   } | null>(null);
   const [findings, setFindings] = useState<HttpProbeFinding[]>([]);
   const [hits, setHits] = useState<Hit[]>([]);
@@ -80,12 +81,16 @@ export default function HttpProbe() {
           methods_allowed: ev.methods_allowed,
           wordlist_size: ev.wordlist_size,
           headers: ev.headers,
+          spa_fallback: ev.spa_fallback,
         });
         setProgress({ done: 0, total: ev.wordlist_size });
       } else if (ev.type === "finding") {
         setFindings((f) => [...f, { severity: ev.severity, label: ev.label, detail: ev.detail }]);
       } else if (ev.type === "hit") {
-        setHits((h) => [...h, { path: ev.path, status: ev.status, length: ev.length, location: ev.location }]);
+        setHits((h) => [...h, {
+          path: ev.path, status: ev.status, length: ev.length,
+          location: ev.location, spa_fallback: ev.spa_fallback,
+        }]);
       } else if (ev.type === "progress") {
         setProgress({ done: ev.done, total: ev.total });
       } else if (ev.type === "done") {
@@ -316,10 +321,21 @@ export default function HttpProbe() {
                     <div
                       key={i}
                       style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
-                      className="group grid grid-cols-[60px_1fr_60px_2fr_auto] gap-x-3 items-center mhp-result-in"
+                      className={
+                        "group grid grid-cols-[60px_1fr_60px_2fr_auto] gap-x-3 items-center mhp-result-in " +
+                        (h.spa_fallback ? "opacity-60" : "")
+                      }
+                      title={h.spa_fallback ? "SPA fallback — server returned the catch-all index page" : undefined}
                     >
                       <span className={statusColor(h.status)}>{h.status}</span>
-                      <span className="text-ink-primary break-all">{h.path}</span>
+                      <span className="text-ink-primary break-all">
+                        {h.path}
+                        {h.spa_fallback && (
+                          <span className="ml-2 text-[9px] uppercase tracking-wider text-ink-dim border border-divider rounded px-1 py-0.5 align-middle">
+                            spa
+                          </span>
+                        )}
+                      </span>
                       <span className="text-ink-muted text-right">{h.length}</span>
                       <span className="text-ink-muted break-all">{h.location || "—"}</span>
                       <CopyButton text={`${h.status} ${h.path}${h.location ? ` → ${h.location}` : ""}`} />
