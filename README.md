@@ -1,8 +1,16 @@
-# MyHackingPal
+<p align="center">
+  <img src="docs/brand/icon.png" alt="MyHackingPal" width="120" height="120" />
+</p>
 
-![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Docker-blue)
-![Windows](https://img.shields.io/badge/Windows-experimental%20%2F%20deferred-lightgrey)
-[![Release](https://img.shields.io/github/v/release/myhackingpal/myhackingpal?include_prereleases&label=release)](https://github.com/myhackingpal/myhackingpal/releases/latest)
+<h1 align="center">MyHackingPal</h1>
+
+<p align="center"><em>AI-assisted security workspace for authorized engagements.</em></p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Docker-blue" alt="Platforms" />
+  <img src="https://img.shields.io/badge/Windows-experimental%20%2F%20deferred-lightgrey" alt="Windows" />
+  <a href="https://github.com/myhackingpal/myhackingpal/releases/latest"><img src="https://img.shields.io/github/v/release/myhackingpal/myhackingpal?include_prereleases&label=release" alt="Release" /></a>
+</p>
 
 > 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
 

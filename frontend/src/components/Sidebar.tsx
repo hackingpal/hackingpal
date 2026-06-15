@@ -1,24 +1,19 @@
 import { useMemo } from "react";
 
-// MyHackingPal brand mark — 7 Apple-rainbow bars on a black square.
-// Rendered inline so it scales crisply at any DPR.
-function BrandMark() {
-  const COLORS = ["#61BC47", "#FDB813", "#F58220", "#E03C31", "#963D97", "#2966C6", "#039CDE"];
-  const SIZE = 28;
-  const PAD_Y = SIZE * 0.16;
-  const PAD_X = SIZE * 0.10;
-  const usable = SIZE - 2 * PAD_Y;
-  const bar = usable / 10.6;
-  const gap = bar * 0.6;
+// MyHackingPal brand mark — uses the same pre-rendered PNG as the dock
+// icon so the sidebar badge matches the app icon pixel-for-pixel and
+// avoids font-fallback inconsistencies at small display sizes.
+// Source: frontend/public/brand-mark.png (256×256, downscaled by CSS).
+function BrandMark({ size = 28 }: { size?: number } = {}) {
   return (
-    <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} aria-label="MyHackingPal"
-         className="shrink-0 rounded-[6px]">
-      <rect width={SIZE} height={SIZE} fill="black" />
-      {COLORS.map((c, i) => (
-        <rect key={c} x={PAD_X} y={PAD_Y + i * (bar + gap)}
-              width={SIZE - 2 * PAD_X} height={bar} fill={c} />
-      ))}
-    </svg>
+    <img
+      src="./brand-mark.png"
+      alt="MyHackingPal"
+      width={size}
+      height={size}
+      className="shrink-0 block"
+      style={{ imageRendering: "auto" }}
+    />
   );
 }
 
