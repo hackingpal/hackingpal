@@ -389,6 +389,43 @@ async def docker_running() -> bool:
         return False
 
 
+async def detect_runtime() -> dict[str, Any]:
+    """Identify which container runtime is providing the docker socket.
+
+    Returns ``{kind, version, context, running}`` where ``kind`` is one of
+    ``colima``, ``docker-desktop``, ``podman``, ``other``, or ``none``.
+    The UI shows this as a pill in the Labs header so users know which
+    runtime they're actually talking to (matters during the DD→colima
+    migration since both can be installed concurrently).
+    """
+    if not docker_available():
+        return {"kind": "none", "version": None, "context": None, "running": False}
+    rc, ctx_out, _ = await _run(["docker", "context", "show"], timeout=3)
+    context_name = (ctx_out or "").strip() if rc == 0 else None
+    kind = _kind_from_context(context_name)
+    daemon = await docker_running()
+    version: str | None = None
+    if daemon:
+        rc, ver_out, _ = await _run(
+            ["docker", "version", "--format", "{{.Server.Version}}"], timeout=3,
+        )
+        if rc == 0:
+            version = (ver_out or "").strip() or None
+    return {"kind": kind, "version": version, "context": context_name, "running": daemon}
+
+
+def _kind_from_context(name: str | None) -> str:
+    if not name:
+        return "unknown"
+    if name == "colima":
+        return "colima"
+    if name == "desktop-linux" or name.startswith("desktop-"):
+        return "docker-desktop"
+    if name == "podman" or name.startswith("podman"):
+        return "podman"
+    return "other"
+
+
 async def image_exists(image_tag: str) -> bool:
     rc, out, _ = await _run(["docker", "image", "inspect", image_tag], timeout=5)
     return rc == 0 and bool(out.strip())

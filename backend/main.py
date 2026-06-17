@@ -36,7 +36,7 @@ from routers import (
     persistence, ping, playbook_suggest, port_scanner, presets, processes,
     profile_finder, reverse_ip, reverse_shell, s3_scanner, scope, settings,
     shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, system_info,
-    takeover, tcpdump, terminal, tls_audit, tool_requirements, triage,
+    takeover, targets, tcpdump, terminal, tls_audit, tool_requirements, triage,
     urlscan, vpn, wayback, whois, wifi, wifi_scan, windows_posture,
     wpa_capture, xss, systemd_units, firewall_rules, users_audit,
 )
@@ -127,6 +127,7 @@ app.include_router(vpn.router)
 app.include_router(terminal.router)
 app.include_router(brew.router)
 app.include_router(labs.router)
+app.include_router(targets.router)
 app.include_router(persistence.router)
 app.include_router(processes.router)
 app.include_router(stego.router)

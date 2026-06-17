@@ -66,10 +66,19 @@ type LabStatus = {
 
 type SidecarResult = { rc: number; stdout: string; stderr: string };
 
+type RuntimeKind = "colima" | "docker-desktop" | "podman" | "other" | "unknown" | "none";
+type RuntimeInfo = {
+  kind: RuntimeKind;
+  version: string | null;
+  context: string | null;
+  running: boolean;
+};
+
 type LabsResponse = {
   labs: LabSummary[];
   docker_available: boolean;
   docker_running: boolean;
+  runtime?: RuntimeInfo;
 };
 
 type Props = { onJumpTo: (id: string) => void };
@@ -85,6 +94,7 @@ export default function Labs({ onJumpTo }: Props) {
   const [labs, setLabs] = useState<LabSummary[]>([]);
   const [dockerAvailable, setDockerAvailable] = useState<boolean>(true);
   const [dockerRunning, setDockerRunning] = useState<boolean>(true);
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [statuses, setStatuses] = useState<Record<string, LabStatus>>({});
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -102,6 +112,7 @@ export default function Labs({ onJumpTo }: Props) {
         setLabs(r.labs);
         setDockerAvailable(r.docker_available);
         setDockerRunning(r.docker_running);
+        setRuntime(r.runtime ?? null);
         // Fan out a status fetch for each lab.
         for (const lab of r.labs) void refreshStatus(lab.id);
       } catch (e) {
@@ -208,7 +219,7 @@ export default function Labs({ onJumpTo }: Props) {
             Loopback-only — never reachable off-host.
           </p>
         </div>
-        <DockerBanner available={dockerAvailable} running={dockerRunning} />
+        <DockerBanner available={dockerAvailable} running={dockerRunning} runtime={runtime} />
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
@@ -557,15 +568,35 @@ function LabCard({
 }
 
 // ── Bits ───────────────────────────────────────────────────────────────────
-function DockerBanner({ available, running }: { available: boolean; running: boolean }) {
-  if (available && running) return null;
+function DockerBanner({
+  available, running, runtime,
+}: { available: boolean; running: boolean; runtime: RuntimeInfo | null }) {
+  if (available && running) {
+    return <RuntimePill runtime={runtime} />;
+  }
   const msg = !available
-    ? "Docker isn't installed. Install Docker Desktop to use Labs."
-    : "Docker is installed but the daemon isn't running. Start Docker Desktop and refresh.";
+    ? "No container runtime installed. Install colima (brew install colima docker) or Docker Desktop to use Labs."
+    : "A container runtime is installed but the daemon isn't running. Start it with `colima start` (or open Docker Desktop) and refresh.";
   return (
     <div className="mt-3 border border-amber/40 bg-amber/10 text-amber
-                    rounded px-3 py-2 text-[12px]">
+                    rounded px-3 py-2 text-[12px] font-mono">
       {msg}
+    </div>
+  );
+}
+
+function RuntimePill({ runtime }: { runtime: RuntimeInfo | null }) {
+  if (!runtime || runtime.kind === "none") return null;
+  const label =
+    runtime.kind === "colima"         ? "colima" :
+    runtime.kind === "docker-desktop" ? "Docker Desktop" :
+    runtime.kind === "podman"         ? "podman" :
+    runtime.context || "docker";
+  return (
+    <div className="mt-2 inline-flex items-center gap-2 text-[10px] font-mono uppercase
+                    tracking-widest text-ink-dim">
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-phos" aria-hidden />
+      <span>Runtime · {label}{runtime.version ? ` · ${runtime.version}` : ""}</span>
     </div>
   );
 }

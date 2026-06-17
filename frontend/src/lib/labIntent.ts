@@ -16,6 +16,7 @@
  *     it doesn't re-trigger on re-renders.
  */
 import { useState } from "react";
+import { getActiveTargetSnapshot } from "./targets";
 
 export type LabIntent = Record<string, string>;
 
@@ -56,10 +57,22 @@ export function takeLabIntent(tool: string): LabIntent | null {
   return parsed.query ?? {};
 }
 
-/** React hook: returns the lab intent for this tool, or null. Only reads
- * once per mount — safe to use as `useState(intent?.target ?? default)`. */
+/** React hook: returns prefill data for this tool, or null. Only reads
+ * once per mount — safe to use as `useState(intent?.target ?? default)`.
+ *
+ * Priority:
+ *   1. A one-shot lab intent placed by a suggested-step button (consumed).
+ *   2. The active target's address (persistent, not consumed). Synthesized
+ *      into the same `{target: <address>}` shape so consumer pages don't
+ *      need to change.
+ */
 export function useLabIntent(tool: string): LabIntent | null {
-  const [intent] = useState<LabIntent | null>(() => takeLabIntent(tool));
+  const [intent] = useState<LabIntent | null>(() => {
+    const shot = takeLabIntent(tool);
+    if (shot) return shot;
+    const snap = getActiveTargetSnapshot();
+    return snap ? { target: snap.address } : null;
+  });
   return intent;
 }
 

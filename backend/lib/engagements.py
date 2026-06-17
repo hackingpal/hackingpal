@@ -105,6 +105,29 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS ix_audit_engagement ON audit_log(engagement_id, ts_start DESC)",
     "CREATE INDEX IF NOT EXISTS ix_audit_ts ON audit_log(ts_start DESC)",
     "CREATE INDEX IF NOT EXISTS ix_audit_tool ON audit_log(tool, ts_start DESC)",
+    # ── Targets registry ────────────────────────────────────────────────────
+    # First-class target objects. engagement_id NULL = global (lab targets,
+    # manual scratch, discovery results not yet bound to an engagement).
+    # `kind` is where the target came from; `scope_tag` is its policy band
+    # for engagement-mode enforcement (lab|owned|authorized|manual).
+    # `hidden=1` is used for lab targets after the lab stops — preserves
+    # history so suggested-step intent prefill keeps working across cycles.
+    """
+    CREATE TABLE IF NOT EXISTS targets (
+      id             TEXT PRIMARY KEY,
+      engagement_id  TEXT REFERENCES engagements(id) ON DELETE CASCADE,
+      name           TEXT NOT NULL,
+      address        TEXT NOT NULL,
+      kind           TEXT NOT NULL,
+      source_meta    TEXT NOT NULL DEFAULT '{}',
+      scope_tag      TEXT NOT NULL DEFAULT 'manual',
+      added_at       TEXT NOT NULL,
+      last_seen_at   TEXT,
+      hidden         INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_targets_engagement ON targets(engagement_id)",
+    "CREATE INDEX IF NOT EXISTS ix_targets_kind ON targets(kind, hidden)",
 ]
 
 

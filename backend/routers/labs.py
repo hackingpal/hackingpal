@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from lib import labs as labs_lib
+from lib import labs as labs_lib, targets as targets_lib
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
 
@@ -37,11 +37,12 @@ async def list_labs() -> dict[str, Any]:
     missing entirely, vs ``docker_running`` to show a "start Docker Desktop"
     hint when the binary exists but the daemon is down.
     """
-    daemon = await labs_lib.docker_running()
+    runtime = await labs_lib.detect_runtime()
     return {
         "labs":             labs_lib.list_labs(),
         "docker_available": labs_lib.docker_available(),
-        "docker_running":   daemon,
+        "docker_running":   runtime["running"],
+        "runtime":          runtime,
     }
 
 
@@ -68,6 +69,7 @@ async def lab_start(lab_id: str) -> dict[str, Any]:
     if result.get("status") == "error":
         raise MhpError(result.get("error") or "lab failed to start",
                        code=ErrorCode.TOOL_FAILED, status_code=503)
+    _register_lab_targets(lab_id)
     return result
 
 
@@ -78,7 +80,37 @@ async def lab_stop(lab_id: str) -> dict[str, Any]:
     if result.get("status") == "error":
         raise MhpError(result.get("error") or "lab failed to stop",
                        code=ErrorCode.TOOL_FAILED, status_code=503)
+    targets_lib.hide_lab_targets(lab_id)
     return result
+
+
+def _register_lab_targets(lab_id: str) -> None:
+    """Upsert one target per published port_map entry.
+
+    Compose labs with no published ports (vulhub-net) get one zero-port
+    placeholder so the Targets page can still surface the sidecar exec
+    pathway as a known target. Failures are swallowed — auto-register
+    shouldn't break the lab start flow if the DB write hiccups.
+    """
+    lab = labs_lib.get_lab_def(lab_id)
+    if lab is None:
+        return
+    try:
+        if not lab.port_map:
+            targets_lib.upsert_lab_target(
+                lab_id=lab.id, lab_name=lab.name,
+                host_port=0, container_port=0,
+                primary_url="",
+            )
+            return
+        for cport, hport in lab.port_map.items():
+            targets_lib.upsert_lab_target(
+                lab_id=lab.id, lab_name=lab.name,
+                host_port=hport, container_port=cport,
+                primary_url=lab.primary_url,
+            )
+    except Exception as exc:
+        logger.warning("lab target auto-register failed for %s: %s", lab_id, exc)
 
 
 class SidecarExecBody(BaseModel):

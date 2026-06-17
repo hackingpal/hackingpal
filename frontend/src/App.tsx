@@ -91,6 +91,7 @@ import EngagementWorkspace from "./pages/EngagementWorkspace";
 import EffectsDebug from "./pages/EffectsDebug";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
+import ActiveTargetPicker from "./components/ActiveTargetPicker";
 import EngagementPill from "./components/EngagementPill";
 import ModePill from "./components/ModePill";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -273,6 +274,7 @@ export default function App() {
           <div className="flex items-center gap-2 text-[10px] tracking-widest text-ink-dim app-no-drag min-w-0">
             <ModePill onOpenEngagementsPage={() => navigate("engagements")} />
             <EngagementPill onOpenEngagementsPage={() => navigate("engagements")} />
+            <ActiveTargetPicker onOpenTargetsPage={() => navigate("targets")} />
             <button
               onClick={theme.cycle}
               title={`Theme: ${themeLabel} — click to cycle (dark → light → system)`}
