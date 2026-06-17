@@ -382,6 +382,20 @@ export const auditPromptEdit = (charsBefore: number, charsAfter: number, model =
     }),
   });
 
+// Revoke the passwordless-sudo drop-in for a privileged tool. Both endpoints
+// trigger the OS-native admin prompt (osascript on Mac, pkexec on Linux)
+// and return {installed: false} on success. Idempotent — calling against an
+// already-revoked tool returns {installed: false, already: true}.
+export const revokeTcpdumpSudoers = () =>
+  api<{ installed: boolean; already?: boolean }>("/tcpdump/revoke", {
+    method: "POST",
+  });
+
+export const revokeNmapSudoers = () =>
+  api<{ installed: boolean; already?: boolean }>("/nmap/revoke", {
+    method: "POST",
+  });
+
 export type DnsblEntry = { name: string; status: string; listed: boolean };
 
 export type IpReport = {

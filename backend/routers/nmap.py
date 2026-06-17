@@ -4,6 +4,7 @@ REST:
     GET  /nmap/status                  — binary path, version, scripts dir,
                                           sudoers state for passwordless privileged scans
     POST /nmap/install                 — install one-time passwordless sudoers entry
+    POST /nmap/revoke                  — remove the sudoers entry (admin prompt)
     GET  /nmap/scripts                 — NSE catalog [{name, categories}]
     GET  /nmap/script-help?name=...    — `nmap --script-help <name>` text
     GET  /nmap/policy?target=...       — target policy verdict for a single target
@@ -37,7 +38,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
 
-from lib import hids_notify, nmap_runner, nmap_scripts, scope, target_policy
+from lib import audit_log, hids_notify, nmap_runner, nmap_scripts, scope, target_policy
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.mode import get_mode
@@ -171,6 +172,74 @@ def install_sudoers() -> dict[str, Any]:
 
     raise HTTPException(status_code=501,
                         detail="passwordless install not supported on this platform")
+
+
+@router.post("/nmap/revoke")
+def revoke_sudoers() -> dict[str, Any]:
+    """Remove the passwordless sudoers drop-in.
+
+    Counterpart to /nmap/install — same osascript / pkexec flow. Idempotent.
+    """
+    binary = nmap_runner.find_nmap()
+    if not binary or not _is_passwordless(binary):
+        return {"installed": False, "already": True}
+
+    revoke_cmd = f"/bin/rm -f {shlex.quote(SUDOERS_PATH)}"
+
+    if sys.platform == "darwin":
+        script = f'do shell script "{revoke_cmd}" with administrator privileges'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()
+            if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
+                raise HTTPException(status_code=400,
+                                    detail="revoke cancelled by user")
+            raise HTTPException(status_code=500, detail=err or "revoke failed")
+        _audit_revoke()
+        return {"installed": _is_passwordless(binary)}
+
+    if sys.platform.startswith("linux"):
+        pkexec = shutil.which("pkexec")
+        if not pkexec:
+            raise HTTPException(
+                status_code=501,
+                detail=("pkexec not installed. Remove the sudoers entry manually: "
+                        f"sudo rm {SUDOERS_PATH}"),
+            )
+        try:
+            r = subprocess.run(
+                [pkexec, "/bin/sh", "-c", revoke_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+        if r.returncode != 0:
+            err = ((r.stdout or "") + (r.stderr or "")).strip()
+            if r.returncode in (126, 127):
+                raise HTTPException(
+                    status_code=400,
+                    detail="revoke cancelled or no polkit agent available",
+                )
+            raise HTTPException(status_code=500, detail=err or "revoke failed")
+        _audit_revoke()
+        return {"installed": _is_passwordless(binary)}
+
+    raise HTTPException(status_code=501,
+                        detail="passwordless revoke not supported on this platform")
+
+
+def _audit_revoke() -> None:
+    try:
+        aid = audit_log.start(
+            tool="sudoers-revoke", target="nmap", argv=[SUDOERS_PATH],
+        )
+        audit_log.complete(aid, summary=f"removed {SUDOERS_PATH}")
+    except Exception:
+        logger.exception("audit_log write failed for nmap sudoers-revoke")
 
 
 @router.get("/nmap/scripts")

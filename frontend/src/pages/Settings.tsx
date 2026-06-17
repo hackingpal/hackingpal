@@ -18,6 +18,7 @@
 //     confirmation flows for; out of v1 settings scope).
 
 import { useCallback, useEffect, useState } from "react";
+import { Button, StatusDot } from "performative-ui";
 import {
   api,
   auditPromptEdit,
@@ -25,6 +26,7 @@ import {
   fetchApiKeyStatus, fetchNamedKeys, fetchSystemInfo,
   fetchTcpdumpStatus, fetchNmapStatus,
   fetchChatSettings, updateChatSettings,
+  revokeTcpdumpSudoers, revokeNmapSudoers,
   setApiKey, setNamedKey,
   type ApiKeyStatus, type NamedKeyStatus,
   type SystemInfo, type TcpdumpStatus, type NmapStatus,
@@ -74,7 +76,6 @@ export default function Settings({ onJumpTo }: Props) {
         <ModeSection onJumpTo={onJumpTo} />
         <AppearanceSection />
         <EffectsSection />
-        <EngagementLinksSection onJumpTo={onJumpTo} />
       </div>
     </div>
   );
@@ -530,18 +531,45 @@ function PrivilegedToolsSection() {
   const [tcp, setTcp] = useState<TcpdumpStatus | null>(null);
   const [nmap, setNmap] = useState<NmapStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<"tcpdump" | "nmap" | null>(null);
+  const [error, setError] = useState<{ tool: "tcpdump" | "nmap"; msg: string } | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [t, n] = await Promise.all([
+      fetchTcpdumpStatus().catch(() => null),
+      fetchNmapStatus().catch(() => null),
+    ]);
+    setTcp(t);
+    setNmap(n);
+  }, []);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const [t, n] = await Promise.all([
-        fetchTcpdumpStatus().catch(() => null),
-        fetchNmapStatus().catch(() => null),
-      ]);
-      if (alive) { setTcp(t); setNmap(n); setLoading(false); }
+      await refresh();
+      if (alive) setLoading(false);
     })();
     return () => { alive = false; };
-  }, []);
+  }, [refresh]);
+
+  async function revoke(tool: "tcpdump" | "nmap") {
+    const target = tool === "tcpdump" ? "tcpdump" : "nmap (SYN/UDP/OS)";
+    if (!confirm(
+      `Remove the passwordless-sudo entry for ${target}?\n\n` +
+      `Future scans that need root will prompt for your password again. ` +
+      `You'll see the OS admin prompt next to authorize the removal.`,
+    )) return;
+    setBusy(tool); setError(null);
+    try {
+      if (tool === "tcpdump") await revokeTcpdumpSudoers();
+      else                    await revokeNmapSudoers();
+      await refresh();
+    } catch (e) {
+      setError({ tool, msg: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -553,32 +581,59 @@ function PrivilegedToolsSection() {
 
   return (
     <Section title="Privileged tools"
-             hint="Sudoers drop-ins let tcpdump + nmap SYN/UDP/OS scans run without re-prompting. Revoke with `sudo rm /etc/sudoers.d/network-tools-<tool>`.">
+             hint="Sudoers drop-ins let tcpdump + nmap SYN/UDP/OS scans run without re-prompting. Use Revoke to remove with one click — the OS admin prompt covers the privileged file removal.">
       <div className="space-y-1.5 text-[12px]">
         <StatusLine label="tcpdump"
                     installed={!!tcp?.passwordless}
                     detail={tcp?.passwordless
                       ? (tcp.sudoers_path || "/etc/sudoers.d/network-tools-tcpdump")
-                      : "not installed (install on the TCPDump page)"} />
+                      : "not installed (install on the TCPDump page)"}
+                    onRevoke={tcp?.passwordless ? () => revoke("tcpdump") : undefined}
+                    busy={busy === "tcpdump"}
+                    error={error?.tool === "tcpdump" ? error.msg : null} />
         <StatusLine label="nmap (SYN/UDP/OS)"
                     installed={!!nmap?.passwordless}
                     detail={nmap?.passwordless
                       ? (nmap.sudoers_path || "/etc/sudoers.d/network-tools-nmap")
-                      : "not installed (install on the Nmap page)"} />
+                      : "not installed (install on the Nmap page)"}
+                    onRevoke={nmap?.passwordless ? () => revoke("nmap") : undefined}
+                    busy={busy === "nmap"}
+                    error={error?.tool === "nmap" ? error.msg : null} />
       </div>
     </Section>
   );
 }
 
-function StatusLine({ label, installed, detail }: {
+function StatusLine({ label, installed, detail, onRevoke, busy, error }: {
   label: string; installed: boolean; detail: string;
+  onRevoke?: () => void | Promise<void>;
+  busy?: boolean;
+  error?: string | null;
 }) {
   return (
-    <div className="flex items-center gap-3">
-      <span className={"inline-block w-1.5 h-1.5 rounded-full " +
-                       (installed ? "bg-phos" : "bg-ink-dim")} />
-      <span className="text-ink-primary w-40">{label}</span>
-      <span className="text-ink-muted font-mono text-[11px]">{detail}</span>
+    <div>
+      <div className="flex items-center gap-3">
+        <StatusDot
+          color={installed ? "rgb(var(--phos-rgb))" : "rgb(var(--ink-dim-rgb))"}
+          static={!installed}
+        />
+        <span className="text-ink-primary w-40">{label}</span>
+        <span className="text-ink-muted font-mono text-[11px] flex-1 truncate">{detail}</span>
+        {onRevoke && (
+          <Button
+            variant="ghost"
+            size="sm"
+            loading={busy}
+            onClick={() => { void onRevoke(); }}
+            title="Remove the passwordless-sudo drop-in. You'll see the OS admin prompt."
+          >
+            Revoke
+          </Button>
+        )}
+      </div>
+      {error && (
+        <div className="pl-5 pt-0.5 text-[10px] text-danger">⚠ {error}</div>
+      )}
     </div>
   );
 }
@@ -952,35 +1007,6 @@ function detectPreset(s: DopamineSettings): string | null {
     return p.id;
   }
   return null;
-}
-
-// ── Engagement quick-links ────────────────────────────────────────────────
-
-function EngagementLinksSection({ onJumpTo }: { onJumpTo: (id: string) => void }) {
-  const links: { id: string; label: string; hint: string }[] = [
-    { id: "engagements", label: "Engagements",
-      hint: "Create, switch, archive engagements + GitHub export" },
-    { id: "findings",    label: "Findings",
-      hint: "Promote scan results, attach screenshots, write up risks" },
-    { id: "audit-log",   label: "Audit log",
-      hint: "Append-only record of every tool invocation" },
-  ];
-  return (
-    <Section title="Engagement workspace"
-             hint="Quick-links to the engagement-centric pages.">
-      <div className="grid grid-cols-3 gap-2">
-        {links.map((l) => (
-          <button key={l.id}
-                  onClick={() => onJumpTo(l.id)}
-                  className="text-left p-3 rounded bg-bg-base border border-divider
-                             hover:border-accent transition">
-            <div className="text-[12px] font-bold text-ink-primary">{l.label}</div>
-            <div className="mt-0.5 text-[10px] text-ink-dim">{l.hint}</div>
-          </button>
-        ))}
-      </div>
-    </Section>
-  );
 }
 
 // ── Shared layout helpers ─────────────────────────────────────────────────

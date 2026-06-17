@@ -4,6 +4,7 @@ REST:
     GET  /tcpdump/status       — {passwordless: bool, sudoers_path: str}
     POST /tcpdump/install      — install one-time passwordless sudoers entry
                                   (shows native macOS password dialog once)
+    POST /tcpdump/revoke       — remove the sudoers entry (admin prompt)
     GET  /tcpdump/interfaces   — list available interface names
 
 WS (`/ws/tcpdump`):
@@ -33,6 +34,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
+from lib import audit_log
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError, ws_error
 from lib.platform_util import require_unix
@@ -200,6 +202,88 @@ def install_sudoers() -> dict[str, Any]:
 
     raise HTTPException(status_code=501,
                         detail="passwordless install not supported on this platform")
+
+
+@router.post("/tcpdump/revoke")
+def revoke_sudoers() -> dict[str, Any]:
+    """Remove the passwordless sudoers drop-in.
+
+    Counterpart to /tcpdump/install — same osascript / pkexec flow, so the
+    user sees the OS-native admin prompt before any privileged action.
+    Idempotent: a missing file is treated as success.
+    """
+    if not _is_passwordless():
+        return {"installed": False, "already": True}
+
+    # `rm -f` so the command succeeds if a concurrent run already removed
+    # the file; the post-condition check below is what we trust.
+    revoke_cmd = f"/bin/rm -f {shlex.quote(SUDOERS_PATH)}"
+
+    if sys.platform == "darwin":
+        script = f'do shell script "{revoke_cmd}" with administrator privileges'
+        try:
+            r = subprocess.run(["osascript", "-e", script],
+                               capture_output=True, text=True, timeout=120)
+        except Exception:
+            logger.exception("tcpdump sudoers revoke via osascript failed")
+            raise MhpError(
+                "sudoers revoke failed",
+                code=ErrorCode.INTERNAL,
+                status_code=500,
+            )
+        if r.returncode != 0:
+            err = (r.stderr or "").strip()
+            if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
+                raise HTTPException(status_code=400,
+                                    detail="revoke cancelled by user")
+            raise HTTPException(status_code=500, detail=err or "revoke failed")
+        _audit_revoke()
+        return {"installed": _is_passwordless()}
+
+    if sys.platform.startswith("linux"):
+        pkexec = _shutil.which("pkexec")
+        if not pkexec:
+            raise HTTPException(
+                status_code=501,
+                detail=("pkexec not installed. Remove the sudoers entry manually: "
+                        f"sudo rm {SUDOERS_PATH}"),
+            )
+        try:
+            r = subprocess.run(
+                [pkexec, "/bin/sh", "-c", revoke_cmd],
+                capture_output=True, text=True, timeout=120,
+            )
+        except Exception:
+            logger.exception("tcpdump sudoers revoke via pkexec failed")
+            raise MhpError(
+                "sudoers revoke failed",
+                code=ErrorCode.INTERNAL,
+                status_code=500,
+            )
+        if r.returncode != 0:
+            err = ((r.stdout or "") + (r.stderr or "")).strip()
+            if r.returncode in (126, 127):
+                raise HTTPException(
+                    status_code=400,
+                    detail="revoke cancelled or no polkit agent available",
+                )
+            raise HTTPException(status_code=500, detail=err or "revoke failed")
+        _audit_revoke()
+        return {"installed": _is_passwordless()}
+
+    raise HTTPException(status_code=501,
+                        detail="passwordless revoke not supported on this platform")
+
+
+def _audit_revoke() -> None:
+    # Best-effort: audit failure shouldn't surface as a revoke failure.
+    try:
+        aid = audit_log.start(
+            tool="sudoers-revoke", target="tcpdump", argv=[SUDOERS_PATH],
+        )
+        audit_log.complete(aid, summary=f"removed {SUDOERS_PATH}")
+    except Exception:
+        logger.exception("audit_log write failed for tcpdump sudoers-revoke")
 
 
 @router.websocket("/ws/tcpdump")
