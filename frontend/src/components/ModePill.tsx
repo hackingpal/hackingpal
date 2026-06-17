@@ -11,7 +11,8 @@
 // Lab is one click since it only ever loosens enforcement.
 
 import { useEffect, useRef, useState } from "react";
-import { setMode, useMode, type Mode } from "../lib/mode";
+import { useMode, type Mode } from "../lib/mode";
+import { switchMode } from "../lib/modeSwitch";
 import { useActiveEngagementId } from "../lib/engagement";
 
 type Props = {
@@ -46,12 +47,12 @@ export default function ModePill({ onOpenEngagementsPage }: Props) {
     if (mode === "lab") {
       setConfirmOpen(true);
     } else {
-      setMode("lab");
+      switchMode("lab");
     }
   }
 
   function confirmSwitch() {
-    setMode("engagement");
+    switchMode("engagement");
     setConfirmOpen(false);
   }
 
@@ -72,16 +73,18 @@ export default function ModePill({ onOpenEngagementsPage }: Props) {
         }
         className={
           "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] tracking-wider " +
-          "border transition leading-none " +
+          "border transition leading-none font-mono " +
           (isEngagement
-            ? "border-phos/40 text-phos hover:border-phos"
-            : "border-amber/40 text-amber hover:border-amber")
+            ? "border-ink-primary/50 text-ink-primary hover:border-ink-primary"
+            : "border-ink-dim/40 text-ink-dim hover:border-ink-muted hover:text-ink-primary")
         }
       >
         <span
           className={
             "inline-block w-1.5 h-1.5 rounded-full " +
-            (isEngagement ? "bg-phos" : "bg-amber")
+            (isEngagement
+              ? "bg-ink-primary"
+              : "border border-ink-dim")
           }
         />
         <span className="uppercase">{labelText[mode]}</span>
@@ -129,7 +132,7 @@ export default function ModePill({ onOpenEngagementsPage }: Props) {
             </button>
             <button
               onClick={confirmSwitch}
-              className="flex-1 px-3 py-2 text-[11px] text-phos border-l border-divider
+              className="flex-1 px-3 py-2 text-[11px] text-ink-primary border-l border-divider
                          hover:bg-bg-nav-hover"
             >
               I have authorization — enable

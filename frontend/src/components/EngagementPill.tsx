@@ -51,15 +51,19 @@ export default function EngagementPill({ onOpenEngagementsPage }: Props) {
         title="Active engagement"
         className={
           "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] tracking-wider " +
-          "border transition leading-none " +
+          "border transition leading-none font-mono " +
           (active
-            ? "border-accent/40 text-accent hover:border-accent"
+            ? "border-ink-primary/50 text-ink-primary hover:border-ink-primary"
             : "border-divider text-ink-dim hover:border-ink-muted hover:text-ink-primary")
         }
       >
         <span
-          className={"inline-block w-1.5 h-1.5 rounded-full " +
-            (active ? "bg-accent" : "bg-ink-dim")} />
+          aria-hidden
+          className={active ? "text-ink-primary" : "text-ink-dim"}
+          style={{ fontSize: 9, lineHeight: 1 }}
+        >
+          ▪
+        </span>
         <span className="uppercase max-w-[200px] truncate">
           {active ? active.name : "No engagement"}
         </span>
@@ -101,13 +105,13 @@ export default function EngagementPill({ onOpenEngagementsPage }: Props) {
                 className={
                   "w-full text-left px-3 py-2 text-[12px] " +
                   (e.id === activeId
-                    ? "bg-bg-nav-active text-accent"
+                    ? "bg-bg-nav-active text-ink-primary"
                     : "text-ink-primary hover:bg-bg-nav-hover")
                 }
               >
                 <div className="flex items-center gap-2">
                   <span className={"inline-block w-1.5 h-1.5 rounded-full " +
-                    (e.id === activeId ? "bg-accent" : "bg-ink-dim")} />
+                    (e.id === activeId ? "bg-ink-primary" : "bg-ink-dim")} />
                   <span className="flex-1 truncate">{e.name}</span>
                   <span className="text-[9px] text-ink-dim uppercase">{e.status}</span>
                 </div>
@@ -118,7 +122,7 @@ export default function EngagementPill({ onOpenEngagementsPage }: Props) {
           <button
             onClick={() => { setOpen(false); onOpenEngagementsPage(); }}
             className="w-full text-left px-3 py-2 text-[11px] border-t border-divider
-                       text-accent hover:bg-bg-nav-hover"
+                       text-ink-primary hover:bg-bg-nav-hover"
           >
             Manage engagements →
           </button>

@@ -9,6 +9,8 @@ import {
 } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
 import ToolRequirements from "../components/ToolRequirements";
+import SetupWizard, { type SetupStep } from "../components/SetupWizard";
+import { shouldAutoOpen } from "../lib/setupState";
 import { useLabIntent } from "../lib/labIntent";
 
 // ── Profile presets (partial overrides applied on top of `defaultOptions()`) ──
@@ -160,7 +162,6 @@ export default function Nmap() {
   const [advTab, setAdvTab] = useState<AdvancedTab>("scantype");
 
   const [status, setStatus] = useState<NmapStatus | null>(null);
-  const [installing, setInstalling] = useState(false);
   const [scripts, setScripts] = useState<NmapScriptEntry[] | null>(null);
   const [scriptCats, setScriptCats] = useState<[string, number][]>([]);
   const [scriptFilter, setScriptFilter] = useState("");
@@ -178,13 +179,26 @@ export default function Nmap() {
   const [report, setReport] = useState<NmapReport | null>(null);
 
   const [resultsTab, setResultsTab] = useState<ResultsTab>("hosts");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [nmapIntroDone, setNmapIntroDone] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const rawEndRef = useRef<HTMLDivElement | null>(null);
+  const autoOpenedSetupRef = useRef(false);
 
   // ── Initial loads ──
   useEffect(() => {
     fetchNmapStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  // Auto-open the setup wizard the first time we see needs-install state.
+  useEffect(() => {
+    if (status === null || autoOpenedSetupRef.current) return;
+    const needs = status.available && !status.passwordless;
+    if (shouldAutoOpen("nmap", needs)) {
+      autoOpenedSetupRef.current = true;
+      setWizardOpen(true);
+    }
+  }, [status]);
 
   useEffect(() => {
     fetchNmapScripts()
@@ -312,18 +326,45 @@ export default function Nmap() {
     }
   }
 
-  async function install() {
-    setInstalling(true);
-    try {
-      await installNmapSudo();
-      const s = await fetchNmapStatus();
-      setStatus(s);
-    } catch (e: any) {
-      setError(e?.message || "install failed");
-    } finally {
-      setInstalling(false);
-    }
-  }
+  const nmapWizardSteps = useMemo<SetupStep[]>(() => {
+    const passwordless = !!status?.passwordless;
+    return [
+      {
+        id: "intro",
+        title: "Why some nmap scans need root",
+        description: (
+          <>
+            SYN, UDP, OS-fingerprint, and traceroute scans all open raw
+            sockets, which macOS reserves for root. We&apos;ll grant the{" "}
+            <code className="text-ink-primary">nmap</code> binary
+            passwordless sudo — nothing else gets elevated.
+          </>
+        ),
+        done: nmapIntroDone || passwordless,
+        cta: { label: "I'm ready", onRun: () => setNmapIntroDone(true) },
+      },
+      {
+        id: "install",
+        title: "Grant passwordless sudo for nmap",
+        description: (
+          <>
+            macOS will pop the admin dialog once. After this, privileged
+            scans run without any further password prompts.
+          </>
+        ),
+        done: passwordless,
+        cta: {
+          label: "Install Permission",
+          busyLabel: "Installing",
+          onRun: async () => {
+            await installNmapSudo();
+            const s = await fetchNmapStatus();
+            setStatus(s);
+          },
+        },
+      },
+    ];
+  }, [status, nmapIntroDone]);
 
   async function showScriptHelp(name: string) {
     setScriptHelp({ name, help: "loading..." });
@@ -538,12 +579,11 @@ export default function Nmap() {
               </span>
               {!status.passwordless && (
                 <button
-                  onClick={install}
-                  disabled={installing}
+                  onClick={() => setWizardOpen(true)}
                   className="ml-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border
-                             bg-bg-card text-accent border-accent/40 hover:bg-accent/10 disabled:opacity-50"
+                             bg-bg-card text-accent border-accent/40 hover:bg-accent/10"
                 >
-                  {installing ? "Installing…" : "Install Permission"}
+                  Run Setup
                 </button>
               )}
               {willUseSudo && (
@@ -690,6 +730,13 @@ export default function Nmap() {
           />
         )}
       </div>
+      <SetupWizard
+        open={wizardOpen}
+        toolKey="nmap"
+        title="Set Up Nmap"
+        steps={nmapWizardSteps}
+        onClose={() => setWizardOpen(false)}
+      />
     </div>
   );
 }

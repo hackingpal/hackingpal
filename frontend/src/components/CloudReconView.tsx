@@ -2,13 +2,15 @@
 // follow the same shape: GET /<cloud>/status (auth probe + identity) and
 // GET /<cloud>/recon?services=... (findings + per-service breakdowns).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, authFetch, parseError } from "../api";
 import SeverityBadge, { normalizeSeverity, type Severity } from "./SeverityBadge";
 import ResultGroup from "./ResultGroup";
 import CopyButton from "./CopyButton";
 import StatsBar from "./StatsBar";
 import EmptyState from "./EmptyState";
+import CloudSetupWizard, { type CloudKind } from "./CloudSetupWizard";
+import { shouldAutoOpen } from "../lib/setupState";
 
 export type CloudFinding = {
   severity: "critical" | "high" | "medium" | "low" | "info";
@@ -50,6 +52,9 @@ export default function CloudReconView({
   const [result, setResult] = useState<ReconResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const autoOpenedSetupRef = useRef(false);
+  const cloudKind = cloud.toLowerCase() as CloudKind;
 
   async function refreshStatus() {
     setStatusLoading(true);
@@ -63,6 +68,17 @@ export default function CloudReconView({
   }
 
   useEffect(() => { void refreshStatus(); }, [statusPath]);
+
+  // Auto-open the setup wizard the first time we see "credentials not ok"
+  // and the user hasn't already dismissed/completed it.
+  useEffect(() => {
+    if (statusLoading || status === null || autoOpenedSetupRef.current) return;
+    const needs = status.ok !== true;
+    if (shouldAutoOpen(`cloud-${cloudKind}`, needs)) {
+      autoOpenedSetupRef.current = true;
+      setWizardOpen(true);
+    }
+  }, [status, statusLoading, cloudKind]);
 
   function toggle(id: string) {
     setPicked((s) => {
@@ -111,8 +127,15 @@ export default function CloudReconView({
           : ok
             ? <div className="text-[12px]">{identityRender(status)}</div>
             : <div>
-                <div className="text-[12px] text-amber mb-2">
-                  {status?.error ?? "credentials not available"}
+                <div className="text-[12px] text-amber mb-2 flex items-center gap-2">
+                  <span>{status?.error ?? "credentials not available"}</span>
+                  <button
+                    onClick={() => setWizardOpen(true)}
+                    className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border
+                               bg-bg-card text-accent border-accent/40 hover:bg-accent/10"
+                  >
+                    Run Setup
+                  </button>
                 </div>
                 <pre className="text-[11px] bg-bg-base border border-divider rounded p-2
                                 text-ink-muted whitespace-pre-wrap">
@@ -120,6 +143,14 @@ export default function CloudReconView({
                 </pre>
               </div>}
       </div>
+
+      <CloudSetupWizard
+        cloud={cloudKind}
+        open={wizardOpen}
+        onClose={() => setWizardOpen(false)}
+        onCompleted={refreshStatus}
+        statusPath={statusPath}
+      />
 
       {ok && (
         <div className="bg-bg-card border border-divider rounded p-3 mb-4 space-y-3">

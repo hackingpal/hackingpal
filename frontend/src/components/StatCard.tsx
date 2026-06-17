@@ -1,6 +1,9 @@
 // Summary card used for scan totals (e.g. "12 OPEN PORTS", "3 CRITICAL").
-// Left-border accent color drives the severity meaning.
+// Left-border accent color drives the severity meaning. Numeric `value`
+// props get the StatCounter rollup animation; non-numeric values render
+// as-is (so callers can still pass formatted strings or JSX).
 import type { ReactNode } from "react";
+import { StatCounter } from "performative-ui";
 
 type Accent = "accent" | "critical" | "high" | "medium" | "low" | "success" | "muted";
 
@@ -13,14 +16,17 @@ type Props = {
   className?: string;
 };
 
+// Only critical / high keep their saturated accent — those carry real signal.
+// Everything else collapses to a flat divider grey so a row of stat cards
+// reads as data, not as a stoplight.
 const ACCENT_COLOR: Record<Accent, string> = {
-  accent:   "var(--accent-bright)",
+  accent:   "var(--border-bright)",
   critical: "var(--critical)",
   high:     "var(--high)",
-  medium:   "var(--medium)",
-  low:      "var(--low)",
-  success:  "var(--success)",
-  muted:    "var(--text-muted)",
+  medium:   "var(--border-bright)",
+  low:      "var(--border-bright)",
+  success:  "var(--border-bright)",
+  muted:    "var(--border-bright)",
 };
 
 export default function StatCard({
@@ -67,7 +73,11 @@ export default function StatCard({
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {value}
+        {typeof value === "number" ? (
+          <StatCounter target={value} durationMs={700} />
+        ) : (
+          value
+        )}
       </div>
       {sub && (
         <div

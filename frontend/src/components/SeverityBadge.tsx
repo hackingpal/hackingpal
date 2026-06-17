@@ -12,32 +12,36 @@ type Config = {
   label: string;
 };
 
+// Severity loses its rainbow — we keep saturated red/orange for critical/high
+// (those are real signal) and demote medium/low to tonal greys so they read
+// as "noted, not urgent" rather than "extra colour to ignore". Single ● glyph
+// for all severities makes the badges scan as a uniform row of dots.
 const config: Record<Severity, Config> = {
   critical: {
     bg: "var(--critical-dim)",
     border: "var(--critical)",
     text: "var(--critical)",
-    icon: "▲",
+    icon: "●",
     label: "Critical",
   },
   high: {
     bg: "var(--high-dim)",
     border: "var(--high)",
     text: "var(--high)",
-    icon: "◆",
+    icon: "●",
     label: "High",
   },
   medium: {
-    bg: "var(--medium-dim)",
-    border: "var(--medium)",
-    text: "var(--medium)",
-    icon: "■",
+    bg: "transparent",
+    border: "var(--text-secondary)",
+    text: "var(--text-secondary)",
+    icon: "●",
     label: "Medium",
   },
   low: {
-    bg: "var(--low-dim)",
-    border: "var(--low)",
-    text: "var(--low)",
+    bg: "transparent",
+    border: "var(--border-bright)",
+    text: "var(--text-muted)",
     icon: "●",
     label: "Low",
   },

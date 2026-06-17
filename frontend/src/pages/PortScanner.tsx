@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { EyebrowPill } from "performative-ui";
 import { openWs, watchWsLiveness, type ScanEvent, type ScanInit } from "../api";
 import ScopeBanner from "../components/ScopeBanner";
 import { useActiveEngagementId } from "../lib/engagement";
@@ -6,6 +7,8 @@ import { useLabIntent } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { playNamed, getToolEffect } from "../lib/dopamine";
+import EffectPicker from "../components/EffectPicker";
 
 type OpenRow = { port: number; service: string; banner: string };
 
@@ -45,6 +48,7 @@ export default function PortScanner() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const watchRef = useRef<ReturnType<typeof watchWsLiveness> | null>(null);
+  const startBtnRef = useRef<HTMLButtonElement | null>(null);
 
   // If the user navigates away mid-scan, close the socket so the backend
   // stops pumping packets at a phantom listener.
@@ -59,6 +63,8 @@ export default function PortScanner() {
     setScanning(true); setStopped(false); setError(null); setTimedOut(null);
     setNeedConfirm(false);
     setMeta(null); setDone(0); setTotal(0); setElapsed(null); setRows([]);
+    // Fire the user's chosen effect for this tool, anchored on the Scan button.
+    void playNamed(getToolEffect("ports"), startBtnRef.current ?? undefined);
 
     const ws = openWs("/ws/port-scan");
     wsRef.current = ws;
@@ -149,9 +155,7 @@ export default function PortScanner() {
       <header className="border-b border-divider px-6 pt-4 pb-3">
         <div className="flex items-end gap-6">
           <div className="shrink-0">
-            <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">
-              Recon
-            </div>
+            <EyebrowPill icon={false} className="mhp-eyebrow">Recon</EyebrowPill>
             <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">
               Port Scanner
             </h2>
@@ -210,16 +214,20 @@ export default function PortScanner() {
                            disabled:opacity-60"
               />
             </Field>
-            <div className="flex gap-2 pt-4">
+            <div className="flex gap-2 pt-4 items-center">
               {!scanning ? (
-                <button
-                  onClick={start}
-                  className="bg-accent hover:bg-accentDim active:translate-y-px
-                             text-white text-xs font-bold tracking-wide
-                             px-3.5 py-1.5 rounded transition border border-accent/60"
-                >
-                  ▶ Scan
-                </button>
+                <>
+                  <EffectPicker toolKey="ports" />
+                  <button
+                    ref={startBtnRef}
+                    onClick={start}
+                    className="bg-accent hover:bg-accentDim active:translate-y-px
+                               text-white text-xs font-bold tracking-wide
+                               px-3.5 py-1.5 rounded transition border border-accent/60"
+                  >
+                    ▶ Scan
+                  </button>
+                </>
               ) : (
                 <button
                   onClick={stop}

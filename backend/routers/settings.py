@@ -9,11 +9,13 @@ import logging
 import os
 import subprocess
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from lib import audit_log
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+from lib.mode import Mode, get_engagement_id, get_mode
 
 logger = logging.getLogger(__name__)
 
@@ -177,3 +179,54 @@ def delete_named_key(name: str) -> NamedKeyStatus:
         raise HTTPException(404, f"Unknown key name: {name}")
     keychain_delete_named(name)
     return NamedKeyStatus(name=name, label=NAMED_KEYS[name], present=False)
+
+
+# ── Audit-log writes for high-leverage settings changes ─────────────────────
+#
+# Both endpoints below are "log-only" — they don't mutate any setting, they
+# just record that a change happened. The live state still lives in
+# localStorage (mode) or on disk (system prompt); the audit row is the
+# tamper-evident history of *when* the change happened and what it changed
+# from/to. Each call writes exactly one row (started → completed in one shot).
+
+class ModeSwitchBody(BaseModel):
+    old: Mode
+    new: Mode
+
+
+@router.post("/audit/mode-switch", status_code=204)
+def audit_mode_switch(body: ModeSwitchBody, request: Request) -> Response:
+    if body.old == body.new:
+        return Response(status_code=204)
+    aid = audit_log.start(
+        tool="mode-switch",
+        argv=[body.old, body.new],
+        engagement_id=get_engagement_id(request),
+        mode=body.new,
+    )
+    audit_log.complete(aid, summary=f"{body.old} → {body.new}")
+    return Response(status_code=204)
+
+
+class PromptEditBody(BaseModel):
+    chars_before: int = Field(..., ge=0, le=1_000_000)
+    chars_after:  int = Field(..., ge=0, le=1_000_000)
+    model:        str = Field(default="", max_length=200)
+
+
+@router.post("/audit/prompt-edit", status_code=204)
+def audit_prompt_edit(body: PromptEditBody, request: Request) -> Response:
+    delta = body.chars_after - body.chars_before
+    sign = "+" if delta >= 0 else ""
+    summary = f"{body.chars_before} → {body.chars_after} chars ({sign}{delta})"
+    if body.model:
+        summary += f" · {body.model}"
+    aid = audit_log.start(
+        tool="prompt-edit",
+        argv=[f"chars_before={body.chars_before}",
+              f"chars_after={body.chars_after}"],
+        engagement_id=get_engagement_id(request),
+        mode=get_mode(request),
+    )
+    audit_log.complete(aid, summary=summary)
+    return Response(status_code=204)

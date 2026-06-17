@@ -5,7 +5,7 @@
 // Prod: this process spawns the PyInstaller-bundled Python sidecar, waits
 //       for /health, then opens the window. Kills the sidecar on quit.
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -13,6 +13,30 @@ const { autoUpdater } = require("electron-updater");
 
 const isDev = process.env.NODE_ENV === "development";
 const BACKEND_PORT = parseInt(process.env.NT_BACKEND_PORT || "8765", 10);
+
+// In dev mode the OS dock + menu bar would otherwise read the Electron binary
+// name ("Electron"). Setting it before app initialisation makes macOS / Linux
+// show "MyHackingPal" everywhere it would normally show the launcher name.
+// In packaged builds this is already correct via Info.plist's CFBundleName,
+// but setting it twice is harmless and keeps both paths consistent.
+app.setName("MyHackingPal");
+
+// Same story for the dock icon — `electron .` would otherwise show the
+// Electron lozenge. Use the bundled PNG (works cross-platform; .icns isn't
+// supported by Dock.setIcon).
+if (isDev && process.platform === "darwin" && app.dock) {
+  try {
+    app.dock.setIcon(path.join(__dirname, "..", "build", "icon.png"));
+  } catch (e) {
+    console.warn("[network-tools] dock.setIcon failed:", e?.message ?? e);
+  }
+}
+
+app.setAboutPanelOptions({
+  applicationName: "MyHackingPal",
+  applicationVersion: app.getVersion(),
+  copyright: "© MyHackingPal contributors",
+});
 
 let backendProc = null;
 
@@ -166,17 +190,50 @@ async function createWindow() {
       : {};
 
   const win = new BrowserWindow({
+    title: "MyHackingPal",
     width:  1100,
     height: 760,
     minWidth:  860,
     minHeight: 580,
-    backgroundColor: "#0a0d12",
+    backgroundColor: "#0a0a0f",  // matches --bg-base in the new design system
     ...titleBar,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
     },
+  });
+
+  // Linux + Windows: the OS title bar shows the document title, not the app
+  // name. Pin it so window switchers / taskbar entries read "MyHackingPal".
+  win.on("page-title-updated", (e) => e.preventDefault());
+  win.setTitle("MyHackingPal");
+
+  // Hand any window.open(http(s)://...) call off to the OS default browser
+  // instead of spawning a chromeless Electron BrowserWindow. The Labs "Open ↗"
+  // button relies on this; without it, lab UIs render inside a blank Electron
+  // popup with no devtools / address bar.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        shell.openExternal(url);
+      }
+    } catch (e) { /* malformed URL — drop it */ }
+    return { action: "deny" };
+  });
+  // Same treatment for in-page navigation that would replace the renderer
+  // (e.g. accidental <a> click without target=_blank): keep the SPA mounted
+  // and bounce external URLs to the browser.
+  win.webContents.on("will-navigate", (e, url) => {
+    try {
+      const parsed = new URL(url);
+      const dev = isDev && parsed.host === "localhost:5173";
+      if (!dev && (parsed.protocol === "http:" || parsed.protocol === "https:")) {
+        e.preventDefault();
+        shell.openExternal(url);
+      }
+    } catch (e2) { /* malformed — let Electron handle */ }
   });
 
   if (isDev) {

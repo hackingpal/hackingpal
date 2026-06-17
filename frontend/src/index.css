@@ -136,15 +136,16 @@ body {
   position: relative;
 }
 
-/* Subtle radial accent glow at top of the app — sits behind everything,
-   gives the dark surface a quiet purple wash. Disabled in light mode. */
+/* Phosphor-green underglow — sits behind everything, evokes a CRT
+   terminal's bottom bezel bloom. Anchored just below the bottom edge so
+   only the top of the radial bleeds into view. Disabled in light mode. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   background: radial-gradient(
-    1200px 600px at 50% -200px,
-    rgba(124, 58, 237, 0.10),
+    1400px 500px at 50% 110%,
+    rgba(34, 197, 94, 0.12),
     transparent 70%
   );
   pointer-events: none;
@@ -153,6 +154,31 @@ body::before {
 :root.light body::before { display: none; }
 
 #root { position: relative; z-index: 1; }
+
+/* Light-mode brand mark — flip the dark squircle PNG to the "Badge / Light"
+   variant from the brand guide (white squircle, dark glyph) so the icon
+   doesn't look like a stark black block against the white sidebar. */
+:root.light .mhp-brand-mark { filter: invert(1); }
+
+/* Tame performative-ui's EyebrowPill default chrome (padded pill on glass)
+   down to the existing in-app eyebrow look: small mono uppercase label,
+   no background, no border. Applied where we pass className="mhp-eyebrow"
+   to <EyebrowPill>. */
+.pui-eyebrow.mhp-eyebrow {
+  display: inline-flex;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: rgb(var(--ink-dim-rgb));
+}
 
 /* Mono helper — for IPs, ports, hashes, URLs, CVEs, raw output, etc. */
 .data {
@@ -171,6 +197,18 @@ body::before {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ── Dopamine canvas blend modes ──
+ * Dopamine ships each effect on a canvas with `mix-blend-mode: screen` (bright
+ * bloom over a dark page). On a light page that blend mode washes everything
+ * out — violet × white via screen = white = invisible. Force `multiply` on
+ * the light theme so the same violet × white = violet = a visible mark.
+ *
+ * The override is namespaced to `canvas[data-dopamine]` so it doesn't touch
+ * any other canvas in the app. */
+:root.light canvas[data-dopamine] {
+  mix-blend-mode: multiply !important;
 }
 
 /* ── Thin, theme-aware scrollbars ── */

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Rotator, Sparkle, TokenStream } from "performative-ui";
 import {
   authFetch,
   fetchChatConfig,
@@ -12,6 +13,8 @@ import {
 } from "../lib/engagement";
 import { snapshot } from "../lib/sessionLog";
 import { chatBubbleIn, popIn } from "../lib/anim";
+import { shouldAutoOpen } from "../lib/setupState";
+import AnthropicSetupWizard from "./AnthropicSetupWizard";
 
 type ChatRole = "user" | "assistant";
 
@@ -32,22 +35,15 @@ const PANEL_W = 380;
 const PANEL_H = 560;
 const GENERAL_TAB: TabKey = "general";
 
+// Sparkle from performative-ui — the mandatory ✦ glyph with a subtle
+// twinkle. `solid` keeps it monochrome so it inherits currentColor and
+// stays on-brand with the mono palette.
 function SparkleIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.5 5.5l2 2M16.5 16.5l2 2M5.5 18.5l2-2M16.5 7.5l2-2" />
-      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
-    </svg>
+    <Sparkle
+      solid
+      style={{ fontSize: size, lineHeight: 1, display: "inline-flex" }}
+    />
   );
 }
 
@@ -226,6 +222,8 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [chatConfig, setChatConfig] = useState<ChatConfig | null>(null);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const autoOpenedSetupRef = useRef(false);
 
   const activeEid = useActiveEngagementId();
   const abortRef = useRef<AbortController | null>(null);
@@ -236,6 +234,17 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
   useEffect(() => {
     fetchChatConfig().then(setChatConfig).catch(() => setChatConfig(null));
   }, []);
+
+  // Auto-open the Anthropic setup wizard the first time the chat is opened
+  // with an unusable Anthropic config and the user hasn't dismissed before.
+  useEffect(() => {
+    if (!open || !chatConfig || autoOpenedSetupRef.current) return;
+    const needs = chatConfig.provider === "anthropic" && !chatConfig.usable;
+    if (shouldAutoOpen("anthropic", needs)) {
+      autoOpenedSetupRef.current = true;
+      setSetupOpen(true);
+    }
+  }, [open, chatConfig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -466,6 +475,29 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
               {chatConfig?.model ?? "claude"}
             </span>
             <span className="flex-1" />
+            {chatConfig && !chatConfig.usable && chatConfig.provider === "anthropic" && (
+              <button
+                onClick={() => setSetupOpen(true)}
+                title="Set up Claude API key"
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 10,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  padding: "4px 8px",
+                  borderRadius: 6,
+                  border: "1px solid var(--accent)",
+                  background: "transparent",
+                  color: "var(--accent-bright)",
+                  cursor: "pointer",
+                  transition: "background 150ms ease",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgb(124 58 237 / 0.1)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                Set up Claude
+              </button>
+            )}
             <button
               onClick={scanThisPage}
               disabled={sending}
@@ -569,6 +601,19 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
                   lineHeight: 1.55,
                 }}
               >
+                <TokenStream
+                  text="Reading your session log…"
+                  speedMs={[30, 70]}
+                  hideCaret
+                  style={{
+                    display: "block",
+                    marginBottom: 6,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    letterSpacing: "0.02em",
+                  }}
+                />
                 <p style={{ margin: 0 }}>
                   On the{" "}
                   <span style={{ color: "var(--accent-bright)", fontWeight: 600 }}>
@@ -585,6 +630,32 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
                     This tab is scoped to the active engagement.
                   </p>
                 )}
+                <div
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: "1px solid var(--border)",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 11,
+                    color: "var(--text-muted)",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  Try:{" "}
+                  <Rotator
+                    words={[
+                      "Audit TLS on this host",
+                      "Hunt subdomains for the target",
+                      "Check scope coverage",
+                      "Summarize today's findings",
+                      "Suggest the next recon step",
+                    ]}
+                    typeMs={48}
+                    deleteMs={28}
+                    holdMs={1600}
+                    style={{ color: "var(--accent-bright)" }}
+                  />
+                </div>
               </div>
             )}
 
@@ -742,6 +813,11 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
           </div>
         </div>
       )}
+      <AnthropicSetupWizard
+        open={setupOpen}
+        onClose={() => setSetupOpen(false)}
+        onCompleted={() => fetchChatConfig().then(setChatConfig).catch(() => {})}
+      />
     </>
   );
 }

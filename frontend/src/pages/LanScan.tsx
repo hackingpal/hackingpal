@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { EyebrowPill } from "performative-ui";
 import { fetchLanInfo, openWs, type LanEvent, type LanInfo } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { playNamed, getToolEffect } from "../lib/dopamine";
+import EffectPicker from "../components/EffectPicker";
 
 type Host = { ip: string; hostname: string; mac: string; isSelf: boolean };
 
@@ -20,6 +23,7 @@ export default function LanScan() {
   const [total,    setTotal]    = useState(0);
   const [elapsed,  setElapsed]  = useState<number | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const startBtnRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     fetchLanInfo().then(setInfo).catch(() => setInfo(null));
@@ -34,6 +38,8 @@ export default function LanScan() {
     if (scanning) return;
     setScanning(true); setStopped(false); setError(null);
     setHosts([]); setDone(0); setTotal(0); setElapsed(null);
+    // Fire the user's chosen effect for this tool, anchored on the Scan button.
+    void playNamed(getToolEffect("lan"), startBtnRef.current ?? undefined);
 
     const ws = openWs("/ws/lan-scan");
     wsRef.current = ws;
@@ -86,9 +92,7 @@ export default function LanScan() {
       <header className="border-b border-divider px-6 pt-4 pb-3">
         <div className="flex items-end gap-6">
           <div className="shrink-0">
-            <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">
-              Discovery
-            </div>
+            <EyebrowPill icon={false} className="mhp-eyebrow">Discovery</EyebrowPill>
             <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">
               LAN Scan
             </h2>
@@ -100,16 +104,20 @@ export default function LanScan() {
             <InfoChip label="Hosts"    value={info ? String(info.total_hosts) : "—"} />
             <div className="flex-1" />
             {!scanning ? (
-              <button
-                onClick={start}
-                disabled={!info}
-                className="bg-accent hover:bg-accentDim active:translate-y-px
-                           text-white text-xs font-bold tracking-wide
-                           px-3.5 py-1.5 rounded transition border border-accent/60
-                           disabled:opacity-50"
-              >
-                ▶ Scan LAN
-              </button>
+              <div className="flex items-center gap-2">
+                <EffectPicker toolKey="lan" />
+                <button
+                  ref={startBtnRef}
+                  onClick={start}
+                  disabled={!info}
+                  className="bg-accent hover:bg-accentDim active:translate-y-px
+                             text-white text-xs font-bold tracking-wide
+                             px-3.5 py-1.5 rounded transition border border-accent/60
+                             disabled:opacity-50"
+                >
+                  ▶ Scan LAN
+                </button>
+              </div>
             ) : (
               <button
                 onClick={stop}

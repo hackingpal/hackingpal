@@ -351,6 +351,11 @@ class BuildState:
 
 _build_states: dict[str, BuildState] = {}
 
+# Last good compose status per lab. `docker compose ps` is flaky under load
+# (slow daemon socket, builder lock contention) — caching the last successful
+# response avoids the UI flapping to "NOT BUILT" between two healthy polls.
+_compose_status_cache: dict[str, dict[str, Any]] = {}
+
 
 def _build_state(lab_id: str) -> BuildState:
     st = _build_states.get(lab_id)
@@ -426,6 +431,11 @@ async def compose_status(lab: LabDef) -> dict[str, Any]:
         timeout=10,
     )
     if rc != 0:
+        # Preserve the previous known state instead of flapping to "missing" —
+        # a transient ps failure shouldn't make the UI claim the stack is gone.
+        cached = _compose_status_cache.get(lab.id)
+        if cached is not None:
+            return cached
         return {"state": "missing", "services": [], "running_count": 0,
                 "total": len(lab.compose_services)}
 
@@ -455,14 +465,30 @@ async def compose_status(lab: LabDef) -> dict[str, Any]:
     overall = ("missing" if not parsed
                else "running" if running == total and total > 0
                else "partial")
-    return {"state": overall, "services": parsed,
-            "running_count": running, "total": total}
+    result = {"state": overall, "services": parsed,
+              "running_count": running, "total": total}
+    _compose_status_cache[lab.id] = result
+    return result
 
 
 async def get_status(lab_id: str) -> dict[str, Any]:
     lab = LABS[lab_id]
     daemon = await docker_running()
     bs = _build_state(lab_id)
+    # Reconcile orphaned "building" state. If the backend was reloaded mid-build
+    # the asyncio Task is gone but bs.status still says "building" — the UI would
+    # poll forever waiting for a finish event that can't arrive. Decide based on
+    # whether the target image now exists.
+    if bs.status == "building" and (bs.task is None or bs.task.done()):
+        image_now = daemon and await image_exists(lab.image_tag)
+        bs.finished_at = bs.finished_at or time.time()
+        if image_now:
+            bs.status = "built"
+            bs.log.append("✓ build completed (state recovered after restart)")
+        else:
+            bs.status = "error"
+            bs.error = "build interrupted (backend restarted)"
+            bs.log.append("✗ build interrupted — backend restarted before completion")
     base = {
         "lab":              _lab_summary(lab),
         "docker_running":   daemon,
@@ -544,8 +570,14 @@ async def start_lab(lab_id: str) -> dict[str, Any]:
             return {"status": "error", "error": (err or out).strip()[:500]}
         return {"status": "running"}
 
-    # Wipe any stale container so we can re-run cleanly.
-    await _run(["docker", "rm", "-f", lab.container_name], timeout=15)
+    # Idempotent: if the container is already up, hand back the same shape we
+    # return on a fresh start. Only wipe a stopped/dead container — never the
+    # one the user might already be using.
+    state = (await container_state(lab.container_name))["state"]
+    if state == "running":
+        return {"status": "running", "note": "already running"}
+    if state != "missing":
+        await _run(["docker", "rm", "-f", lab.container_name], timeout=15)
 
     cmd = ["docker", "run", "-d", "--name", lab.container_name]
     for cport, hport in lab.port_map.items():
@@ -571,6 +603,7 @@ async def stop_lab(lab_id: str) -> dict[str, Any]:
         rc, _, err = await _run(cmd, timeout=60)
         if rc != 0:
             return {"status": "error", "error": err.strip()[:500]}
+        _compose_status_cache.pop(lab.id, None)
         return {"status": "stopped"}
 
     state = (await container_state(lab.container_name))["state"]

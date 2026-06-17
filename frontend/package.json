@@ -25,15 +25,17 @@
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "deploy": "vite build && electron-builder --dir && rm -rf \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && ditto dist-electron/mac-arm64/MyHackingPal.app \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && touch \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && killall Dock"
   },
   "dependencies": {
     "@dopaminefx/effects": "^0.1.0",
     "@dopaminefx/react": "^0.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "electron-updater": "^6.8.3",
+    "electron-updater": "^6.8.9",
     "gsap": "^3.15.0",
+    "performative-ui": "^0.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -44,8 +46,8 @@
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.0.1",
     "cross-env": "^7.0.3",
-    "electron": "^33.0.2",
-    "electron-builder": "^25.1.8",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
     "happy-dom": "^15.11.7",
     "jsdom": "^25.0.1",
     "postcss": "^8.4.49",

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchTcpdumpInterfaces, fetchTcpdumpStatus,
   installTcpdumpSudoers, openWs,
@@ -7,6 +7,8 @@ import {
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import SetupWizard, { type SetupStep } from "../components/SetupWizard";
+import { shouldAutoOpen } from "../lib/setupState";
 
 export default function Tcpdump() {
   const [status,    setStatus]    = useState<TcpdumpStatus | null>(null);
@@ -17,11 +19,13 @@ export default function Tcpdump() {
   const [verbose,   setVerbose]   = useState(false);
   const [resolve,   setResolve]   = useState(false);
   const [running,   setRunning]   = useState(false);
-  const [installing, setInstalling] = useState(false);
   const [error,     setError]     = useState<string | null>(null);
   const [lines,     setLines]     = useState<string[]>([]);
   const [captured,  setCaptured]  = useState(0);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [introDone,  setIntroDone]  = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  const autoOpenedRef = useRef(false);
 
   async function refreshStatus() {
     try {
@@ -41,17 +45,14 @@ export default function Tcpdump() {
     wsRef.current = null;
   }, []);
 
-  async function install() {
-    setInstalling(true); setError(null);
-    try {
-      await installTcpdumpSudoers();
-      await refreshStatus();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setInstalling(false);
+  // Auto-open the SetupWizard the first time we see needs-install state.
+  useEffect(() => {
+    if (status === null || autoOpenedRef.current) return;
+    if (shouldAutoOpen("tcpdump", !status.passwordless)) {
+      autoOpenedRef.current = true;
+      setWizardOpen(true);
     }
-  }
+  }, [status]);
 
   function start() {
     if (running || !status?.passwordless) return;
@@ -78,6 +79,46 @@ export default function Tcpdump() {
   }
 
   const needsInstall = status !== null && !status.passwordless;
+
+  const wizardSteps = useMemo<SetupStep[]>(() => {
+    const passwordless = !!status?.passwordless;
+    return [
+      {
+        id: "intro",
+        title: "Why tcpdump needs a one-time admin prompt",
+        description: (
+          <>
+            tcpdump reads raw packets straight off your network interfaces, so
+            macOS gates it behind <code className="text-ink-primary">sudo</code>.
+            We&apos;ll drop a single passwordless sudoers entry for{" "}
+            <code className="text-ink-primary">/usr/sbin/tcpdump</code> —
+            no other binaries get root access.
+          </>
+        ),
+        done: introDone || passwordless,
+        cta: { label: "I'm ready", onRun: () => setIntroDone(true) },
+      },
+      {
+        id: "install",
+        title: "Grant passwordless sudo",
+        description: (
+          <>
+            macOS will pop the standard admin dialog once. Approve it and
+            you&apos;ll never see it again for tcpdump.
+          </>
+        ),
+        done: passwordless,
+        cta: {
+          label: "Install Permission",
+          busyLabel: "Installing",
+          onRun: async () => {
+            await installTcpdumpSudoers();
+            await refreshStatus();
+          },
+        },
+      },
+    ];
+  }, [status, introDone]);
 
   return (
     <div className="h-full flex flex-col">
@@ -139,7 +180,17 @@ export default function Tcpdump() {
             ? <span>Checking permissions…</span>
             : status.passwordless
               ? <span className="text-phos">● PASSWORDLESS SUDO READY · {status.user}</span>
-              : <span className="text-amber">⚠ ADMIN PASSWORD REQUIRED — install one-time permission below</span>
+              : (
+                <span className="text-amber">
+                  ⚠ ADMIN PASSWORD REQUIRED ·{" "}
+                  <button
+                    onClick={() => setWizardOpen(true)}
+                    className="underline decoration-dotted hover:text-accent transition"
+                  >
+                    Run setup
+                  </button>
+                </span>
+              )
           }
           {!running && captured > 0 && (
             <span className="ml-auto">CAPTURED {captured}</span>
@@ -155,20 +206,20 @@ export default function Tcpdump() {
           </div>
         )}
 
-        {needsInstall && (
+        {needsInstall && !wizardOpen && (
           <div className="border border-amber/50 bg-amber/5 rounded px-4 py-3 mb-4
                           flex items-start gap-3">
             <div className="flex-1">
               <div className="text-amber text-sm font-bold">One-time admin permission</div>
               <div className="text-xs text-ink-muted mt-1 leading-relaxed">
-                tcpdump needs root to capture packets. Click <em>Install</em> to add a
-                passwordless sudoers entry just for <code className="text-ink-primary">/usr/sbin/tcpdump</code>.
-                macOS will prompt for your password once — never again.
+                tcpdump needs passwordless sudo to capture packets. Open the setup
+                wizard to walk through it — macOS will prompt for your password once,
+                never again.
               </div>
             </div>
-            <button onClick={install} disabled={installing}
-                    className={btnPrimary() + " disabled:opacity-50"}>
-              {installing ? "Installing…" : "Install Permission"}
+            <button onClick={() => setWizardOpen(true)}
+                    className={btnPrimary()}>
+              Run Setup
             </button>
           </div>
         )}
@@ -181,6 +232,14 @@ export default function Tcpdump() {
             hint="Try filter `tcp port 443` or `icmp` to scope the capture."
           />
         )}
+
+        <SetupWizard
+          open={wizardOpen}
+          toolKey="tcpdump"
+          title="Set Up TCPDump"
+          steps={wizardSteps}
+          onClose={() => setWizardOpen(false)}
+        />
 
         {lines.length > 0 && (
           <div className="bg-bg-card border border-divider rounded overflow-hidden relative">

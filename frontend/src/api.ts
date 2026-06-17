@@ -361,6 +361,27 @@ export const updateChatSettings = (body: { model?: string; system_prompt?: strin
     body: JSON.stringify(body),
   });
 
+// Audit-log writes for high-leverage settings changes. Both endpoints
+// return 204 — they don't mutate state, they record that a mutation
+// happened so it shows up in the engagement audit trail.
+export const auditModeSwitch = (old: "lab" | "engagement", next: "lab" | "engagement") =>
+  api<void>("/settings/audit/mode-switch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ old, new: next }),
+  });
+
+export const auditPromptEdit = (charsBefore: number, charsAfter: number, model = "") =>
+  api<void>("/settings/audit/prompt-edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chars_before: charsBefore,
+      chars_after:  charsAfter,
+      model,
+    }),
+  });
+
 export type DnsblEntry = { name: string; status: string; listed: boolean };
 
 export type IpReport = {

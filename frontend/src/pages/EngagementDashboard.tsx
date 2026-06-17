@@ -8,6 +8,7 @@
 // engagement-first model — explains the concept and points at the list.
 
 import { useEffect, useMemo, useState } from "react";
+import { AsciiHero, EyebrowPill, Goldeneye } from "performative-ui";
 import {
   listEngagements,
   listFindings,
@@ -125,30 +126,54 @@ export default function EngagementDashboard({ onNavigate }: Props) {
 
   if (!activeId) {
     return (
-      <div className="h-full p-6 overflow-y-auto">
-        <header className="mb-4">
-          <h2 className="text-[15px] font-bold text-ink-primary tracking-wide">DASHBOARD</h2>
-        </header>
-        <div className="max-w-2xl border border-divider rounded-lg p-6 bg-bg-card">
-          <h3 className="text-[14px] font-bold text-ink-primary mb-2">
-            No active engagement
-          </h3>
-          <p className="text-[12px] text-ink-muted leading-relaxed mb-4">
-            MyHackingPal is an <b>engagement-first</b> workspace: scope, scans,
-            findings, and the final report all live inside a single engagement.
-            Activate one to see its dashboard here.
-          </p>
-          <ol className="text-[12px] text-ink-muted list-decimal pl-5 space-y-1 mb-5">
-            <li>Open <b>Engagements</b> and create one (scope = the targets you have authorization to test).</li>
-            <li>Pick it as active from the engagement pill in the top-right.</li>
-            <li>Every scan from that point auto-attaches to the engagement.</li>
-          </ol>
-          <button
-            onClick={() => onNavigate("engagements")}
-            className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold"
-          >
-            Go to Engagements →
-          </button>
+      <div className="h-full p-6 overflow-y-auto relative">
+        <AsciiHero
+          variant="bare"
+          palette={["#22c55e"]}
+          baseOpacity={0.14}
+          spotlightOpacity={0.55}
+          spotlightRadius={9}
+          fontSize={11}
+          aria-hidden
+          style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0 }}
+        />
+        <div className="relative" style={{ zIndex: 1 }}>
+          <header className="mb-4">
+            <EyebrowPill icon={false} className="mhp-eyebrow">DASHBOARD</EyebrowPill>
+          </header>
+          <div className="mb-6 max-w-2xl rounded-lg overflow-hidden border border-divider bg-bg-card/70 backdrop-blur-sm">
+            <Goldeneye
+              text_default=">;) MYHACKINGPAL"
+              text_reveal="READY WHEN YOU ARE."
+              pattern=">;) "
+              fontSize="clamp(28px, 5vw, 56px)"
+              pattern_size_default={11}
+              pattern_size_reveal={18}
+              scopeSize={180}
+              style={{ height: 140 }}
+            />
+          </div>
+          <div className="max-w-2xl border border-divider rounded-lg p-6 bg-bg-card/90 backdrop-blur-sm">
+            <h3 className="text-[14px] font-bold text-ink-primary mb-2">
+              No active engagement
+            </h3>
+            <p className="text-[12px] text-ink-muted leading-relaxed mb-4">
+              MyHackingPal is an <b>engagement-first</b> workspace: scope, scans,
+              findings, and the final report all live inside a single engagement.
+              Activate one to see its dashboard here.
+            </p>
+            <ol className="text-[12px] text-ink-muted list-decimal pl-5 space-y-1 mb-5">
+              <li>Open <b>Engagements</b> and create one (scope = the targets you have authorization to test).</li>
+              <li>Pick it as active from the engagement pill in the top-right.</li>
+              <li>Every scan from that point auto-attaches to the engagement.</li>
+            </ol>
+            <button
+              onClick={() => onNavigate("engagements")}
+              className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold"
+            >
+              Go to Engagements →
+            </button>
+          </div>
         </div>
       </div>
     );

@@ -76,6 +76,11 @@ type Props = { onJumpTo: (id: string) => void };
 
 const POLL_MS = 2_000;
 
+// Tools whose CLI takes the target as the FIRST positional arg, not the last.
+// nc is `nc HOST PORT` — feeding it as `nc PORT HOST` fails with a lookup error.
+// nmap / smbclient / curl all accept the target last so they're not in here.
+const TARGET_FIRST_CMDS = new Set(["nc"]);
+
 export default function Labs({ onJumpTo }: Props) {
   const [labs, setLabs] = useState<LabSummary[]>([]);
   const [dockerAvailable, setDockerAvailable] = useState<boolean>(true);
@@ -85,6 +90,7 @@ export default function Labs({ onJumpTo }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const pollRef = useRef<number | null>(null);
+  const toastTimerRef = useRef<number | null>(null);
 
   // ── Initial load ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -111,7 +117,9 @@ export default function Labs({ onJumpTo }: Props) {
   // to flow and container state to update without user input.
   useEffect(() => {
     const anyLive = Object.values(statuses).some(
-      (s) => s.build_status === "building" || s.container.state === "running",
+      (s) => s.build_status === "building"
+          || s.container.state === "running"
+          || s.container.state === "partial",
     );
     if (anyLive && pollRef.current == null) {
       pollRef.current = window.setInterval(() => {
@@ -145,6 +153,7 @@ export default function Labs({ onJumpTo }: Props) {
     setBusy((b) => ({ ...b, [labId]: true }));
     try {
       await api(`/labs/${labId}/${action}`, { method: "POST" });
+      setError(null);  // a successful action supersedes any stale error
       flash(actionToast(action, labId));
       await refreshStatus(labId);
     } catch (e) {
@@ -156,7 +165,11 @@ export default function Labs({ onJumpTo }: Props) {
 
   function flash(msg: string) {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 2_500);
+    if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimerRef.current = null;
+    }, 2_500);
   }
 
   function openInBrowser(url: string) {
@@ -223,8 +236,15 @@ export default function Labs({ onJumpTo }: Props) {
 
         {error && (
           <div className="border border-danger/40 bg-danger/10 text-danger
-                          rounded px-3 py-2 text-sm font-mono">
-            Error — {error}
+                          rounded px-3 py-2 text-sm font-mono flex items-start gap-3">
+            <span className="flex-1">Error — {error}</span>
+            <button
+              onClick={() => setError(null)}
+              aria-label="Dismiss error"
+              className="text-danger/80 hover:text-danger text-lg leading-none font-bold"
+            >
+              ×
+            </button>
           </div>
         )}
 
@@ -278,16 +298,43 @@ function LabCard({
   const built     = status?.image_exists ?? false;
   const building  = status?.build_status === "building";
   const running   = status?.container.state === "running";
+  // A compose stack with some-but-not-all services up. Treat as "live enough"
+  // for Stop / suggested-steps / sidecar — the user still needs a way to wind
+  // it down, and the sidecar might be the service that IS up.
+  const partial   = status?.container.state === "partial";
+  const live      = running || partial;
   const buildErr  = status?.build_status === "error" ? status?.build_error : null;
   const hasWebPort = !!lab.primary_url;
 
   // Sidecar form state — only used when lab.has_sidecar.
-  const [sidecarCmd, setSidecarCmd]       = useState<string>(lab.sidecar_cmds[0] ?? "nmap");
+  const [sidecarCmd, setSidecarCmd]       = useState<string>(lab.sidecar_cmds[0] ?? "");
   const [sidecarTarget, setSidecarTarget] = useState<string>("10.20.0.0/24");
   const [sidecarArgs, setSidecarArgs]     = useState<string>("-sn");
   const [sidecarOut, setSidecarOut]       = useState<SidecarResult | null>(null);
   const [sidecarBusy, setSidecarBusy]     = useState<boolean>(false);
   const sidecarRef = useRef<HTMLDivElement | null>(null);
+
+  // Build-log <details> open/close. Auto-opens whenever a new build starts or
+  // errors, but a user-triggered toggle wins until the next state transition —
+  // otherwise every 2s poll resets the user's collapse.
+  const [logOpen, setLogOpen] = useState<boolean>(false);
+  const lastAutoKeyRef = useRef<string>("");
+  useEffect(() => {
+    const key = `${building ? "b" : "i"}:${buildErr ? "e" : "ok"}`;
+    if (key !== lastAutoKeyRef.current) {
+      lastAutoKeyRef.current = key;
+      if (building || buildErr) setLogOpen(true);
+    }
+  }, [building, buildErr]);
+
+  // Auto-scroll the build log to the latest line while a build is streaming.
+  const logRef = useRef<HTMLPreElement | null>(null);
+  const tailLen = status?.build_log_tail?.length ?? 0;
+  useEffect(() => {
+    if (building && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [tailLen, building]);
 
   // Pre-fill the sidecar form when a suggested step has `route: "labs"` and
   // includes a `sidecar` field. Otherwise delegate to the page-level handler.
@@ -310,9 +357,11 @@ function LabCard({
     setSidecarOut(null);
     try {
       // Split args on whitespace; backend re-validates each token.
-      const argsList = sidecarArgs.trim() === ""
-        ? (sidecarTarget ? [sidecarTarget] : [])
-        : [...sidecarArgs.trim().split(/\s+/), ...(sidecarTarget ? [sidecarTarget] : [])];
+      const extraArgs = sidecarArgs.trim() === "" ? [] : sidecarArgs.trim().split(/\s+/);
+      const targetTok = sidecarTarget ? [sidecarTarget] : [];
+      const argsList = TARGET_FIRST_CMDS.has(sidecarCmd)
+        ? [...targetTok, ...extraArgs]
+        : [...extraArgs, ...targetTok];
       const r = await api<SidecarResult>(`/labs/${lab.id}/sidecar/exec`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -334,7 +383,8 @@ function LabCard({
         <div className="flex-1">
           <div className="flex items-center gap-3">
             <h3 className="text-sm font-bold text-ink-primary">{lab.name}</h3>
-            <StatusPill running={running} building={building} built={built} error={!!buildErr} />
+            <StatusPill running={running} partial={partial} building={building}
+                        built={built} error={!!buildErr} />
           </div>
           <p className="mt-1 text-[12px] text-ink-muted leading-snug">{lab.summary}</p>
           <div className="mt-2 flex gap-4 text-[11px] text-ink-dim font-mono">
@@ -352,13 +402,15 @@ function LabCard({
               {building ? "Building…" : "Build"}
             </button>
           )}
-          {built && !running && (
-            <button onClick={onStart} disabled={busy || !dockerRunning}
-                    className={btnPrimary()}>
+          {built && !live && (
+            <button onClick={onStart}
+                    disabled={busy || building || !dockerRunning}
+                    className={btnPrimary()}
+                    title={building ? "Wait for the rebuild to finish" : ""}>
               ▶ Start
             </button>
           )}
-          {running && (
+          {live && (
             <>
               {hasWebPort && (
                 <button onClick={onOpen} className={btnSecondary()}>Open ↗</button>
@@ -370,26 +422,33 @@ function LabCard({
             <button onClick={onBuild} disabled={busy || building || !dockerRunning}
                     className={btnSecondary()}
                     title="Rebuild the image">
-              Rebuild
+              {building ? "Rebuilding…" : "Rebuild"}
             </button>
           )}
         </div>
       </div>
 
-      {(building || buildErr || (status?.build_log_tail?.length ?? 0) > 0) && (
-        <details open={building || !!buildErr} className="mt-3">
+      {(building || buildErr || tailLen > 0) && (
+        <details
+          open={logOpen}
+          onToggle={(e) => setLogOpen((e.currentTarget as HTMLDetailsElement).open)}
+          className="mt-3"
+        >
           <summary className="text-[11px] uppercase tracking-widest text-ink-dim cursor-pointer
                               hover:text-ink-muted">
             Build log
+            {buildErr && (
+              <span className="ml-2 text-danger normal-case tracking-normal">
+                — {buildErr}
+              </span>
+            )}
           </summary>
-          <pre className="mt-2 max-h-64 overflow-auto font-mono text-[11px] leading-snug
+          <pre ref={logRef}
+               className="mt-2 max-h-64 overflow-auto font-mono text-[11px] leading-snug
                           bg-bg-base border border-divider rounded p-3 text-ink-primary
                           whitespace-pre-wrap">
             {(status?.build_log_tail ?? []).join("\n") || "(empty)"}
           </pre>
-          {buildErr && (
-            <div className="mt-2 text-[12px] text-danger font-mono">{buildErr}</div>
-          )}
         </details>
       )}
 
@@ -415,7 +474,7 @@ function LabCard({
         </div>
       )}
 
-      {running && lab.suggested_steps.length > 0 && (
+      {live && lab.suggested_steps.length > 0 && (
         <div className="mt-4 border-t border-divider pt-3">
           <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-2">
             Suggested next steps
@@ -450,7 +509,7 @@ function LabCard({
       )}
 
       {/* Sidecar exec panel — only for labs with has_sidecar (vulhub-net). */}
-      {lab.has_sidecar && running && (
+      {lab.has_sidecar && live && (
         <div ref={sidecarRef} className="mt-4 border-t border-divider pt-3">
           <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-2">
             Scan from inside the network (via sidecar)
@@ -511,17 +570,19 @@ function DockerBanner({ available, running }: { available: boolean; running: boo
   );
 }
 
-function StatusPill({ running, building, built, error }: {
-  running: boolean; building: boolean; built: boolean; error: boolean;
+function StatusPill({ running, partial, building, built, error }: {
+  running: boolean; partial: boolean; building: boolean; built: boolean; error: boolean;
 }) {
   const label =
     error    ? "ERROR"    :
     running  ? "RUNNING"  :
+    partial  ? "PARTIAL"  :
     building ? "BUILDING" :
     built    ? "READY"    : "NOT BUILT";
   const cls =
     error    ? "border-danger/60 text-danger" :
     running  ? "border-phos/60 text-phos"     :
+    partial  ? "border-amber/60 text-amber"   :
     building ? "border-amber/60 text-amber"   :
     built    ? "border-accent/60 text-accent" :
                "border-divider text-ink-dim";

@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { playNamed, getToolEffect } from "../lib/dopamine";
+import EffectPicker from "../components/EffectPicker";
 
 type Network = {
   ssid: string | null;
@@ -57,9 +59,16 @@ export default function WifiScan() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const scanBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  async function scan() {
+  async function scan(opts?: { withEffect?: boolean }) {
     setLoading(true); setError("");
+    // Fire the user's chosen effect for this tool, anchored on the Rescan
+    // button. Suppressed on the initial mount load + the silent auto-refresh
+    // tick so the user only sees the effect when they pressed the button.
+    if (opts?.withEffect) {
+      void playNamed(getToolEffect("wifi"), scanBtnRef.current ?? undefined);
+    }
     try {
       setResult(await api<ScanResponse>("/wifi-scan/scan"));
     } catch (e) {
@@ -89,7 +98,8 @@ export default function WifiScan() {
                  onChange={(e) => setAutoRefresh(e.target.checked)} />
           auto-refresh every 5s
         </label>
-        <button onClick={scan} disabled={loading}
+        <EffectPicker toolKey="wifi" />
+        <button ref={scanBtnRef} onClick={() => scan({ withEffect: true })} disabled={loading}
                 className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
                            disabled:opacity-40">
           {loading ? "Scanning…" : "Rescan"}

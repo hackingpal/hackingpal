@@ -124,7 +124,7 @@ export default function EngagementTabs({ onChange }: Props) {
         </button>
       </div>
 
-      <div className="flex-1 flex items-stretch overflow-x-auto">
+      <div className="flex-1 flex items-stretch overflow-x-auto min-w-0">
         {tabs.map((t) => {
           const isActive = t.id === activeTabId;
           return (
@@ -169,74 +169,76 @@ export default function EngagementTabs({ onChange }: Props) {
             </div>
           );
         })}
+      </div>
 
-        <div ref={pickerRef} className="relative flex items-center">
-          <button
-            onClick={() => setPickerOpen((v) => !v)}
-            title="New tab"
-            aria-label="New tab"
-            className="w-7 h-full flex items-center justify-center
-                       text-ink-muted hover:text-ink-primary hover:bg-bg-nav-hover
-                       transition text-[14px] leading-none border-r border-divider"
+      {/* "+" picker lives OUTSIDE the overflow-x-auto strip so its dropdown
+          isn't clipped by the strip's computed overflow-y. */}
+      <div ref={pickerRef} className="relative flex items-center shrink-0 border-l border-divider">
+        <button
+          onClick={() => setPickerOpen((v) => !v)}
+          title="New tab"
+          aria-label="New tab"
+          className="w-8 h-full flex items-center justify-center
+                     text-ink-muted hover:text-ink-primary hover:bg-bg-nav-hover
+                     transition text-[14px] leading-none"
+        >
+          +
+        </button>
+        {pickerOpen && (
+          <div
+            className="absolute right-0 top-full mt-1 w-64 bg-bg-card border
+                       border-divider rounded shadow-2xl z-50 overflow-hidden"
           >
-            +
-          </button>
-          {pickerOpen && (
             <div
-              className="absolute left-0 top-full mt-1 w-64 bg-bg-card border
-                         border-divider rounded shadow-2xl z-50 overflow-hidden"
+              className="px-3 py-2 border-b border-divider text-[10px]
+                         tracking-widest text-ink-muted"
             >
-              <div
-                className="px-3 py-2 border-b border-divider text-[10px]
-                           tracking-widest text-ink-muted"
-              >
-                NEW TAB
-              </div>
-              <button
-                onClick={handleNewLab}
-                className="w-full text-left px-3 py-2 text-[12px] text-ink-primary
-                           hover:bg-bg-nav-hover flex items-center gap-2"
-              >
-                <span className="inline-block w-1.5 h-1.5 rounded-full bg-ink-dim" />
-                Lab tab
-                <span className="text-ink-dim text-[10px] ml-auto">no engagement</span>
-              </button>
-              <div className="max-h-64 overflow-y-auto border-t border-divider">
-                <div
-                  className="px-3 py-1.5 text-[10px] tracking-widest text-ink-muted
-                             bg-bg-base/40"
-                >
-                  ACTIVE ENGAGEMENTS
-                </div>
-                {attachable.length === 0 && (
-                  <div className="px-3 py-3 text-[11px] text-ink-dim italic">
-                    No active engagements.
-                  </div>
-                )}
-                {attachable.map((e) => {
-                  const already = activeIds.has(e.id);
-                  return (
-                    <button
-                      key={e.id}
-                      onClick={() => handleAttach(e)}
-                      className="w-full text-left px-3 py-2 text-[12px]
-                                 text-ink-primary hover:bg-bg-nav-hover
-                                 flex items-center gap-2"
-                    >
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent" />
-                      <span className="flex-1 truncate">{e.name}</span>
-                      {already && (
-                        <span className="text-[9px] text-amber uppercase">
-                          open
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+              NEW TAB
             </div>
-          )}
-        </div>
+            <button
+              onClick={handleNewLab}
+              className="w-full text-left px-3 py-2 text-[12px] text-ink-primary
+                         hover:bg-bg-nav-hover flex items-center gap-2"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-ink-dim" />
+              Lab tab
+              <span className="text-ink-dim text-[10px] ml-auto">no engagement</span>
+            </button>
+            <div className="max-h-64 overflow-y-auto border-t border-divider">
+              <div
+                className="px-3 py-1.5 text-[10px] tracking-widest text-ink-muted
+                           bg-bg-base/40"
+              >
+                ACTIVE ENGAGEMENTS
+              </div>
+              {attachable.length === 0 && (
+                <div className="px-3 py-3 text-[11px] text-ink-dim italic">
+                  No active engagements.
+                </div>
+              )}
+              {attachable.map((e) => {
+                const already = activeIds.has(e.id);
+                return (
+                  <button
+                    key={e.id}
+                    onClick={() => handleAttach(e)}
+                    className="w-full text-left px-3 py-2 text-[12px]
+                               text-ink-primary hover:bg-bg-nav-hover
+                               flex items-center gap-2"
+                  >
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent" />
+                    <span className="flex-1 truncate">{e.name}</span>
+                    {already && (
+                      <span className="text-[9px] text-amber uppercase">
+                        open
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -2,7 +2,7 @@
 //
 // Two surfaces:
 //   - TOP_NAV    — flat engagement-first sidebar (rendered by Sidebar.tsx)
-//   - TOOL_GROUPS — categorized tool catalog (rendered by ToolLibrary.tsx
+//   - TOOL_GROUPS — categorized tool catalog (rendered by the Tools page
 //                   and searched by CommandPalette.tsx)
 
 import type { NavId } from "../components/Sidebar";
@@ -31,12 +31,11 @@ export const TOP_NAV: NavItem[] = [
   { id: "engagements",      label: "Engagements"      },
   { id: "targets",          label: "Targets"          },
   { id: "playbooks",        label: "Playbooks"        },
-  { id: "playbook-builder", label: "Playbook Builder" },
   { id: "labs",             label: "Labs"             },
   { id: "selfassess",       label: "Self-Assess"      },
-  { id: "tools",            label: "Tool Library"     },
-  { id: "tool-status",      label: "Tool Status"      },
+  { id: "tools",            label: "Tools"            },
   { id: "workspace",        label: "Workspace"        },
+  { id: "effects-debug",    label: "Effects Debug"    },
   { id: "settings",         label: "Settings"         },
 ];
 

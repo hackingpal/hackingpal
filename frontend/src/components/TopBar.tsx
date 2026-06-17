@@ -1,8 +1,10 @@
 // 44px breadcrumb bar that sits at the top of every tool page (inside the
 // main content area, to the right of the sidebar). Shows section / tool
-// name on the left, an active-scan pulse + version badge on the right.
+// name on the left, an active-scan spinner + version badge on the right.
 //
 // The theme toggle lives in App.tsx's top strip, so it isn't duplicated here.
+
+import { WibblingSpinner } from "performative-ui";
 
 export type Crumb = { label: string; onClick?: () => void };
 
@@ -22,7 +24,7 @@ export default function TopBar({ breadcrumb, scanning = false, rightExtra }: Pro
         height: 44,
         background: "var(--bg-base)",
         borderBottom: "1px solid var(--border)",
-        fontFamily: "var(--font-sans)",
+        fontFamily: "var(--font-mono)",
       }}
     >
       <div className="flex items-center gap-1.5 min-w-0">
@@ -73,36 +75,26 @@ export default function TopBar({ breadcrumb, scanning = false, rightExtra }: Pro
 
       <div className="flex items-center gap-3 shrink-0">
         {scanning && (
-          <div
-            className="flex items-center gap-1.5"
+          <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: 10,
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
+              fontSize: 11,
               color: "var(--success)",
             }}
             title="A scan is currently running"
           >
-            <span
-              className="scanning inline-block rounded-full"
-              style={{
-                width: 8,
-                height: 8,
-                background: "var(--success)",
-              }}
-            />
-            <span>Scanning</span>
-          </div>
+            <WibblingSpinner />
+          </span>
         )}
         {rightExtra}
         <span
           style={{
             fontFamily: "var(--font-mono)",
             fontSize: 10,
-            color: "var(--text-muted)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
+            fontWeight: 600,
+            color: "var(--text-secondary)",
+            border: "1px solid var(--border-bright)",
+            borderRadius: 3,
             padding: "2px 6px",
             letterSpacing: "0.06em",
           }}

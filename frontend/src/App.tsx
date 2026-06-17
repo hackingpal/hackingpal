@@ -48,7 +48,7 @@ import Placeholder from "./pages/Placeholder";
 import PlannedToolPage from "./pages/PlannedToolPage";
 import Engagements from "./pages/Engagements";
 import EngagementDashboard from "./pages/EngagementDashboard";
-import Presets from "./pages/Presets";
+import Playbooks from "./pages/Playbooks";
 import Labs from "./pages/Labs";
 import SelfAssess from "./pages/SelfAssess";
 import CvssCalculator from "./pages/CvssCalculator";
@@ -85,11 +85,10 @@ import DorksGen from "./pages/DorksGen";
 import Audit from "./pages/Audit";
 import Settings from "./pages/Settings";
 import AiAssistant from "./pages/AiAssistant";
-import ToolLibrary from "./pages/ToolLibrary";
+import Tools from "./pages/Tools";
 import Targets from "./pages/Targets";
 import EngagementWorkspace from "./pages/EngagementWorkspace";
-import PlaybookBuilder from "./pages/PlaybookBuilder";
-import ToolStatus from "./pages/ToolStatus";
+import EffectsDebug from "./pages/EffectsDebug";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import EngagementPill from "./components/EngagementPill";
@@ -227,20 +226,20 @@ export default function App() {
               ~150px, so we reserve that space on the right edge instead. */}
         <div
           className={
-            "app-drag h-8 border-b border-divider bg-bg-sidebar flex items-center justify-between gap-3 " +
-            (platform === "win32" ? "pr-[150px] " : "pr-4 ") +
+            "app-drag h-9 border-b border-divider bg-bg-sidebar flex items-center justify-between gap-2 " +
+            (platform === "win32" ? "pr-[150px] " : "pr-3 ") +
             (sidebarHidden && platform !== "win32" && platform !== "linux"
-              ? "pl-[88px]"
-              : "pl-3")
+              ? "pl-[92px]"
+              : "pl-2")
           }
         >
-          <div className="flex items-center gap-2 app-no-drag">
+          <div className="flex items-center gap-1.5 app-no-drag min-w-0">
             <button
               onClick={() => setSidebarHidden((v) => !v)}
               title={(sidebarHidden ? "Show sidebar" : "Hide sidebar") + " (⌘B)"}
               className="text-ink-muted hover:text-ink-primary
                          text-[14px] leading-none px-1.5 py-0.5 rounded
-                         hover:bg-bg-nav-hover transition"
+                         hover:bg-bg-nav-hover transition shrink-0"
               aria-label={sidebarHidden ? "Show sidebar" : "Hide sidebar"}
             >
               {sidebarHidden ? "›" : "‹"}
@@ -248,43 +247,51 @@ export default function App() {
             <button
               onClick={() => setPaletteOpen(true)}
               title="Search tools (⌘K)"
-              className="flex items-center gap-2 px-2 py-0.5 rounded
+              className="flex items-center gap-1.5 px-2 py-0.5 rounded
                          text-[10px] tracking-wider text-ink-dim
                          border border-divider hover:border-ink-muted
-                         hover:text-ink-primary transition"
+                         hover:text-ink-primary transition shrink-0"
             >
               <span aria-hidden>⌕</span>
               <span>Search…</span>
-              <kbd className="text-ink-dim text-[9px] font-mono">⌘K</kbd>
+              <kbd className="text-ink-dim text-[9px] font-mono hidden sm:inline">⌘K</kbd>
             </button>
             <button
               onClick={() => setCatalogOpen(true)}
               title="Tool catalog — plan new tools (⌘I)"
-              className="flex items-center gap-1.5 px-2 py-0.5 rounded
+              className="flex items-center gap-1 px-2 py-0.5 rounded
                          text-[10px] tracking-wider text-ink-dim
                          border border-divider hover:border-ink-muted
-                         hover:text-ink-primary transition"
+                         hover:text-ink-primary transition shrink-0"
               aria-label="Open tool catalog"
             >
               <span className="text-[12px] leading-none font-bold">+</span>
               <span>Tool</span>
-              <kbd className="text-ink-dim text-[9px] font-mono">⌘I</kbd>
+              <kbd className="text-ink-dim text-[9px] font-mono hidden sm:inline">⌘I</kbd>
             </button>
           </div>
-          <div className="flex items-center gap-3 text-[10px] tracking-widest text-ink-dim app-no-drag">
+          <div className="flex items-center gap-2 text-[10px] tracking-widest text-ink-dim app-no-drag min-w-0">
             <ModePill onOpenEngagementsPage={() => navigate("engagements")} />
             <EngagementPill onOpenEngagementsPage={() => navigate("engagements")} />
             <button
               onClick={theme.cycle}
               title={`Theme: ${themeLabel} — click to cycle (dark → light → system)`}
-              className="flex items-center gap-1.5 px-1.5 py-0.5 rounded
-                         hover:bg-bg-nav-hover hover:text-ink-primary transition leading-none"
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded
+                         hover:bg-bg-nav-hover hover:text-ink-primary transition leading-none shrink-0"
               aria-label={`Switch theme (current: ${themeLabel})`}
             >
               <span className="text-[12px] leading-none">{themeIcon}</span>
-              <span className="uppercase">{theme.choice}</span>
             </button>
-            <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-1.5 shrink-0"
+              title={
+                health
+                  ? `Backend connected · pid ${health.pid}`
+                  : everConnected
+                    ? "Backend unreachable"
+                    : "Backend connecting…"
+              }
+            >
               <span
                 className={
                   "inline-block w-1.5 h-1.5 rounded-full " +
@@ -295,11 +302,13 @@ export default function App() {
                       : "bg-amber animate-pulse")
                 }
               />
-              {health
-                ? `BACKEND CONNECTED · pid ${health.pid}`
-                : everConnected
-                  ? "BACKEND UNREACHABLE"
-                  : "BACKEND CONNECTING…"}
+              <span className="hidden md:inline">
+                {health
+                  ? "BACKEND"
+                  : everConnected
+                    ? "OFFLINE"
+                    : "CONNECTING"}
+              </span>
             </div>
           </div>
         </div>
@@ -312,15 +321,14 @@ export default function App() {
            active === "dashboard"  ? <EngagementDashboard onNavigate={navigate} /> :
            active === "engagements" ? <Engagements /> :
            active === "targets"     ? <Targets onJumpTo={navigate} /> :
-           active === "tools"       ? <ToolLibrary onOpenTool={navigate} /> :
-           active === "tool-status" ? <ToolStatus onJumpTo={navigate} /> :
+           active === "tools"       ? <Tools onJumpTo={navigate} /> :
            active === "workspace"   ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "evidence"    ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "reports"     ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "findings"    ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "assistant"   ? <AiAssistant activePage={active} /> :
-           active === "playbooks"   ? <Presets /> :
-           active === "playbook-builder" ? <PlaybookBuilder onJumpTo={navigate} /> :
+           active === "playbooks"   ? <Playbooks initialTab="browse" onJumpTo={navigate} /> :
+           active === "playbook-builder" ? <Playbooks initialTab="build" onJumpTo={navigate} /> :
            active === "labs"        ? <Labs onJumpTo={navigate} /> :
            active === "selfassess"  ? <SelfAssess onJumpTo={navigate} /> :
            active === "ip"          ? <IpChecker /> :
@@ -398,6 +406,7 @@ export default function App() {
            active === "emailharvest" ? <EmailHarvest /> :
            active === "dorksgen"    ? <DorksGen /> :
            active === "audit-log"   ? <Audit /> :
+           active === "effects-debug" ? <EffectsDebug /> :
            active === "settings"    ? <Settings onJumpTo={navigate} /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}

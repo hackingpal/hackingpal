@@ -2,11 +2,13 @@
 // stats bar to show the user whether anything is in flight.
 //
 //   connecting  — yellow pulse
-//   scanning    — green pulse
+//   scanning    — Claude-Code spinner with rolling verb
 //   complete    — green static
 //   error       — red static
 //   stopped     — grey static
 //   idle        — muted dot
+
+import { WibblingSpinner } from "performative-ui";
 
 export type WsState =
   | "idle"
@@ -43,6 +45,23 @@ const DEFAULT_LABEL: Record<WsState, string> = {
 
 export default function WsStatus({ state, label, className = "" }: Props) {
   const c = COLOR[state];
+  // Active "scanning" state drops the dot+text in favor of the Claude Code
+  // wibbling spinner — the rolling verb signals "thinking and doing" much
+  // better than a pulse dot.
+  if (state === "scanning") {
+    return (
+      <span
+        className={"inline-flex items-center " + className}
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 11,
+          color: c.text,
+        }}
+      >
+        <WibblingSpinner />
+      </span>
+    );
+  }
   return (
     <span
       className={"inline-flex items-center gap-1.5 " + className}

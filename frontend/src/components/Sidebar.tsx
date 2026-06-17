@@ -3,7 +3,9 @@ import { useMemo } from "react";
 // MyHackingPal brand mark — uses the same pre-rendered PNG as the dock
 // icon so the sidebar badge matches the app icon pixel-for-pixel and
 // avoids font-fallback inconsistencies at small display sizes.
-// Source: frontend/public/brand-mark.png (256×256, downscaled by CSS).
+// In light mode the image is CSS-inverted so the icon flips to the
+// "Badge / Light" variant from the brand guide (white squircle, dark
+// glyph) instead of staying as a high-contrast dark block on white.
 function BrandMark({ size = 28 }: { size?: number } = {}) {
   return (
     <img
@@ -11,7 +13,7 @@ function BrandMark({ size = 28 }: { size?: number } = {}) {
       alt="MyHackingPal"
       width={size}
       height={size}
-      className="shrink-0 block"
+      className="shrink-0 block mhp-brand-mark"
       style={{ imageRendering: "auto" }}
     />
   );
@@ -19,7 +21,7 @@ function BrandMark({ size = 28 }: { size?: number } = {}) {
 
 export type NavId =
   | "home" | "targets" | "tools" | "evidence" | "reports" | "assistant"
-  | "workspace" | "playbook-builder" | "tool-status"
+  | "workspace" | "playbook-builder"
   | "playbooks" | "labs" | "selfassess"
   | "dashboard" | "engagements" | "findings"
   | "lan" | "ip" | "ping" | "dns" | "whois" | "localdisco"
@@ -37,7 +39,7 @@ export type NavId =
   | "hash" | "cvss"
   | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
-  | "wifi" | "vpn" | "term" | "brew" | "settings";
+  | "wifi" | "vpn" | "term" | "brew" | "settings" | "effects-debug";
 
 import { topNav, type Platform } from "../lib/nav";
 
@@ -109,12 +111,6 @@ function NavIcon({ id, className = "" }: { id: string; className?: string }) {
           <path d="m18 10-8 8-6 1 1-6 8-8" />
         </svg>
       );
-    case "tool-status":
-      return (
-        <svg {...common}>
-          <path d="M3 12h4l2-7 4 14 2-7h6" />
-        </svg>
-      );
     case "workspace":
       return (
         <svg {...common}>
@@ -127,6 +123,13 @@ function NavIcon({ id, className = "" }: { id: string; className?: string }) {
         <svg {...common}>
           <circle cx="12" cy="12" r="3" />
           <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4.9a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.5a7 7 0 0 0-2 1.2l-2.4-.9-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-.9a7 7 0 0 0 2 1.2L10 21h4l.5-2.5a7 7 0 0 0 2-1.2l2.4.9 2-3.4-2-1.6c0-.4.1-.8.1-1.2Z" />
+        </svg>
+      );
+    case "effects-debug":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v4l3 2" />
         </svg>
       );
     default:
