@@ -453,5 +453,6 @@ jobs:
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
+          make_latest: ${{ !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'alpha') }}
           files: release-assets/*
           fail_on_unmatched_files: true
