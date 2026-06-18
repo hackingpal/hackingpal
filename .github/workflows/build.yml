@@ -67,6 +67,7 @@ jobs:
               frontend/dist-electron/*.dmg
               frontend/dist-electron/*.dmg.blockmap
               frontend/dist-electron/latest*.yml
+              frontend/dist-electron/MyHackingPal-macos-arm64.zip
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
@@ -244,6 +245,26 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
         run: npx electron-builder ${{ matrix.target_args }} --publish never
 
+      - name: Pack macOS .app with ditto
+        # Pack the .app HERE on the macOS runner — `ditto` is macOS-only
+        # and the bundle still has its xattrs intact. The release job
+        # downloads this pre-made zip; doing it Linux-side would strip
+        # the bundle metadata and produce a Gatekeeper-rejected archive.
+        if: matrix.os == 'macos-latest'
+        working-directory: frontend/dist-electron
+        run: |
+          APP_DIR=$(find . -maxdepth 3 -type d -name "*.app" | head -1)
+          if [ -z "$APP_DIR" ]; then
+            echo "::error::no .app found under frontend/dist-electron"
+            ls -la
+            exit 1
+          fi
+          APP_PARENT=$(dirname "$APP_DIR")
+          APP_NAME=$(basename "$APP_DIR")
+          echo "packing $APP_DIR -> MyHackingPal-macos-arm64.zip"
+          (cd "$APP_PARENT" && ditto -c -k --keepParent "$APP_NAME" "MyHackingPal-macos-arm64.zip")
+          ls -lh "$APP_PARENT/MyHackingPal-macos-arm64.zip"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -396,17 +417,19 @@ jobs:
           fi
           echo "found: $MAC_DMG"
           cp "$MAC_DMG" release-assets/MyHackingPal-macos-arm64.dmg
-          # Keep the zipped .app as a fallback for users who'd rather drag
-          # the bundle directly (or who can't mount DMGs). Use `ditto`, not
-          # `zip`, so macOS resource forks + bundle metadata survive the
-          # round-trip — a plain `zip -ry` produces a bundle Gatekeeper
-          # rejects on extraction.
-          MAC_APP=$(find artifacts/macos -maxdepth 4 -type d -name "*.app" | head -1)
-          if [ -n "$MAC_APP" ]; then
-            MAC_PARENT=$(dirname "$MAC_APP")
-            MAC_NAME=$(basename "$MAC_APP")
-            (cd "$MAC_PARENT" && ditto -c -k --keepParent "$MAC_NAME" "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip")
+          # Copy the pre-made .app zip. The macOS build job packs it with
+          # `ditto -c -k --keepParent` on the macOS runner (where ditto
+          # exists and the bundle still has its xattrs intact). Re-packing
+          # here on Linux is impossible (ditto is macOS-only) and would
+          # produce a Gatekeeper-rejected bundle anyway since upload-artifact
+          # has already stripped the xattrs by this point.
+          MAC_ZIP=$(find artifacts/macos -maxdepth 3 -type f -name "MyHackingPal-macos-arm64.zip" | head -1)
+          if [ -z "$MAC_ZIP" ]; then
+            echo "::error::macOS .app zip not found — did the macOS build job's ditto step run?"
+            find artifacts/macos -maxdepth 3
+            exit 1
           fi
+          cp "$MAC_ZIP" release-assets/MyHackingPal-macos-arm64.zip
           # latest-mac.yml drives electron-updater on Mac.
           MAC_YML=$(find artifacts/macos -maxdepth 3 -type f -name "latest-mac.yml" | head -1)
           if [ -n "$MAC_YML" ]; then cp "$MAC_YML" release-assets/; fi
