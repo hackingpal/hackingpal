@@ -108,16 +108,39 @@ See the [Roadmap](#roadmap) section below for what's done vs in flight.
 
 ### Option 1 — Download (recommended)
 
+Release assets are public and download without a GitHub login. (The
+links below use GitHub's `releases/latest/download/<file>` redirect, so
+they always point at the newest published release.)
+
 | Platform | Download | Notes |
 |---|---|---|
-| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.dmg](https://github.com/myhackingpal/myhackingpal/releases/latest) | Mount, drag to /Applications. Right-click → Open on first launch. Or grab the `.zip` if your tooling can't mount DMGs. |
-| Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest) | `chmod +x` then run |
+| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.dmg](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-macos-arm64.dmg) · [.zip](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-macos-arm64.zip) | Mount the DMG and drag to `/Applications`, then run the Gatekeeper bypass below. The `.zip` is a `ditto`-packed `.app` for tooling that can't mount DMGs. |
+| Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-linux-x86_64.AppImage) | `chmod +x` then run |
+
+**macOS first launch (the build is unsigned).** MyHackingPal does not yet
+have a paid Apple Developer certificate, so the OS will refuse a plain
+double-click on the first run with "MyHackingPal can't be opened because
+Apple cannot check it for malicious software." Two ways through:
+
+1. **Right-click → Open** in Finder (then click **Open** in the dialog).
+   This is the canonical Apple-blessed bypass for an unsigned app — the
+   choice is recorded so subsequent launches work normally. Recommended
+   if you prefer not to touch a terminal.
+2. **Strip the quarantine attribute from a terminal**, then launch:
+   ```sh
+   xattr -cr /Applications/MyHackingPal.app && open /Applications/MyHackingPal.app
+   ```
+   `xattr -cr` clears the `com.apple.quarantine` flag macOS attaches to
+   downloaded files; `open` launches the bundle. Use this if you
+   installed the `.zip` somewhere outside `/Applications`.
+
+Once it's launched once, subsequent launches work normally.
 
 Native Windows builds may still appear in CI/releases, but Windows is experimental and not a v1.0 support target. Use Docker/remote backend mode if you are testing from a Windows workstation.
 
-All builds are unsigned. See per-platform guides in `docs/` for first-launch
-instructions, and [docs/SIGNING.md](docs/SIGNING.md) for what code-signing
-would actually take. Installed apps auto-check for updates via
+See per-platform guides in `docs/` for more first-launch detail, and
+[docs/SIGNING.md](docs/SIGNING.md) for what code-signing would actually
+take. Installed apps auto-check for updates via
 [electron-updater](https://www.electron.build/auto-update) — on Windows
 and Linux this also auto-installs; on Mac the OS rejects the unsigned
 replacement, so updates are detected but require re-downloading the DMG.

@@ -397,12 +397,15 @@ jobs:
           echo "found: $MAC_DMG"
           cp "$MAC_DMG" release-assets/MyHackingPal-macos-arm64.dmg
           # Keep the zipped .app as a fallback for users who'd rather drag
-          # the bundle directly (or who can't mount DMGs).
+          # the bundle directly (or who can't mount DMGs). Use `ditto`, not
+          # `zip`, so macOS resource forks + bundle metadata survive the
+          # round-trip — a plain `zip -ry` produces a bundle Gatekeeper
+          # rejects on extraction.
           MAC_APP=$(find artifacts/macos -maxdepth 4 -type d -name "*.app" | head -1)
           if [ -n "$MAC_APP" ]; then
             MAC_PARENT=$(dirname "$MAC_APP")
             MAC_NAME=$(basename "$MAC_APP")
-            (cd "$MAC_PARENT" && zip -ry "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip" "$MAC_NAME")
+            (cd "$MAC_PARENT" && ditto -c -k --keepParent "$MAC_NAME" "$GITHUB_WORKSPACE/release-assets/MyHackingPal-macos-arm64.zip")
           fi
           # latest-mac.yml drives electron-updater on Mac.
           MAC_YML=$(find artifacts/macos -maxdepth 3 -type f -name "latest-mac.yml" | head -1)
