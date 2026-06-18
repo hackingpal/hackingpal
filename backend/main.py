@@ -44,6 +44,21 @@ from routers import (
 logging_setup.configure()
 logger = logging.getLogger("myhackingpal")
 
+# ── PATH augmentation for GUI-launched sidecars ─────────────────────────────
+# macOS launchd hands GUI apps a minimal PATH like ``/usr/bin:/bin:/usr/sbin:
+# /sbin``. That's missing Homebrew (`/opt/homebrew/bin`) and Docker Desktop's
+# /usr/local symlinks — so `shutil.which("docker")` returns None and Labs
+# fails with "Docker daemon is not running" even when colima is up. Electron's
+# main.cjs already prepends these, but we belt-and-suspenders here so direct
+# sidecar launches (or alternative GUI launchers) also work.
+if sys.platform == "darwin":
+    _TOOL_PATHS = ["/opt/homebrew/bin", "/opt/homebrew/sbin",
+                   "/usr/local/bin", "/usr/local/sbin"]
+    _existing = (os.environ.get("PATH") or "").split(":")
+    _need = [p for p in _TOOL_PATHS if p not in _existing]
+    if _need:
+        os.environ["PATH"] = ":".join(_need + _existing)
+
 # ── Startup guard: refuse to expose the backend to the network ───────────────
 # We check both NT_BACKEND_HOST (used by the sidecar entrypoint below) and
 # HOST (commonly read by container orchestration). If either is a wildcard,

@@ -1,5 +1,5 @@
 /**
- * Labs — Docker-backed vulnerable apps to practice against.
+ * Labs — Vulnerable apps you can spin up locally to practice against.
  *
  * Each lab has a card showing build/run state and three primary actions
  * (Build, Start, Stop). When a lab is running, "Open in browser" launches
@@ -215,7 +215,8 @@ export default function Labs({ onJumpTo }: Props) {
             <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">Labs</h2>
           </div>
           <p className="flex-1 text-[12px] text-ink-muted leading-snug">
-            Docker-backed vulnerable apps you can spin up locally and aim the tools at.
+            Vulnerable apps you can spin up locally and aim the tools at.
+            Runs in a container under colima (or any docker-compatible runtime).
             Loopback-only — never reachable off-host.
           </p>
         </div>

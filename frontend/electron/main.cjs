@@ -57,9 +57,24 @@ function spawnBackend() {
   // Pin to loopback. The backend refuses to start on a wildcard host (see
   // backend/main.py), but we set NT_BACKEND_HOST explicitly here so the
   // packaged app never depends on the default.
+  //
+  // PATH augmentation: macOS launchd starts GUI apps with a minimal PATH
+  // (`/usr/bin:/bin:/usr/sbin:/sbin`) that excludes Homebrew and the
+  // /usr/local symlinks Docker Desktop installs. Without this, the sidecar's
+  // `shutil.which("docker")` returns None and Labs fail with "Docker daemon
+  // is not running" — even when colima is up. Prepending the standard tool
+  // install dirs makes docker / tailscale / nmap / brew / etc. all reachable.
+  const TOOL_PATHS = [
+    "/opt/homebrew/bin",   // Homebrew on Apple Silicon (colima, docker CLI, tailscale, nmap)
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",      // Homebrew on Intel + /usr/local/bin/docker (Docker Desktop symlink)
+    "/usr/local/sbin",
+  ];
+  const augmentedPath = [...TOOL_PATHS, process.env.PATH || ""].filter(Boolean).join(":");
   backendProc = spawn(binPath, [], {
     env: {
       ...process.env,
+      PATH: augmentedPath,
       NT_BACKEND_HOST: "127.0.0.1",
       NT_BACKEND_PORT: String(BACKEND_PORT),
     },
