@@ -37,7 +37,7 @@ from routers import (
     profile_finder, reverse_ip, reverse_shell, s3_scanner, scope, settings,
     shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, system_info,
     takeover, targets, tcpdump, terminal, tls_audit, tool_requirements, triage,
-    urlscan, vpn, wayback, whois, wifi, wifi_scan, windows_posture,
+    urlscan, wayback, whois, wifi, wifi_scan, windows_posture,
     wpa_capture, xss, systemd_units, firewall_rules, users_audit,
 )
 
@@ -138,7 +138,6 @@ app.include_router(ids.router)
 app.include_router(ping.router)
 app.include_router(tcpdump.router)
 app.include_router(wifi.router)
-app.include_router(vpn.router)
 app.include_router(terminal.router)
 app.include_router(brew.router)
 app.include_router(labs.router)

@@ -93,7 +93,7 @@ export default function Targets({ onJumpTo }: Props) {
         </div>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 max-w-3xl">
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {error && <ErrorBanner msg={error} onDismiss={() => setError(null)} />}
 
         <AddManualForm

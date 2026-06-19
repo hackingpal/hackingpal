@@ -447,19 +447,6 @@ TOOLS: list[ToolRequirement] = [
 
     # ── UTILITIES ───────────────────────────────────────────────────────
     ToolRequirement(
-        id="vpn", name="VPN Manager", category="UTILITIES",
-        router="routers/vpn.py",
-        endpoints=["/vpn/status", "/vpn/up", "/vpn/down"],
-        target_format="none", target_examples=[],
-        setup=SetupReq(
-            binaries=[_b("wg-quick", f"{_BREW} wireguard-tools")],
-            sudoers=True,
-            sudoers_file="/etc/sudoers.d/network-tools-vpn",
-            platforms=["darwin", "linux"]),
-        expected_output="WireGuard wg0 status + start/stop.",
-        notes="Needs /etc/wireguard/wg0.conf to exist; page guides setup.",
-    ),
-    ToolRequirement(
         id="term", name="Terminal", category="UTILITIES",
         router="routers/terminal.py", endpoints=["/terminal/exec"],
         target_format="command", target_examples=["ls -la"],

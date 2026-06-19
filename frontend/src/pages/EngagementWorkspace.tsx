@@ -199,7 +199,7 @@ function TimelinePane({
   }, [results, findings, filter]);
 
   return (
-    <div className="p-6 max-w-4xl">
+    <div className="p-6">
       <div className="flex items-center gap-2 mb-3 text-[11px]">
         <span className="text-ink-muted tracking-wider">SHOW:</span>
         {(["all", "results", "findings"] as TimelineFilter[]).map((f) => (
@@ -772,7 +772,7 @@ function LabReport({
         </p>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-6 max-w-3xl">
+      <div className="flex-1 overflow-y-auto p-6">
         <div className="flex items-center mb-3 gap-3">
           <h3 className="text-[12px] font-bold text-ink-primary tracking-widest">
             SESSION ACTIVITY

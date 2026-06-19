@@ -1,24 +1,5 @@
 import { useMemo } from "react";
 
-// MyHackingPal brand mark — uses the same pre-rendered PNG as the dock
-// icon so the sidebar badge matches the app icon pixel-for-pixel and
-// avoids font-fallback inconsistencies at small display sizes.
-// In light mode the image is CSS-inverted so the icon flips to the
-// "Badge / Light" variant from the brand guide (white squircle, dark
-// glyph) instead of staying as a high-contrast dark block on white.
-function BrandMark({ size = 28 }: { size?: number } = {}) {
-  return (
-    <img
-      src="./brand-mark.png"
-      alt="MyHackingPal"
-      width={size}
-      height={size}
-      className="shrink-0 block mhp-brand-mark"
-      style={{ imageRendering: "auto" }}
-    />
-  );
-}
-
 export type NavId =
   | "home" | "targets" | "tools" | "evidence" | "reports" | "assistant"
   | "workspace" | "playbook-builder"
@@ -39,7 +20,7 @@ export type NavId =
   | "hash" | "cvss"
   | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
-  | "wifi" | "vpn" | "term" | "brew" | "settings" | "effects-debug";
+  | "wifi" | "term" | "brew" | "settings" | "effects-debug";
 
 import { topNav, type Platform } from "../lib/nav";
 
@@ -152,34 +133,34 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
         borderRight: "1px solid var(--border)",
       }}
     >
-      {/* Brand header.
+      {/* Brand header — text only now (the brand mark moved off this header
+          because it kept colliding with the macOS hiddenInset traffic lights
+          even at pl-[92px]; the dock icon already carries the brand image).
           - macOS hiddenInset overlays top-left ~80px (traffic lights), so
-            pt-14 + pl-[92px] drops the brand block well clear of them.
+            we still pt-12 to drop the title clear of them. No left inset
+            needed once the icon is gone — the title sits naturally below
+            the traffic-light row.
           - Windows reserves the top-right for titleBarOverlay (handled in
-            App.tsx top strip), so no left inset here.
-          - Linux uses the native title bar above us — pt-3 + pl-4 is enough. */}
+            App.tsx top strip).
+          - Linux uses the native title bar above us — pt-3 is enough. */}
       <header
         className={
-          "app-drag pb-3 pr-4 " +
-          (platform === "linux" ? "pt-3 pl-4" : "pt-14 ") +
-          (platform === "linux" || platform === "win32" ? "" : "pl-[92px]")
+          "app-drag pb-3 px-4 " +
+          (platform === "linux" ? "pt-3" : "pt-12")
         }
         style={{ borderBottom: "1px solid var(--border)" }}
       >
-        <div className="flex items-center gap-2.5">
-          <BrandMark />
-          <h1
-            className="text-[14px] leading-tight"
-            style={{
-              fontFamily: "var(--font-sans)",
-              fontWeight: 600,
-              color: "var(--text-primary)",
-              letterSpacing: "-0.01em",
-            }}
-          >
-            MyHackingPal
-          </h1>
-        </div>
+        <h1
+          className="text-[14px] leading-tight"
+          style={{
+            fontFamily: "var(--font-sans)",
+            fontWeight: 600,
+            color: "var(--text-primary)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          MyHackingPal
+        </h1>
         <p
           className="mt-1 text-[10px]"
           style={{
@@ -248,6 +229,21 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
         }}
       >
         <span>Python · React</span>
+        <span className="ml-auto flex items-center gap-2">
+          {/* Opens in the system browser via Electron's
+              window.open-handoff (electron/main.cjs intercepts http(s)
+              targets and shells out to the OS default browser). */}
+          <a
+            href="https://github.com/myhackingpal/myhackingpal/issues/new"
+            target="_blank"
+            rel="noreferrer"
+            title="Report a bug on GitHub"
+            style={{ color: "var(--text-muted)" }}
+            className="hover:!text-[color:var(--text-primary)] transition"
+          >
+            Report bug ↗
+          </a>
+        </span>
       </footer>
     </nav>
   );

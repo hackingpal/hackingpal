@@ -208,8 +208,11 @@ async function createWindow() {
     title: "MyHackingPal",
     width:  1100,
     height: 760,
-    minWidth:  860,
-    minHeight: 580,
+    // Min sizes intentionally low so macOS half-screen tile (~720px wide on a
+    // 13" MacBook) and other split-screen workflows aren't blocked. Pages
+    // that genuinely need more width should handle their own overflow.
+    minWidth:  640,
+    minHeight: 480,
     backgroundColor: "#0a0a0f",  // matches --bg-base in the new design system
     ...titleBar,
     webPreferences: {

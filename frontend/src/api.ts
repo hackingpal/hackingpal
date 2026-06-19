@@ -1216,19 +1216,6 @@ export type WifiReport = {
 
 export const fetchWifiReport = () => api<WifiReport>("/wifi/report");
 
-// ── VPN ───────────────────────────────────────────────────────────────────────
-
-export type VpnClient = { name: string; address: string };
-export type VpnStatus = {
-  available: boolean; running: boolean;
-  config_path: string; wg_show: string;
-  clients: VpnClient[]; missing: string[];
-};
-
-export const fetchVpnStatus = () => api<VpnStatus>("/vpn/status");
-export const startVpn       = () => api<{ ok: boolean; output: string }>("/vpn/start", { method: "POST" });
-export const stopVpn        = () => api<{ ok: boolean; output: string }>("/vpn/stop",  { method: "POST" });
-
 // ── Terminal ──────────────────────────────────────────────────────────────────
 
 export type ExecResponse = {

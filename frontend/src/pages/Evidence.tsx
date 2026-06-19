@@ -53,7 +53,7 @@ export default function Evidence({ onJumpTo }: Props) {
             >Tool Library</button> and results will appear here automatically.
           </div>
         ) : (
-          <div className="space-y-2 max-w-4xl">
+          <div className="space-y-2">
             {results.map((r) => (
               <article key={r.id} className="rounded-md border border-divider bg-bg-card p-3">
                 <div className="flex items-center gap-3 text-[11px]">

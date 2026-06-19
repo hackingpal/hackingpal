@@ -30,7 +30,6 @@ import Ids from "./pages/Ids";
 import Ping from "./pages/Ping";
 import Tcpdump from "./pages/Tcpdump";
 import Wifi from "./pages/Wifi";
-import Vpn from "./pages/Vpn";
 import Terminal from "./pages/Terminal";
 import Brew from "./pages/Brew";
 import Persistence from "./pages/Persistence";
@@ -254,8 +253,8 @@ export default function App() {
                          hover:text-ink-primary transition shrink-0"
             >
               <span aria-hidden>⌕</span>
-              <span>Search…</span>
-              <kbd className="text-ink-dim text-[9px] font-mono hidden sm:inline">⌘K</kbd>
+              <span className="hidden md:inline">Search…</span>
+              <kbd className="text-ink-dim text-[9px] font-mono hidden lg:inline">⌘K</kbd>
             </button>
             <button
               onClick={() => setCatalogOpen(true)}
@@ -267,8 +266,8 @@ export default function App() {
               aria-label="Open tool catalog"
             >
               <span className="text-[12px] leading-none font-bold">+</span>
-              <span>Tool</span>
-              <kbd className="text-ink-dim text-[9px] font-mono hidden sm:inline">⌘I</kbd>
+              <span className="hidden md:inline">Tool</span>
+              <kbd className="text-ink-dim text-[9px] font-mono hidden lg:inline">⌘I</kbd>
             </button>
           </div>
           <div className="flex items-center gap-2 text-[10px] tracking-widest text-ink-dim app-no-drag min-w-0">
@@ -399,7 +398,6 @@ export default function App() {
            active === "ping"        ? <Ping /> :
            active === "tcpdump"     ? <Tcpdump /> :
            active === "wifi"        ? <Wifi /> :
-           active === "vpn"         ? <Vpn /> :
            active === "term"        ? <Terminal /> :
            active === "brew"        ? <Brew /> :
            active === "exploits"    ? <Exploits /> :

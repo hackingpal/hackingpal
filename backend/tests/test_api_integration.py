@@ -150,8 +150,6 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
     # Active actions on the first wave (network-target-ish tools).
     ("POST", "/shodan-censys/query", {"service": "shodan", "query": "test"}),
     ("POST", "/terminal/exec",       {"command": "echo hi"}),
-    ("POST", "/vpn/start",           None),
-    ("POST", "/vpn/stop",            None),
     ("POST", "/processes/kill",      {"pid": 99999, "signal": "TERM",
                                       "admin": False, "confirm": True}),
     ("POST", "/processes/kill_bulk", {"pids": [99999], "signal": "TERM",

@@ -6,7 +6,7 @@
 // a registry entry render with a neutral "untracked" indicator.
 
 import { useEffect, useMemo, useState } from "react";
-import { EyebrowPill, StatCounter } from "performative-ui";
+import { EyebrowPill } from "performative-ui";
 import { fetchSystemInfo } from "../api";
 import { filterGroups, type NavGroup, type Platform } from "../lib/nav";
 import { usePlannedTools } from "../lib/plannedTools";
@@ -233,11 +233,13 @@ function Counter({ label, count, tone, onClick }: {
       className="flex items-baseline gap-1.5 disabled:cursor-default
                  hover:bg-bg-nav-hover transition rounded px-1.5 py-0.5"
     >
-      <StatCounter
-        target={count}
-        durationMs={550}
-        className={`text-[13px] font-bold tabular-nums ${toneCls}`}
-      />
+      {/* Plain text — performative-ui's StatCounter captures the initial
+          `target` in an empty-deps useEffect, so once-deferred values (like
+          our async fetch result) never re-animate and the display stays at 0.
+          A static span is fine here — these are setup counters, not hero stats. */}
+      <span className={`text-[13px] font-bold tabular-nums ${toneCls}`}>
+        {count}
+      </span>
       <span className="text-ink-muted uppercase tracking-wider text-[10px]">
         {label}
       </span>
