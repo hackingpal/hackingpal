@@ -2,7 +2,7 @@
   <img src="docs/brand/icon.png" alt="MyHackingPal" width="120" height="120" />
 </p>
 
-<h1 align="center">MyHackingPal</h1>
+<h1 align="center">HackingPal</h1>
 
 <p align="center"><em>AI-assisted security workspace for authorized engagements.</em></p>
 
