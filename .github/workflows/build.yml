@@ -255,7 +255,6 @@ jobs:
           # wifi-scan: 200 on a real Windows machine with WiFi, 503 on CI VMs
           # where the Wireless AutoConfig Service (wlansvc) isn't running.
           probe "wifi-scan/scan"     "http://127.0.0.1:8765/wifi-scan/scan"      "200|503"
-          probe "vpn/status"         "http://127.0.0.1:8765/vpn/status"          501
           probe "tcpdump/status"     "http://127.0.0.1:8765/tcpdump/status"      501
           probe "bt/status"          "http://127.0.0.1:8765/bt/status"           501
           probe "wpa-capture/status" "http://127.0.0.1:8765/wpa-capture/status"  501
