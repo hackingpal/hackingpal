@@ -71,6 +71,10 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
+    # Windows builds are best-effort — we ship Mac + Linux as the supported
+    # targets. Letting Windows failures fail the whole workflow just generates
+    # noisy notifications for a platform we're not actively maintaining.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -388,6 +392,10 @@ jobs:
           path: artifacts/macos/
 
       - name: Download Windows artifact
+        # Windows is best-effort (see build job's continue-on-error). If it
+        # didn't produce an artifact this run, the release still ships Mac +
+        # Linux; the Stage step's Windows section is gated on the .exe existing.
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: MyHackingPal-windows-latest
@@ -435,23 +443,25 @@ jobs:
           if [ -n "$MAC_YML" ]; then cp "$MAC_YML" release-assets/; fi
           echo "::endgroup::"
 
-          echo "::group::Windows — NSIS installer + updater metadata"
-          WIN_EXE=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe" | head -1)
+          echo "::group::Windows — NSIS installer + updater metadata (best-effort)"
+          # Windows is best-effort — if the build job didn't produce an .exe,
+          # skip the Windows section instead of failing the release. Mac + Linux
+          # are the supported targets.
+          WIN_EXE=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe" 2>/dev/null | head -1)
           if [ -z "$WIN_EXE" ]; then
-            echo "::error::Windows NSIS installer not found"
-            find artifacts/windows -maxdepth 2
-            exit 1
-          fi
-          echo "found: $WIN_EXE"
-          cp "$WIN_EXE" release-assets/MyHackingPal-windows-x64.exe
-          # latest.yml drives electron-updater on Windows; the .blockmap
-          # enables differential updates so users only re-download the
-          # changed bytes between versions.
-          WIN_YML=$(find artifacts/windows -maxdepth 2 -type f -name "latest.yml" | head -1)
-          if [ -n "$WIN_YML" ]; then cp "$WIN_YML" release-assets/; fi
-          WIN_BLOCKMAP=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe.blockmap" | head -1)
-          if [ -n "$WIN_BLOCKMAP" ]; then
-            cp "$WIN_BLOCKMAP" release-assets/MyHackingPal-windows-x64.exe.blockmap
+            echo "::notice::no Windows installer this run — releasing Mac + Linux only"
+          else
+            echo "found: $WIN_EXE"
+            cp "$WIN_EXE" release-assets/MyHackingPal-windows-x64.exe
+            # latest.yml drives electron-updater on Windows; the .blockmap
+            # enables differential updates so users only re-download the
+            # changed bytes between versions.
+            WIN_YML=$(find artifacts/windows -maxdepth 2 -type f -name "latest.yml" | head -1)
+            if [ -n "$WIN_YML" ]; then cp "$WIN_YML" release-assets/; fi
+            WIN_BLOCKMAP=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe.blockmap" | head -1)
+            if [ -n "$WIN_BLOCKMAP" ]; then
+              cp "$WIN_BLOCKMAP" release-assets/MyHackingPal-windows-x64.exe.blockmap
+            fi
           fi
           echo "::endgroup::"
 
