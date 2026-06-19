@@ -61,49 +61,6 @@ build-pipeline simplicity) — only the user-facing branding is **MyHackingPal**
 
 ---
 
-## Latest update — 2026-05-29
-
-**Engagement-first pivot in motion.** MyHackingPal is mid-rewrite from
-"click-a-tool dashboard" to "AI-assisted engagement workspace". The work
-landing in 0.3.0 is the scaffold for that flow:
-
-- **Lab vs Engagement mode toggle** — persisted per-window flag in the top
-  bar. Lab skips scope checks and auto-record; Engagement enforces scope
-  and writes evidence to the active engagement timeline. `X-MHP-Mode`
-  header on HTTP / `?mode=` query on WS plumbs it through to the backend.
-- **Engagement scope enforcement** — `lib/scope.py` is the new layer
-  on top of `target_policy`. Five routers wired so far (port_scanner,
-  ping, s3_scanner, smb_enum, subdomain_enum); ~70 more to go. The
-  helpers `enforce_ws` / `enforce_rest` fold the boilerplate into one
-  call per router.
-- **Audit log** — append-only `lib/audit_log.py` records every action
-  (tool, target, argv, approver, result) — 13 attack tools already
-  emit. Surfaced on the new `/audit` page and into engagement reports.
-- **Sidebar restructure** — flat 10-item engagement-first nav: Home,
-  Engagements, Targets, Playbooks, Tool Library, Evidence, Findings,
-  Reports, AI Assistant, Settings. ChatBubble removed; replaced by the
-  full-page AI Assistant. Default landing is the engagement dashboard.
-- **Auth gate on every active attack tool** — AdSpray, S3Scanner,
-  SubdomainEnum, Takeover, KerberosRoast, BloodHound, LateralMove,
-  WpaCapture. Pairs with the existing checkbox on the six web-exploit
-  pages.
-- **Playbook schema, guided** — bundles can now declare `category`,
-  `mode_required`, plus per-step `rationale` / `success` / `approval`.
-  Five built-ins ship: Passive Recon (domain footprint), Local Posture
-  (mac + linux), Surface Inventory, Web App First Look. Seven new tool
-  adapters wired (dns_recon, ct_log, email_audit, cms_fingerprint,
-  macos_posture, linux_posture, persistence_audit).
-- **Platform focus clarified** — v1.0 is macOS + Linux + Docker first. Native
-  Windows remains experimental/deferred and should not block the engagement,
-  safety, evidence, or reporting work.
-- **Central Settings page** — API keys, system info, mode toggle,
-  appearance, engagement quick-links. Replaces the floating bubble's
-  `⚙` panel.
-
-See the [Roadmap](#roadmap) section below for what's done vs in flight.
-
----
-
 ## Installation
 
 ### Option 1 — Download (recommended)
