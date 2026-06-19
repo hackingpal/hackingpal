@@ -1,0 +1,212 @@
+"""CI smoke tests for the FastAPI backend.
+
+These are the floor — every endpoint listed here must return a clean 2xx
+on a fresh install with no API keys, no engagements, and no external
+tooling installed. If a probe regresses to 500, that is a real bug the
+smoke test just caught; do not delete the test to make CI green.
+
+REST probes use httpx.AsyncClient against the ASGI app in-process — no
+live uvicorn needed. WebSocket probes use Starlette's TestClient (httpx
+itself doesn't speak the WS protocol against ASGI), and only exercise
+the handshake → first server event handshake step for safe, non-routable
+targets. We deliberately never run a destructive or exploit WS route here.
+"""
+from __future__ import annotations
+
+import pytest
+import pytest_asyncio
+from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
+
+
+AUTH = {"X-MHP-Token": "smoke-token"}
+
+
+@pytest.fixture
+def _patched_app(temp_db, monkeypatch):
+    """Boot the real ASGI app with a known auth token + temp DB.
+
+    Mirrors how the Electron preload bootstraps: fetch the per-launch token
+    once, then attach it via X-MHP-Token. We bypass /auth/token by pinning
+    the module global to a fixed value so every test uses the same header.
+    """
+    from lib import auth as auth_mod
+    monkeypatch.setattr(auth_mod, "AUTH_TOKEN", "smoke-token")
+    # httpx and TestClient both report client.host as "testclient" — accept
+    # it as loopback so the auth dep doesn't reject the in-process call.
+    monkeypatch.setattr(
+        auth_mod, "_LOOPBACK_HOSTS",
+        auth_mod._LOOPBACK_HOSTS | {"testclient"},
+    )
+    from main import app
+    return app
+
+
+@pytest_asyncio.fixture
+async def client(_patched_app):
+    transport = ASGITransport(app=_patched_app)
+    async with AsyncClient(transport=transport, base_url="http://testclient") as c:
+        yield c
+
+
+# ── REST probes ─────────────────────────────────────────────────────────────
+#
+# Every endpoint here must respond cleanly. The set is the intersection of
+# "always available on a fresh install" and "load-bearing for app startup or
+# the Electron renderer's first render".
+
+@pytest.mark.asyncio
+async def test_health(client):
+    r = await client.get("/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body.get("version")
+
+
+@pytest.mark.asyncio
+async def test_version(client):
+    r = await client.get("/version")
+    assert r.status_code == 200
+    assert r.json().get("version")
+
+
+@pytest.mark.asyncio
+async def test_system_info(client):
+    r = await client.get("/system/info")
+    assert r.status_code == 200
+    body = r.json()
+    # Renderer hides platform-locked tools off these flags — keep them stable.
+    assert "platform" in body
+    assert {"is_mac", "is_linux", "is_windows"}.issubset(body)
+
+
+@pytest.mark.asyncio
+async def test_settings_api_key_status(client):
+    r = await client.get("/settings/api-key/status", headers=AUTH)
+    assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_settings_keys(client):
+    r = await client.get("/settings/keys", headers=AUTH)
+    assert r.status_code == 200
+    # Named-key listing is the source of truth for the Settings page's
+    # "configured providers" badges — must always be a list.
+    assert isinstance(r.json(), list)
+
+
+@pytest.mark.asyncio
+async def test_chat_config(client):
+    # /chat/config is loopback-only but not token-gated — the renderer calls
+    # it before /auth/token has finished bootstrapping. Sending the token
+    # anyway is harmless and matches Electron's behaviour on subsequent calls.
+    r = await client.get("/chat/config", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert "provider" in body
+    assert "usable" in body
+
+
+@pytest.mark.asyncio
+async def test_tcpdump_status(client):
+    # tcpdump/status is Unix-only — on macOS/Linux CI it 200s with the
+    # passwordless-sudo flag; on Windows the platform guard returns 501.
+    # Either is fine; 500 is not.
+    r = await client.get("/tcpdump/status", headers=AUTH)
+    assert r.status_code in (200, 501)
+
+
+@pytest.mark.asyncio
+async def test_nmap_status(client):
+    # Returns available:false when the binary isn't installed (CI runners
+    # don't have nmap) — that's the contract, not an error.
+    r = await client.get("/nmap/status", headers=AUTH)
+    assert r.status_code == 200
+    assert "available" in r.json()
+
+
+@pytest.mark.asyncio
+async def test_labs(client):
+    r = await client.get("/labs", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert "labs" in body
+    assert "docker_available" in body
+
+
+@pytest.mark.asyncio
+async def test_labs_preflight(client):
+    # State will vary by host (CI runners don't have colima), but the
+    # endpoint must always respond with the documented contract so the
+    # Labs popup can switch on it.
+    r = await client.get("/labs/preflight", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("state") in {
+        "ok", "binary_missing", "daemon_stopped", "socket_unreachable",
+    }
+    for key in ("colima_path", "docker_path", "hint", "command"):
+        assert key in body
+
+
+@pytest.mark.asyncio
+async def test_engagements(client):
+    r = await client.get("/engagements", headers=AUTH)
+    assert r.status_code == 200
+    assert "engagements" in r.json()
+
+
+# ── WebSocket handshake smoke tests ─────────────────────────────────────────
+#
+# Each canonical streaming router gets one probe that confirms the upgrade
+# handshake works and the server emits its first event. We pick safe,
+# non-routable targets — 127.0.0.1 (own loopback) for the probes that need
+# a host — so nothing leaves the runner. Destructive / exploit WS routes
+# (sqli, xss, cmdi, kerberos_roast, etc.) are intentionally out of scope.
+
+def _ws_url(path: str) -> str:
+    # require_local_auth's WS path reads the token from ?token=.
+    return f"{path}?token=smoke-token"
+
+
+def test_ws_port_scan_handshake(_patched_app):
+    """Port-scan WS: handshake → 'scope' verdict → connection survives."""
+    with TestClient(_patched_app) as tc:
+        with tc.websocket_connect(_ws_url("/ws/port-scan")) as ws:
+            # ports="22" keeps the synthetic scan trivially small in case the
+            # server starts it before we get the chance to send "stop".
+            ws.send_json({
+                "target": "127.0.0.1", "ports": "22",
+                "timeout": 0.1, "threads": 1, "mode": "lab",
+            })
+            first = ws.receive_json()
+            assert first["type"] in ("scope", "started", "error"), first
+            ws.send_json({"action": "stop"})
+
+
+def test_ws_lan_scan_handshake(_patched_app):
+    """LAN-scan WS: handshake → 'started' or 'error' (no live subnet on CI)."""
+    with TestClient(_patched_app) as tc:
+        with tc.websocket_connect(_ws_url("/ws/lan-scan")) as ws:
+            # Tiny CIDR — /30 leaves 2 host addresses. Doesn't matter if the
+            # scan returns nothing; we only assert the handshake completed.
+            ws.send_json({"network": "127.0.0.0/30", "mode": "lab"})
+            first = ws.receive_json()
+            assert first["type"] in ("scope", "started", "error"), first
+            ws.send_json({"action": "stop"})
+
+
+def test_ws_ping_handshake(_patched_app):
+    """Ping WS: handshake → 'scope' or 'started' on loopback target."""
+    with TestClient(_patched_app) as tc:
+        with tc.websocket_connect(_ws_url("/ws/ping")) as ws:
+            # count=1 so the underlying `ping` process exits on its own even
+            # if our stop signal races with cleanup.
+            ws.send_json({
+                "target": "127.0.0.1", "count": 1,
+                "interval": 1.0, "mode": "lab",
+            })
+            first = ws.receive_json()
+            assert first["type"] in ("scope", "started", "error"), first
+            ws.send_json({"action": "stop"})

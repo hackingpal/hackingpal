@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
 import time
 from collections import deque
@@ -412,6 +413,136 @@ async def detect_runtime() -> dict[str, Any]:
         if rc == 0:
             version = (ver_out or "").strip() or None
     return {"kind": kind, "version": version, "context": context_name, "running": daemon}
+
+
+# Homebrew bin dirs we explicitly include in every preflight PATH search.
+# /opt/homebrew/bin is Apple-Silicon Brew; /usr/local/bin is Intel Brew. We
+# scan both each call so the user can `brew install colima docker` and hit
+# Re-check without relaunching the app — relying on the captured-at-launch
+# os.environ["PATH"] would miss a fresh install.
+_BREW_BIN_DIRS = ("/opt/homebrew/bin", "/usr/local/bin")
+
+
+def _live_which(binary: str) -> str | None:
+    """Resolve ``binary`` against the live PATH + the Homebrew bin dirs.
+
+    ``shutil.which`` doesn't cache, so each call re-stats the filesystem —
+    exactly what we want for the Labs popup's "Re-check" button. Adding the
+    Brew dirs explicitly covers the case where the sidecar was launched
+    with a stripped PATH (Electron / GUI launchers often are).
+    """
+    current = (os.environ.get("PATH") or "").split(os.pathsep)
+    search = list(dict.fromkeys([*current, *_BREW_BIN_DIRS]))
+    return shutil.which(binary, path=os.pathsep.join(search))
+
+
+async def _colima_vm_running(colima_bin: str) -> bool:
+    """True if the colima VM reports itself as running.
+
+    Tries ``colima status --json`` first (newer versions), falls back to
+    parsing plain ``colima status`` text. Both forms exit 0 only when the
+    VM is up, so the rc alone is a reasonable signal — we double-check the
+    payload to defend against rc-quirks in older releases.
+    """
+    rc, out, err = await _run([colima_bin, "status", "--json"], timeout=5)
+    if rc == 0 and out.strip():
+        try:
+            data = json.loads(out.strip().splitlines()[-1])
+            status = str(data.get("status", "")).lower()
+            if status:
+                return status == "running"
+            if "running" in data:
+                return bool(data["running"])
+        except json.JSONDecodeError:
+            pass
+    # Fall back to plain `colima status` — older versions just write
+    # "colima is running" / "colima is not running" to stderr.
+    rc2, out2, err2 = await _run([colima_bin, "status"], timeout=5)
+    blob = (out2 + err2).lower()
+    if "is running" in blob:
+        return True
+    if "is not running" in blob or "stopped" in blob:
+        return False
+    return rc2 == 0
+
+
+async def preflight() -> dict[str, Any]:
+    """State-specific runtime check that drives the Labs popup.
+
+    Returns one of four states with a remediation hint and (where it
+    applies) the shell command to fix it. The PATH check is live on every
+    call — the user can install colima and hit Re-check without bouncing
+    the app.
+
+    States:
+      - ``ok``                — runtime is ready; lab launch will work
+      - ``binary_missing``    — neither colima nor docker binary on disk
+      - ``daemon_stopped``    — colima installed but the VM isn't running
+                                (or Docker Desktop installed but not running)
+      - ``socket_unreachable`` — colima says the VM is up but ``docker info``
+                                 still fails — usually means the socket
+                                 dropped and the VM needs a restart
+    """
+    colima_bin = _live_which("colima")
+    docker_bin = _live_which("docker")
+
+    if not colima_bin and not docker_bin:
+        return {
+            "state":       "binary_missing",
+            "colima_path": None,
+            "docker_path": None,
+            "hint":        "No container runtime installed.",
+            "command":     "brew install colima docker",
+        }
+
+    # Colima path is the recommended one — check VM state first so we can
+    # show the precise "colima start" vs "colima restart" remediation.
+    vm_running: bool | None = None
+    if colima_bin:
+        vm_running = await _colima_vm_running(colima_bin)
+        if not vm_running:
+            return {
+                "state":       "daemon_stopped",
+                "colima_path": colima_bin,
+                "docker_path": docker_bin,
+                "hint":        "Colima is installed but the VM isn't running.",
+                "command":     "colima start",
+            }
+
+    # VM is up (or only Docker Desktop is installed). Probe the daemon.
+    if docker_bin:
+        rc, _, _ = await _run(
+            [docker_bin, "info", "--format", "{{.ServerVersion}}"], timeout=3,
+        )
+        if rc == 0:
+            return {
+                "state":       "ok",
+                "colima_path": colima_bin,
+                "docker_path": docker_bin,
+                "hint":        "Container runtime is ready.",
+                "command":     None,
+            }
+
+    # Daemon refused. Differentiate "colima says VM is up but socket is
+    # silent" (restart needed) from "Docker Desktop is installed but the
+    # app isn't running" (start the app).
+    if colima_bin and vm_running:
+        return {
+            "state":       "socket_unreachable",
+            "colima_path": colima_bin,
+            "docker_path": docker_bin,
+            "hint":        "Colima reports the VM is running but the Docker socket "
+                           "isn't responding. Restart the VM to recover.",
+            "command":     "colima restart",
+        }
+    return {
+        "state":       "daemon_stopped",
+        "colima_path": colima_bin,
+        "docker_path": docker_bin,
+        "hint":        "Docker is installed but the daemon isn't responding. "
+                       "Open Docker Desktop to start it.",
+        "command":     None,
+    }
 
 
 def _kind_from_context(name: str | None) -> str:

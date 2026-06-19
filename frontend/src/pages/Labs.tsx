@@ -81,6 +81,22 @@ type LabsResponse = {
   runtime?: RuntimeInfo;
 };
 
+// Four discrete failure / ok states the backend distinguishes. Each maps
+// to a different remediation in the Colima popup — see /labs/preflight.
+type PreflightState =
+  | "ok"
+  | "binary_missing"
+  | "daemon_stopped"
+  | "socket_unreachable";
+
+type PreflightResult = {
+  state: PreflightState;
+  colima_path: string | null;
+  docker_path: string | null;
+  hint: string;
+  command: string | null;
+};
+
 type Props = { onJumpTo: (id: string) => void };
 
 const POLL_MS = 2_000;
@@ -99,6 +115,13 @@ export default function Labs({ onJumpTo }: Props) {
   const [toast, setToast] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  // Colima popup state. `pending` carries the action a user tried while the
+  // runtime wasn't ready, so when Re-check flips to ok we can fire it from
+  // inside the popup instead of making them re-navigate to the lab card.
+  const [popupOpen, setPopupOpen] = useState<boolean>(false);
+  const [popupPending, setPopupPending] = useState<
+    { labId: string; action: "build" | "start" } | null
+  >(null);
   const pollRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -174,6 +197,33 @@ export default function Labs({ onJumpTo }: Props) {
     }
   }
 
+  // Build / Start clicked while the runtime isn't ready — open the popup
+  // with the action queued. When the popup confirms ok, it calls back into
+  // doAction so the user doesn't have to find the lab card again.
+  function requestActionWithRuntime(labId: string, action: "build" | "start") {
+    if (dockerRunning) {
+      void doAction(labId, action);
+      return;
+    }
+    setPopupPending({ labId, action });
+    setPopupOpen(true);
+  }
+
+  // Called by the popup when the runtime flips to ok.
+  function handleRuntimeReady(fresh: RuntimeInfo | null) {
+    setDockerAvailable(true);
+    setDockerRunning(true);
+    if (fresh) setRuntime(fresh);
+  }
+
+  function handlePopupLaunch() {
+    if (popupPending) {
+      void doAction(popupPending.labId, popupPending.action);
+    }
+    setPopupOpen(false);
+    setPopupPending(null);
+  }
+
   function flash(msg: string) {
     setToast(msg);
     if (toastTimerRef.current != null) window.clearTimeout(toastTimerRef.current);
@@ -220,7 +270,12 @@ export default function Labs({ onJumpTo }: Props) {
             Loopback-only — never reachable off-host.
           </p>
         </div>
-        <DockerBanner available={dockerAvailable} running={dockerRunning} runtime={runtime} />
+        <DockerBanner
+          available={dockerAvailable}
+          running={dockerRunning}
+          runtime={runtime}
+          onShowDetails={() => { setPopupPending(null); setPopupOpen(true); }}
+        />
       </header>
 
       <div className="flex-1 overflow-auto p-6 space-y-6">
@@ -271,8 +326,8 @@ export default function Labs({ onJumpTo }: Props) {
             status={statuses[lab.id]}
             busy={!!busy[lab.id]}
             dockerRunning={dockerRunning}
-            onBuild={() => doAction(lab.id, "build")}
-            onStart={() => doAction(lab.id, "start")}
+            onBuild={() => requestActionWithRuntime(lab.id, "build")}
+            onStart={() => requestActionWithRuntime(lab.id, "start")}
             onStop={() => doAction(lab.id, "stop")}
             onOpen={() => openInBrowser(lab.primary_url)}
             onJumpStep={jumpToStep}
@@ -280,6 +335,19 @@ export default function Labs({ onJumpTo }: Props) {
           />
         ))}
       </div>
+
+      {popupOpen && (
+        <ColimaPopup
+          onClose={() => { setPopupOpen(false); setPopupPending(null); }}
+          onReady={handleRuntimeReady}
+          onLaunch={popupPending ? handlePopupLaunch : null}
+          pendingLabel={
+            popupPending
+              ? `${popupPending.action === "build" ? "Build" : "Launch"} ${popupPending.labId}`
+              : null
+          }
+        />
+      )}
 
       {toast && (
         <div className="fixed bottom-6 right-6 z-50 bg-bg-card border border-divider
@@ -570,20 +638,226 @@ function LabCard({
 
 // ── Bits ───────────────────────────────────────────────────────────────────
 function DockerBanner({
-  available, running, runtime,
-}: { available: boolean; running: boolean; runtime: RuntimeInfo | null }) {
+  available, running, runtime, onShowDetails,
+}: {
+  available: boolean;
+  running: boolean;
+  runtime: RuntimeInfo | null;
+  onShowDetails: () => void;
+}) {
   if (available && running) {
     return <RuntimePill runtime={runtime} />;
   }
-  const msg = !available
-    ? "No container runtime installed. Install colima (brew install colima docker) or Docker Desktop to use Labs."
-    : "A container runtime is installed but the daemon isn't running. Start it with `colima start` (or open Docker Desktop) and refresh.";
+  // We intentionally keep this banner short — the full state-specific
+  // remediation (and the Re-check button) lives in the ColimaPopup so the
+  // header doesn't become a tutorial.
+  const headline = !available
+    ? "No container runtime installed."
+    : "Container runtime installed but daemon isn't responding.";
   return (
-    <div className="mt-3 border border-amber/40 bg-amber/10 text-amber
-                    rounded px-3 py-2 text-[12px] font-mono">
-      {msg}
+    <button
+      onClick={onShowDetails}
+      className="mt-3 w-full text-left border border-amber/40 bg-amber/10 hover:bg-amber/20
+                 text-amber rounded px-3 py-2 text-[12px] font-mono flex items-center
+                 gap-3 transition"
+    >
+      <span className="flex-1">{headline}</span>
+      <span className="text-[10px] uppercase tracking-widest font-bold">
+        Show fix →
+      </span>
+    </button>
+  );
+}
+
+// ── Colima popup ───────────────────────────────────────────────────────────
+function ColimaPopup({
+  onClose, onReady, onLaunch, pendingLabel,
+}: {
+  onClose: () => void;
+  onReady: (runtime: RuntimeInfo | null) => void;
+  // null when the user opened the popup themselves; set when they tried to
+  // build/start a specific lab and we queued it.
+  onLaunch: (() => void) | null;
+  pendingLabel: string | null;
+}) {
+  const [pre, setPre]         = useState<PreflightResult | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError]     = useState<string | null>(null);
+
+  const fetchPreflight = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api<PreflightResult>("/labs/preflight");
+      setPre(r);
+      if (r.state === "ok") {
+        // Refresh the parent's docker_running flag so the header pill
+        // updates the moment the runtime comes alive.
+        try {
+          const labs = await api<LabsResponse>("/labs");
+          onReady(labs.runtime ?? null);
+        } catch { onReady(null); }
+      }
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [onReady]);
+
+  useEffect(() => { void fetchPreflight(); }, [fetchPreflight]);
+
+  const remediation = pre ? remediationFor(pre) : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+         onClick={onClose}>
+      <div
+        className="relative w-[min(560px,92vw)] max-h-[88vh] overflow-auto bg-bg-card
+                   border border-divider rounded-lg shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-divider px-5 py-3 flex items-center gap-3">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">Runtime</div>
+          <h3 className="text-sm font-bold tracking-wide text-ink-primary flex-1">
+            Container runtime check
+          </h3>
+          <button onClick={onClose} aria-label="Close"
+                  className="text-ink-dim hover:text-ink-primary text-lg leading-none">
+            ×
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-4">
+          {loading && !pre && (
+            <div className="text-ink-dim text-sm">Checking runtime…</div>
+          )}
+
+          {error && (
+            <div className="border border-danger/40 bg-danger/10 text-danger
+                            rounded px-3 py-2 text-sm font-mono">
+              {error}
+            </div>
+          )}
+
+          {pre && remediation && (
+            <>
+              <StateBadge state={pre.state} />
+
+              <p className="text-[13px] text-ink-primary leading-relaxed">
+                {remediation.title}
+              </p>
+              <p className="text-[12px] text-ink-muted leading-relaxed">
+                {remediation.detail}
+              </p>
+
+              {remediation.command && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-1">
+                    Run this in a terminal
+                  </div>
+                  <pre className="bg-bg-base border border-divider rounded px-3 py-2
+                                  font-mono text-[12px] text-ink-primary
+                                  whitespace-pre-wrap break-all select-all">
+                    {remediation.command}
+                  </pre>
+                </div>
+              )}
+
+              {(pre.colima_path || pre.docker_path) && (
+                <div className="text-[11px] font-mono text-ink-dim leading-relaxed">
+                  {pre.colima_path && <div>colima · {pre.colima_path}</div>}
+                  {pre.docker_path && <div>docker · {pre.docker_path}</div>}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="border-t border-divider px-5 py-3 flex items-center gap-2">
+          <button onClick={fetchPreflight} disabled={loading}
+                  className={btnSecondary()}>
+            {loading ? "Re-checking…" : "↻ Re-check"}
+          </button>
+          <div className="flex-1" />
+          {pre?.state === "ok" && onLaunch && pendingLabel && (
+            <button onClick={onLaunch} className={btnPrimary()}>
+              ▶ {pendingLabel}
+            </button>
+          )}
+          {pre?.state === "ok" && !onLaunch && (
+            <button onClick={onClose} className={btnPrimary()}>
+              Done
+            </button>
+          )}
+          {pre && pre.state !== "ok" && (
+            <button onClick={onClose} className={btnSecondary()}>
+              Close
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
+}
+
+function StateBadge({ state }: { state: PreflightState }) {
+  const { label, cls } = (() => {
+    switch (state) {
+      case "ok":
+        return { label: "READY", cls: "border-phos/60 text-phos" };
+      case "binary_missing":
+        return { label: "NOT INSTALLED", cls: "border-danger/60 text-danger" };
+      case "daemon_stopped":
+        return { label: "DAEMON STOPPED", cls: "border-amber/60 text-amber" };
+      case "socket_unreachable":
+        return { label: "SOCKET UNREACHABLE", cls: "border-amber/60 text-amber" };
+    }
+  })();
+  return (
+    <span className={
+      "inline-block text-[10px] uppercase tracking-widest font-bold " +
+      "px-1.5 py-0.5 rounded border " + cls
+    }>
+      {label}
+    </span>
+  );
+}
+
+function remediationFor(pre: PreflightResult): {
+  title: string; detail: string; command: string | null;
+} {
+  switch (pre.state) {
+    case "ok":
+      return {
+        title:   "Container runtime is ready.",
+        detail:  "Labs are good to launch. You can close this dialog.",
+        command: null,
+      };
+    case "binary_missing":
+      return {
+        title:   pre.hint,
+        detail:  "Colima is the recommended Mac runtime — lightweight, no licence, " +
+                 "drop-in replacement for the Docker socket. After install, " +
+                 "click Re-check.",
+        command: pre.command,
+      };
+    case "daemon_stopped":
+      return {
+        title:   pre.hint,
+        detail:  pre.command
+          ? "Run the command below to bring the VM up, then click Re-check."
+          : "Start the runtime, then click Re-check.",
+        command: pre.command,
+      };
+    case "socket_unreachable":
+      return {
+        title:   pre.hint,
+        detail:  "The Docker socket isn't responding even though the VM reports " +
+                 "as running. Restart the VM and re-check.",
+        command: pre.command,
+      };
+  }
 }
 
 function RuntimePill({ runtime }: { runtime: RuntimeInfo | null }) {

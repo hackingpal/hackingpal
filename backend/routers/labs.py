@@ -46,6 +46,17 @@ async def list_labs() -> dict[str, Any]:
     }
 
 
+@router.get("/labs/preflight")
+async def lab_preflight() -> dict[str, Any]:
+    """State-specific runtime check for the Labs Colima popup.
+
+    Re-scans the Homebrew bin dirs on every call so the user can install
+    colima and click Re-check without restarting the app. See
+    ``labs_lib.preflight`` for the state taxonomy.
+    """
+    return await labs_lib.preflight()
+
+
 @router.get("/labs/{lab_id}/status")
 async def lab_status(lab_id: str) -> dict[str, Any]:
     _require_lab(lab_id)

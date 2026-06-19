@@ -199,6 +199,11 @@ def health() -> dict[str, str]:
     return {"status": "ok", "version": app.version, "pid": str(os.getpid())}
 
 
+@app.get("/version")
+def version() -> dict[str, str]:
+    return {"version": app.version}
+
+
 @app.get("/auth/token", dependencies=[Depends(require_localhost)])
 def auth_token() -> dict[str, str]:
     """Return the per-launch auth token. Loopback-only (no header required).
