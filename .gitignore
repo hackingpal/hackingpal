@@ -57,3 +57,6 @@ ideas/
 
 # --- Local-only notes / bug backlog (never committed) ---
 notes/
+
+# Launch prep — personal drafts, not project docs
+/launch/
