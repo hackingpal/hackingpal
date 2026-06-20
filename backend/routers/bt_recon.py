@@ -19,12 +19,17 @@ import subprocess
 import sys
 from typing import Any
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from lib import scope
 from lib.auth import require_local_auth
+from lib.errors import ErrorCode, MhpError
 from lib.mode import get_engagement_id, get_mode
 from lib.platform_util import IS_DARWIN, require_unix
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/bt", tags=["bt-recon"], dependencies=[Depends(require_local_auth)])
 
@@ -46,12 +51,22 @@ def _run_sp() -> dict[str, Any]:
     except subprocess.TimeoutExpired:
         raise HTTPException(504, "system_profiler timed out")
     if r.returncode != 0:
-        raise HTTPException(500,
-            f"system_profiler exit {r.returncode}: {r.stderr[:200]}")
+        logger.warning(
+            "system_profiler exit=%s stderr=%r",
+            r.returncode, (r.stderr or "")[:500],
+        )
+        raise MhpError(
+            f"system_profiler failed (exit {r.returncode})",
+            code=ErrorCode.TOOL_FAILED, status_code=500,
+        )
     try:
         return json.loads(r.stdout)
-    except json.JSONDecodeError as e:
-        raise HTTPException(500, f"could not parse system_profiler output: {e}")
+    except json.JSONDecodeError:
+        logger.exception("system_profiler output was not valid JSON")
+        raise MhpError(
+            "system_profiler output was not parseable JSON",
+            code=ErrorCode.TOOL_FAILED, status_code=500,
+        )
 
 
 def _normalize_device_mac(addr: str, info: dict[str, Any]) -> dict[str, Any]:

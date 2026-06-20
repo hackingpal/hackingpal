@@ -64,7 +64,9 @@ def status() -> dict[str, Any]:
     except NoCredentialsError:
         return {"ok": False, "error": "no credentials found (try `aws configure`)"}
     except ClientError as e:
-        return {"ok": False, "error": str(e)}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws status check failed: %s", e)
+        return {"ok": False, "error": f"AWS API {code}", "code": code}
 
 
 def _add_finding(out: list[dict[str, Any]], severity: str, service: str,
@@ -136,7 +138,9 @@ def _check_iam(boto3, ClientError) -> dict[str, Any]:
                                      evidence={"role": r["RoleName"], "policy": p})
         return {"findings": findings, "summary": summary, "users_sample": users[:50]}
     except ClientError as e:
-        return {"error": str(e), "findings": findings}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws check failed: %s", e)
+        return {"error": f"AWS API {code}", "code": code, "findings": findings}
 
 
 def _check_s3(boto3, ClientError) -> dict[str, Any]:
@@ -194,7 +198,9 @@ def _check_s3(boto3, ClientError) -> dict[str, Any]:
         return {"findings": findings, "summary": {"buckets": len(buckets)},
                 "buckets": buckets}
     except ClientError as e:
-        return {"error": str(e), "findings": findings}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws check failed: %s", e)
+        return {"error": f"AWS API {code}", "code": code, "findings": findings}
 
 
 def _check_ec2(boto3, ClientError) -> dict[str, Any]:
@@ -249,7 +255,9 @@ def _check_ec2(boto3, ClientError) -> dict[str, Any]:
                 "summary": {"instances_running": len(instances), "sgs": len(sgs)},
                 "instances": instances[:100], "sgs": sgs[:100]}
     except ClientError as e:
-        return {"error": str(e), "findings": findings}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws check failed: %s", e)
+        return {"error": f"AWS API {code}", "code": code, "findings": findings}
 
 
 def _check_lambda(boto3, ClientError) -> dict[str, Any]:
@@ -276,7 +284,9 @@ def _check_lambda(boto3, ClientError) -> dict[str, Any]:
         return {"findings": findings, "summary": {"functions": len(funcs)},
                 "functions": funcs[:100]}
     except ClientError as e:
-        return {"error": str(e), "findings": findings}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws check failed: %s", e)
+        return {"error": f"AWS API {code}", "code": code, "findings": findings}
 
 
 def _check_rds(boto3, ClientError) -> dict[str, Any]:
@@ -301,7 +311,9 @@ def _check_rds(boto3, ClientError) -> dict[str, Any]:
                 dbs.append(entry)
         return {"findings": findings, "summary": {"dbs": len(dbs)}, "dbs": dbs[:50]}
     except ClientError as e:
-        return {"error": str(e), "findings": findings}
+        code = e.response.get("Error", {}).get("Code", "ClientError")
+        logger.info("aws check failed: %s", e)
+        return {"error": f"AWS API {code}", "code": code, "findings": findings}
 
 
 @router.get("/recon")

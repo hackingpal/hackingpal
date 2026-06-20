@@ -13,7 +13,7 @@ Two FastAPI dependencies are exposed:
 
 * `require_local_auth` — same loopback check *plus* a constant-time
   comparison against the token. Used on endpoints that shell out /
-  install sudoers entries / toggle the VPN.
+  install sudoers entries / run privileged tools.
 
 Both dependencies accept any `HTTPConnection` (the common parent of
 `Request` and `WebSocket`), so the same function works for HTTP and WS

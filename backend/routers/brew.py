@@ -6,8 +6,8 @@ available on the host. The `/brew/status` response includes `manager` so the
 UI can show "apt" / "dnf" / "pacman" / "brew" appropriately.
 
 Linux mutating ops (install / uninstall / upgrade) run through pkexec when
-present, falling back to sudo -A (SUDO_ASKPASS) — same pattern as vpn.py.
-Read-only ops (search, list installed) don't escalate.
+present, falling back to sudo -A (SUDO_ASKPASS). Read-only ops (search,
+list installed) don't escalate.
 """
 from __future__ import annotations
 

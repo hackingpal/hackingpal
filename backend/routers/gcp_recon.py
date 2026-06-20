@@ -62,7 +62,8 @@ def status() -> dict[str, Any]:
                               or getattr(cred, "_service_account_email", None)
                               or "user-credentials"}
     except DefaultCredentialsError as e:
-        return {"ok": False, "error": str(e)}
+        logger.info("gcp status creds error: %s", type(e).__name__)
+        return {"ok": False, "error": f"{type(e).__name__}", "code": "DefaultCredentialsError"}
     except Exception as e:
         logger.exception("gcp status: unexpected error")
         return {"ok": False, "error": f"{type(e).__name__}"}
@@ -123,7 +124,8 @@ def _check_storage(cred, project_id: str) -> dict[str, Any]:
         return {"findings": findings, "summary": {"buckets": len(buckets)},
                 "buckets": buckets[:100]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("gcp check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 def _check_compute(cred, project_id: str) -> dict[str, Any]:
@@ -198,7 +200,8 @@ def _check_compute(cred, project_id: str) -> dict[str, Any]:
                 "summary": {"instances": len(instances), "open_firewalls": len(fws)},
                 "instances": instances[:100], "open_firewalls": fws[:50]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("gcp check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 def _check_iam(cred, project_id: str) -> dict[str, Any]:
@@ -238,7 +241,8 @@ def _check_iam(cred, project_id: str) -> dict[str, Any]:
                 "summary": {"bindings": len(bindings)},
                 "bindings": bindings[:50]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("gcp check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 @router.get("/recon")

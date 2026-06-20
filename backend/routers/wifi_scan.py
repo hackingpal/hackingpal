@@ -98,7 +98,11 @@ def _scan_mac() -> dict[str, Any]:
 
     nets, err = iface.scanForNetworksWithName_error_(None, None)
     if err is not None:
-        raise HTTPException(500, f"CoreWLAN scan failed: {err}")
+        logger.warning("CoreWLAN scan failed: %r", err)
+        raise MhpError(
+            "CoreWLAN scan failed — see server log",
+            code=ErrorCode.TOOL_FAILED, status_code=500,
+        )
     if not nets:
         return {
             "interface": str(iface.interfaceName() or ""),

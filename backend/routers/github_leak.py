@@ -126,7 +126,9 @@ async def search(body: ScanBody, request: Request) -> dict[str, Any]:
                 )
             except httpx.HTTPError as e:
                 results.append({"label": label, "query": q,
-                                "items": [], "error": str(e)})
+                                "items": [],
+                                "error": f"HTTP error: {type(e).__name__}",
+                                "code": type(e).__name__})
                 continue
 
             if r.status_code == 403:

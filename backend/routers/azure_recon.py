@@ -63,7 +63,8 @@ def status() -> dict[str, Any]:
                 for s in client.subscriptions.list()]
         return {"ok": True, "subscriptions": subs}
     except (AuthErr, HttpErr) as e:
-        return {"ok": False, "error": str(e)}
+        logger.info("azure status auth/http error: %s", type(e).__name__)
+        return {"ok": False, "error": f"{type(e).__name__}", "code": type(e).__name__}
     except Exception as e:
         logger.exception("azure status: unexpected error")
         return {"ok": False, "error": f"{type(e).__name__}"}
@@ -106,7 +107,8 @@ def _check_storage(cred, sub_id: str) -> dict[str, Any]:
         return {"findings": findings, "summary": {"accounts": len(accounts)},
                 "accounts": accounts[:100]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("azure check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 def _check_compute(cred, sub_id: str) -> dict[str, Any]:
@@ -128,7 +130,8 @@ def _check_compute(cred, sub_id: str) -> dict[str, Any]:
         return {"findings": findings, "summary": {"vms": len(vms)},
                 "vms": vms[:100]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("azure check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 def _check_network(cred, sub_id: str) -> dict[str, Any]:
@@ -161,7 +164,8 @@ def _check_network(cred, sub_id: str) -> dict[str, Any]:
         return {"findings": findings, "summary": {"nsgs": len(nsgs)},
                 "nsgs": nsgs[:100]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("azure check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 def _check_keyvault(cred, sub_id: str) -> dict[str, Any]:
@@ -190,7 +194,8 @@ def _check_keyvault(cred, sub_id: str) -> dict[str, Any]:
         return {"findings": findings, "summary": {"vaults": len(vaults)},
                 "vaults": vaults[:100]}
     except Exception as e:
-        return {"error": str(e), "findings": findings}
+        logger.info("azure check failed: %s", type(e).__name__)
+        return {"error": f"{type(e).__name__}", "code": type(e).__name__, "findings": findings}
 
 
 @router.get("/recon")

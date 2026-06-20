@@ -69,7 +69,7 @@ _NMAP_DENY_FLAGS = ("-iL", "-oN", "-oG", "-oA", "--datadir", "--interactive")
 def _build_sudoers_content(user: str, binary: str) -> str:
     """Build the argv-restricted sudoers entry. See module docstring."""
     lines = [
-        f"# MyHackingPal nmap sudoers — {SUDOERS_VERSION}",
+        f"# HackingPal nmap sudoers — {SUDOERS_VERSION}",
         f"# Allows {binary} with the flag set the app builds, including",
         f"# `--script <curated>` and `-oX <tmpfile>` (both used by the runner).",
         f"# Denies {', '.join(_NMAP_DENY_FLAGS)} (flags the app never uses).",
@@ -183,8 +183,12 @@ def install_sudoers() -> dict[str, Any]:
         try:
             r = subprocess.run(["osascript", "-e", script],
                                capture_output=True, text=True, timeout=120)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("nmap sudoers install via osascript failed")
+            raise MhpError(
+                "install failed — see server log",
+                code=ErrorCode.TOOL_FAILED, status_code=500,
+            )
         if r.returncode != 0:
             err = (r.stderr or "").strip()
             if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
@@ -215,8 +219,12 @@ def install_sudoers() -> dict[str, Any]:
                 [pkexec, "/bin/sh", "-c", install_cmd],
                 capture_output=True, text=True, timeout=120,
             )
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("nmap sudoers install via pkexec failed")
+            raise MhpError(
+                "install failed — see server log",
+                code=ErrorCode.TOOL_FAILED, status_code=500,
+            )
         if r.returncode != 0:
             err = ((r.stdout or "") + (r.stderr or "")).strip()
             if r.returncode in (126, 127):
@@ -246,8 +254,12 @@ def revoke_sudoers() -> dict[str, Any]:
         try:
             r = subprocess.run(["osascript", "-e", script],
                                capture_output=True, text=True, timeout=120)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("nmap sudoers revoke via osascript failed")
+            raise MhpError(
+                "revoke failed — see server log",
+                code=ErrorCode.TOOL_FAILED, status_code=500,
+            )
         if r.returncode != 0:
             err = (r.stderr or "").strip()
             if "-128" in err or "canceled" in err.lower() or "cancelled" in err.lower():
@@ -270,8 +282,12 @@ def revoke_sudoers() -> dict[str, Any]:
                 [pkexec, "/bin/sh", "-c", revoke_cmd],
                 capture_output=True, text=True, timeout=120,
             )
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc))
+        except Exception:
+            logger.exception("nmap sudoers revoke via pkexec failed")
+            raise MhpError(
+                "revoke failed — see server log",
+                code=ErrorCode.TOOL_FAILED, status_code=500,
+            )
         if r.returncode != 0:
             err = ((r.stdout or "") + (r.stderr or "")).strip()
             if r.returncode in (126, 127):
