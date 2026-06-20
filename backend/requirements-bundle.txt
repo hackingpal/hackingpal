@@ -37,6 +37,9 @@ dnspython>=2.6
 # --- Chat assistant ---
 anthropic>=0.92
 
+# --- Report exporter (engagement deliverable, PDF + markdown) ---
+reportlab>=4.0
+
 # --- Cloud recon SDKs (boto3 / azure-mgmt-* / google-cloud-*) ---
 boto3>=1.34
 azure-identity>=1.15
