@@ -8,6 +8,11 @@
 <p align="center"><em>Human-approved actions. Full audit trail. Client-ready reports. Local. Offline-first. Open source.</em></p>
 
 <p align="center">
+  <strong><a href="https://hackingpal.dev">hackingpal.dev</a></strong>
+</p>
+
+<p align="center">
+  <a href="https://hackingpal.dev"><img src="https://img.shields.io/badge/website-hackingpal.dev-accent" alt="Website" /></a>
   <a href="https://github.com/hackingpal/hackingpal/releases/latest"><img src="https://img.shields.io/github/v/release/hackingpal/hackingpal?label=release" alt="Release" /></a>
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux-blue" alt="Platforms" />
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License" />
