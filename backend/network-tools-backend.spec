@@ -19,10 +19,36 @@ _optional_datas = []
 if os.path.exists("wordlists/rockyou.txt.gz"):
     _optional_datas.append(("wordlists/rockyou.txt.gz", "wordlists"))
 
-# Assistant system prompt — chat router loads from backend/prompts/assistant.md
-# at runtime. Must be bundled or the prod sidecar falls back to a stub prompt.
-if os.path.exists("prompts/assistant.md"):
-    _optional_datas.append(("prompts/assistant.md", "prompts"))
+# Always-bundled runtime data. Every module that does
+# ``Path(__file__).resolve().parent.parent / "<name>"`` to find its assets
+# needs those assets shipped alongside the bundled binary. PyInstaller
+# resolves the destination at runtime relative to ``_internal/``, which is
+# exactly what those parent-parent lookups walk to.
+#
+# What lives where:
+#   prompts/   — Anthropic system prompts for chat, playbook_suggest, triage,
+#                report_rollup, summarize_tool (routers/chat.py,
+#                routers/engagements.py, routers/playbook_suggest.py).
+#   presets/   — Built-in .mhp playbooks loaded by lib/preset_engine.py.
+#   labs/      — Dockerfiles + docker-compose.yml for every training lab
+#                (lib/labs.py builds from these paths).
+#   config.json — Default target_policy config (lib/target_policy.py falls
+#                back to defaults if missing, but bundling it gives prod the
+#                same starting policy as dev).
+_required_datas = []
+for src, dest in (
+    ("prompts", "prompts"),
+    ("presets", "presets"),
+    ("labs",    "labs"),
+    ("config.json", "."),
+):
+    if os.path.exists(src):
+        _required_datas.append((src, dest))
+    else:
+        # Fail loud at build time rather than ship a half-working bundle.
+        raise SystemExit(
+            f"[spec] required runtime data missing: backend/{src!r} — refusing to build"
+        )
 
 hiddenimports = [
     # uvicorn runtime — pulled in dynamically by uvicorn.run()
@@ -111,7 +137,7 @@ a = Analysis(
     ["main.py"],
     pathex=["."],
     binaries=[],
-    datas=_optional_datas + _cloud_datas,
+    datas=_optional_datas + _required_datas + _cloud_datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
