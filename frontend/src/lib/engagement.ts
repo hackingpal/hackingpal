@@ -243,6 +243,43 @@ export async function deleteTrackedFinding(fid: string): Promise<void> {
   if (!r.ok) throw new Error(await parseError(r));
 }
 
+// ── CVSS scoring ────────────────────────────────────────────────────────────
+
+export type CvssCalculated = {
+  base_score: number;
+  severity: "None" | "Low" | "Medium" | "High" | "Critical";
+  vector: string;
+};
+
+/**
+ * Server-side CVSS v3.1 verification. The calculator does its own client-side
+ * math for live feedback; this helper is for the save path to confirm the
+ * formula matches the backend before persistence (and to canonicalise the
+ * vector string from a partial input).
+ */
+export async function cvssCalculate(vector: string): Promise<CvssCalculated> {
+  const r = await authFetch(`/cvss/calculate?vector=${encodeURIComponent(vector)}`);
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+/**
+ * Apply a CVSS v3.1 score to a finding. Persists `cvss` + `cvss_vector` and
+ * bumps the finding's severity to match the band — the CVSS band is the
+ * single source of truth for the badge once a finding is scored.
+ */
+export async function scoreFindingCvss(
+  fid: string, vector: string,
+): Promise<Finding> {
+  const r = await authFetch(`/findings/${fid}/cvss`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vector }),
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
 /**
  * Generate an AI summary of the finding's evidence and persist it to
  * `ai_summary` on the finding row. Returns the updated finding.

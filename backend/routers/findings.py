@@ -24,7 +24,7 @@ import anthropic
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
-from lib import audit_log, engagements
+from lib import audit_log, cvss as cvss_lib, engagements
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
 
@@ -59,6 +59,19 @@ class FindingCreate(BaseModel):
     cvss:            float | None = Field(None, ge=0, le=10)
     linked_result_id: str | None = Field(None, max_length=64)
     status:          Status = "open"
+
+
+class CvssScoreRequest(BaseModel):
+    """Apply a CVSS v3.1 base score to a finding.
+
+    Accepts either an explicit `vector` string OR a `metrics` object with
+    the eight base metrics. Exactly one must be supplied. The endpoint
+    canonicalises the vector, persists `cvss` + `cvss_vector`, and bumps
+    the finding's `severity` to match the CVSS band (so the badge across
+    the app reflects the scored value rather than the original heuristic).
+    """
+    vector:  str | None = Field(default=None, max_length=200)
+    metrics: dict[str, str] | None = None
 
 
 class FindingPatch(BaseModel):
@@ -272,6 +285,67 @@ def ai_summary(fid: str) -> dict[str, Any]:
         tool="finding-ai-summary",
         target=updated.get("target") or updated.get("title") or fid,
         argv=[model_name],
+        engagement_id=existing.get("engagement_id"),
+    )
+    audit_log.complete(aid, summary=_audit_summary(updated))
+    return updated
+
+
+# CVSS bands → Finding severity values. None maps to "info" because the
+# tracker doesn't model a "no impact" severity — and a scored 0.0 finding
+# is still on the engagement timeline, just at the lowest tier.
+_CVSS_BAND_TO_SEVERITY: dict[str, str] = {
+    "None":     "info",
+    "Low":      "low",
+    "Medium":   "medium",
+    "High":     "high",
+    "Critical": "critical",
+}
+
+
+@router.post("/{fid}/cvss")
+def score_cvss(fid: str, body: CvssScoreRequest) -> dict[str, Any]:
+    """Score a finding via CVSS v3.1 and update its severity to the band.
+
+    Accepts either `vector` or `metrics`. The cvss lib raises MhpError on
+    malformed input, which propagates as a 400 envelope. After persistence,
+    the finding's severity reflects the CVSS band — manual labels lose to
+    a scored vector by design (single source of truth for the badge).
+    """
+    existing = _require_finding(fid)
+
+    has_vector = bool(body.vector and body.vector.strip())
+    has_metrics = bool(body.metrics)
+    if has_vector == has_metrics:
+        raise MhpError(
+            "supply exactly one of `vector` or `metrics`",
+            code=ErrorCode.VALIDATION_ERROR,
+            status_code=400,
+        )
+
+    if has_vector:
+        metrics = cvss_lib.parse_vector(body.vector or "")
+    else:
+        metrics = body.metrics or {}
+
+    scored = cvss_lib.score_from_metrics(metrics)
+    severity = _CVSS_BAND_TO_SEVERITY[scored["severity"]]
+
+    try:
+        updated = engagements.update_finding(fid, {
+            "cvss":         scored["base_score"],
+            "cvss_vector":  scored["vector"],
+            "severity":     severity,
+        })
+    except ValueError as e:
+        raise MhpError(str(e), code=ErrorCode.VALIDATION_ERROR, status_code=400) from e
+    if updated is None:
+        raise MhpError("finding not found", code=ErrorCode.NOT_FOUND, status_code=404)
+
+    aid = audit_log.start(
+        tool="finding-cvss",
+        target=updated.get("target") or updated.get("title") or fid,
+        argv=[scored["vector"], f"{scored['base_score']}"],
         engagement_id=existing.get("engagement_id"),
     )
     audit_log.complete(aid, summary=_audit_summary(updated))

@@ -13,12 +13,14 @@ import {
   FINDING_STATUSES,
   listFindings,
   patchTrackedFinding,
+  scoreFindingCvss,
   summarizeFinding,
   useActiveEngagementId,
   type Finding,
   type FindingSeverity,
   type FindingStatus,
 } from "../lib/engagement";
+import CvssCalculator, { type CvssResult } from "../components/CvssCalculator";
 
 type Props = { onJumpTo?: (id: string) => void };
 
@@ -302,6 +304,10 @@ function DetailPanel({
   const [error, setError] = useState("");
   const [summarizing, setSummarizing] = useState(false);
   const [summaryError, setSummaryError] = useState("");
+  const [scoring, setScoring] = useState(false);
+  const [scoringOpen, setScoringOpen] = useState(false);
+  const [scoreError, setScoreError] = useState("");
+  const [pendingScore, setPendingScore] = useState<CvssResult | null>(null);
 
   useEffect(() => {
     setTitle(finding.title);
@@ -313,6 +319,10 @@ function DetailPanel({
     setError("");
     setSummarizing(false);
     setSummaryError("");
+    setScoring(false);
+    setScoringOpen(false);
+    setScoreError("");
+    setPendingScore(null);
   }, [finding.id]);
 
   async function generateSummary() {
@@ -324,6 +334,20 @@ function DetailPanel({
       setSummaryError(e instanceof Error ? e.message : String(e));
     } finally {
       setSummarizing(false);
+    }
+  }
+
+  async function applyScore(result: CvssResult) {
+    setScoring(true); setScoreError("");
+    try {
+      const updated = await scoreFindingCvss(finding.id, result.vector);
+      onChange(updated);
+      setScoringOpen(false);
+      setPendingScore(null);
+    } catch (e) {
+      setScoreError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setScoring(false);
     }
   }
 
@@ -505,6 +529,80 @@ function DetailPanel({
             )}
             {summaryError && (
               <div className="mt-1 text-[11px] text-danger">⚠ {summaryError}</div>
+            )}
+          </section>
+
+          {/* CVSS score — once scored, the band is the badge across the app
+              (single source of truth). Inline calculator opens on demand. */}
+          <section>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="text-[10px] uppercase tracking-wider text-accent">
+                SCORE (CVSS v3.1)
+              </div>
+              {finding.cvss != null && finding.cvss_vector && !scoringOpen && (
+                <button onClick={() => setScoringOpen(true)}
+                        className="text-[10px] uppercase tracking-wider text-ink-dim
+                                   hover:text-accent">
+                  Edit score
+                </button>
+              )}
+            </div>
+            {finding.cvss != null && finding.cvss_vector && !scoringOpen ? (
+              <div className="border border-divider rounded p-3 flex items-center gap-3">
+                <div className={
+                  "text-2xl font-bold tabular-nums px-3 py-1 rounded " +
+                  SEV_BG[severity]
+                }>
+                  {finding.cvss.toFixed(1)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className={"text-[10px] uppercase tracking-wider mb-0.5 " +
+                                  "px-1.5 border rounded inline-block " + SEV_BG[severity]}>
+                    {severity}
+                  </div>
+                  <div className="font-mono text-[11px] text-ink-muted truncate">
+                    {finding.cvss_vector}
+                  </div>
+                </div>
+                <button onClick={() => void navigator.clipboard.writeText(
+                          finding.cvss_vector || "")}
+                        className="text-[10px] uppercase tracking-wider text-ink-dim
+                                   border border-divider rounded px-2 py-1 hover:text-accent">
+                  Copy
+                </button>
+              </div>
+            ) : scoringOpen ? (
+              <div className="border border-accent/20 bg-bg-base rounded p-2 space-y-2">
+                <CvssCalculator
+                  initialVector={finding.cvss_vector || undefined}
+                  onChange={setPendingScore}
+                  compact
+                />
+                {scoreError && (
+                  <div className="text-[11px] text-danger">⚠ {scoreError}</div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => { setScoringOpen(false); setPendingScore(null); }}
+                          className="text-[11px] uppercase tracking-wider text-ink-muted
+                                     border border-divider rounded px-2 py-1">
+                    Cancel
+                  </button>
+                  <button onClick={() => pendingScore && void applyScore(pendingScore)}
+                          disabled={scoring || !pendingScore}
+                          className="text-[11px] uppercase tracking-wider bg-accent text-white
+                                     rounded px-2 py-1 disabled:opacity-40 font-bold">
+                    {scoring ? "Applying…" : "Apply to finding"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[12px] text-ink-muted border border-divider rounded p-3">
+                <span className="italic">Unscored.</span>{" "}
+                <button onClick={() => setScoringOpen(true)}
+                        className="text-accent hover:underline">
+                  Calculate CVSS
+                </button>
+              </div>
             )}
           </section>
 

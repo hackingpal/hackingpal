@@ -127,6 +127,22 @@ async def test_nmap_status(client):
 
 
 @pytest.mark.asyncio
+async def test_cvss_calculate(client):
+    # CVSS v3.1 reference vector — Critical 9.8. Keeps the scoring formula
+    # honest in CI; if the math drifts, this assertion catches it before
+    # any finding gets a wrong band.
+    r = await client.get(
+        "/cvss/calculate?vector=CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+        headers=AUTH,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["base_score"] == 9.8
+    assert body["severity"] == "Critical"
+    assert body["vector"] == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+
+@pytest.mark.asyncio
 async def test_labs(client):
     r = await client.get("/labs", headers=AUTH)
     assert r.status_code == 200

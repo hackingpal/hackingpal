@@ -28,7 +28,7 @@ from lib.auth import AUTH_TOKEN, require_localhost
 from routers import (
     ad_spray, audit, audit_log, aws_recon, azure_recon, basic_check,
     bloodhound_ingest, breach, brew, bt_recon, c2_beacon, chat, cmdi, cms,
-    cred_harvest, ct_log, dns_recon, dorking, email_harvest, email_security,
+    cred_harvest, ct_log, cvss, dns_recon, dorking, email_harvest, email_security,
     engagements, evil_twin, exploits, findings, fingerprint, gcp_recon, github_leak,
     graphql, hash_cracker, http_probe, ids, idor, imds, ip_checker,
     jwt_analyzer, kerberos_roast, labs, lan_scan, lateral, ldap_enum, lfi,
@@ -157,6 +157,7 @@ app.include_router(settings.router)
 app.include_router(chat.router)
 app.include_router(engagements.router)
 app.include_router(findings.router)
+app.include_router(cvss.router)
 app.include_router(summarize.router)
 app.include_router(imds.router)
 app.include_router(s3_scanner.router)

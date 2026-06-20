@@ -12,10 +12,12 @@ import { useEffect, useRef, useState } from "react";
 import {
   FINDING_SEVERITIES,
   promoteToFinding,
+  scoreFindingCvss,
   summarizeFinding,
   useActiveEngagementId,
   type FindingSeverity,
 } from "../lib/engagement";
+import CvssCalculator, { type CvssResult } from "./CvssCalculator";
 
 export type PromoteSeed = {
   /** Tool that produced the result. Stored on the finding and audited. */
@@ -85,6 +87,8 @@ function PromoteModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [scoreOpen, setScoreOpen] = useState(false);
+  const [cvssResult, setCvssResult] = useState<CvssResult | null>(null);
   const titleRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -121,6 +125,14 @@ function PromoteModal({
       });
       setSavedId(f.id);
       onPromoted?.();
+      // If the user scored before saving, apply the CVSS vector now —
+      // backend bumps severity to the band, so the detail page reflects
+      // the real score, not the heuristic severity.
+      if (cvssResult) {
+        void scoreFindingCvss(f.id, cvssResult.vector).catch(() => {
+          /* surfaced on the detail page next time it loads */
+        });
+      }
       // Kick the AI summary in the background. Failures (no API key, rate
       // limit) are intentionally swallowed — the finding still exists and
       // the detail page exposes a "Generate AI summary" retry button.
@@ -216,6 +228,28 @@ function PromoteModal({
                           rows={6}
                           className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
                                      text-[11px] font-mono focus:outline-none focus:border-accent" />
+              </div>
+
+              {/* Optional CVSS scoring at creation time. Collapsed by default to
+                  keep the modal terse — clicking expands the calculator inline. */}
+              <div>
+                <button type="button"
+                        onClick={() => setScoreOpen((v) => !v)}
+                        className="text-[11px] uppercase tracking-wider text-ink-muted
+                                   hover:text-accent flex items-center gap-1">
+                  <span>{scoreOpen ? "▾" : "▸"}</span>
+                  <span>Score now (CVSS, optional)</span>
+                  {cvssResult && (
+                    <span className="text-accent font-bold tabular-nums">
+                      · {cvssResult.baseScore.toFixed(1)} {cvssResult.severity}
+                    </span>
+                  )}
+                </button>
+                {scoreOpen && (
+                  <div className="mt-2 border border-divider rounded p-2">
+                    <CvssCalculator onChange={setCvssResult} compact />
+                  </div>
+                )}
               </div>
 
               {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
