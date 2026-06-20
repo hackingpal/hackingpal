@@ -923,6 +923,10 @@ export type NmapStatus = {
   passwordless: boolean;
   sudoers_path: string;
   user: string;
+  // Argv-restricted sudoers (v2). Optional so older backends still parse.
+  install_version?: "none" | "v1" | "v2";
+  needs_upgrade?:   boolean;
+  sudoers_version?: string;
 };
 
 export type NmapScriptEntry = {
@@ -1127,6 +1131,9 @@ export type TcpdumpStatus = {
   passwordless: boolean;
   sudoers_path: string;
   user: string;
+  install_version?: "none" | "v1" | "v2";
+  needs_upgrade?:   boolean;
+  sudoers_version?: string;
 };
 
 export const fetchTcpdumpStatus     = () => api<TcpdumpStatus>("/tcpdump/status");

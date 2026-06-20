@@ -49,6 +49,57 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["nmap"], dependencies=[Depends(require_local_auth)])
 
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-nmap"
+SUDOERS_VERSION = "v2-argv-restricted"
+
+# Flag tokens the app never passes to nmap. The app legitimately uses
+# `--script <names>` (from a curated, app-controlled list) and `-oX <tmp>`
+# (XML output to a process-private tempfile), so those CAN'T be denied here.
+# The remaining defense against `--script /tmp/evil.nse` lives in
+# `lib/nmap_runner._build_argv`, which rejects dangerous tokens in the
+# free-form `extra_args` field before the argv is constructed.
+#
+# These ones are sudoers-deniable because the app never builds them:
+#   -iL          read targets from a file (info disclosure / DoS as root)
+#   -oN -oG -oA  text/grep/all-formats output (arbitrary file write as root)
+#   --datadir    redirect script search dir (turns curated --script unsafe)
+#   --interactive deprecated, shell access
+_NMAP_DENY_FLAGS = ("-iL", "-oN", "-oG", "-oA", "--datadir", "--interactive")
+
+
+def _build_sudoers_content(user: str, binary: str) -> str:
+    """Build the argv-restricted sudoers entry. See module docstring."""
+    lines = [
+        f"# MyHackingPal nmap sudoers — {SUDOERS_VERSION}",
+        f"# Allows {binary} with the flag set the app builds, including",
+        f"# `--script <curated>` and `-oX <tmpfile>` (both used by the runner).",
+        f"# Denies {', '.join(_NMAP_DENY_FLAGS)} (flags the app never uses).",
+        f"# Note: this entry does not protect against `--script /path/to/evil.nse`",
+        f"# — that defense is in lib/nmap_runner.build_argv's extra_args check.",
+        f"{user} ALL=(root) NOPASSWD: {binary}, \\",
+    ]
+    # sudoers requires literal spaces in command patterns to be backslash-
+    # escaped (double-quotes aren't a valid quoting form). The `\ *\ ` pattern
+    # matches only the flag as a standalone argv token (preceded by a space).
+    deny_lines = [f"    !{binary}\\ *\\ {flag}*" for flag in _NMAP_DENY_FLAGS]
+    lines.append(", \\\n".join(deny_lines))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _detect_install_version(binary: str) -> str:
+    """Return 'v2', 'v1', or 'none' (see tcpdump.py for the same pattern)."""
+    if not _is_passwordless(binary):
+        return "none"
+    try:
+        r = subprocess.run(["sudo", "-n", "-l"],
+                           capture_output=True, text=True, timeout=3)
+    except Exception:
+        return "v1"
+    if r.returncode != 0:
+        return "v1"
+    if binary not in r.stdout:
+        return "none"
+    return "v2" if "--datadir*" in r.stdout else "v1"
 
 
 def _resolved_binary() -> str:
@@ -90,15 +141,19 @@ def status() -> dict[str, Any]:
             scount = sum(1 for _ in Path(sdir).glob("*.nse"))
         except Exception:
             scount = 0
+    install_version = _detect_install_version(binary)
     return {
         "available": True,
         "binary": binary,
         "version": nmap_runner.nmap_version(binary),
         "scripts_dir": sdir,
         "scripts_count": scount,
-        "passwordless": _is_passwordless(binary),
-        "sudoers_path": SUDOERS_PATH,
-        "user": getpass.getuser(),
+        "passwordless":   install_version != "none",
+        "install_version": install_version,
+        "needs_upgrade":  install_version == "v1",
+        "sudoers_version": SUDOERS_VERSION,
+        "sudoers_path":   SUDOERS_PATH,
+        "user":           getpass.getuser(),
     }
 
 
@@ -110,12 +165,12 @@ def install_sudoers() -> dict[str, Any]:
     Linux. Returns whether the install succeeded.
     """
     binary = _resolved_binary()
-    if _is_passwordless(binary):
-        return {"installed": True, "already": True}
+    if _detect_install_version(binary) == "v2":
+        return {"installed": True, "already": True, "version": "v2"}
 
     user = getpass.getuser()
     tmp = Path(tempfile.gettempdir()) / "_nt_nmap_sudoers"
-    tmp.write_text(f"{user} ALL=(root) NOPASSWD: {binary}\n")
+    tmp.write_text(_build_sudoers_content(user, binary))
 
     if sys.platform == "darwin":
         install_cmd = (

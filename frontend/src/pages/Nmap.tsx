@@ -573,17 +573,33 @@ export default function Nmap() {
               <span className="text-divider">│</span>
               <span>
                 SUDO{" "}
-                <span className={status.passwordless ? "text-phos" : "text-amber"}>
-                  {status.passwordless ? "✓ READY" : "○ NEEDED"}
+                <span className={
+                  status.needs_upgrade ? "text-amber"
+                  : status.passwordless ? "text-phos"
+                  : "text-amber"
+                }>
+                  {status.needs_upgrade
+                    ? "△ UPGRADE"
+                    : status.passwordless ? "✓ READY" : "○ NEEDED"}
                 </span>
               </span>
-              {!status.passwordless && (
+              {(!status.passwordless || status.needs_upgrade) && (
                 <button
-                  onClick={() => setWizardOpen(true)}
+                  onClick={async () => {
+                    if (status.needs_upgrade) {
+                      // Direct re-install — skip the wizard intro since
+                      // the user already knows what this does.
+                      await installNmapSudo();
+                      const s = await fetchNmapStatus();
+                      setStatus(s);
+                    } else {
+                      setWizardOpen(true);
+                    }
+                  }}
                   className="ml-1 text-[10px] uppercase tracking-widest px-2 py-0.5 rounded border
                              bg-bg-card text-accent border-accent/40 hover:bg-accent/10"
                 >
-                  Run Setup
+                  {status.needs_upgrade ? "Re-install" : "Run Setup"}
                 </button>
               )}
               {willUseSudo && (

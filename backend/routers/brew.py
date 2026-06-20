@@ -284,7 +284,9 @@ async def brew_exec(ws: WebSocket) -> None:
                 "action must be install, uninstall, or upgrade",
             ))
             await ws.close(); return
-        if not name or len(name) > 64 or any(c in name for c in " ;|&`$\n"):
+        if (not name or len(name) > 64
+                or name.startswith("-")
+                or any(c in name for c in " ;|&`$\n")):
             await ws.send_json(ws_error(
                 ErrorCode.BAD_REQUEST,
                 "package name is invalid",
@@ -292,7 +294,9 @@ async def brew_exec(ws: WebSocket) -> None:
             await ws.close(); return
 
         if mgr == "brew":
-            args = [action] + (["--cask"] if cask else []) + [name]
+            # `--` terminates option parsing so even a hypothetical leading-dash
+            # name (already rejected above) couldn't reach brew as a flag.
+            args = [action] + (["--cask"] if cask else []) + ["--", name]
             cmd = [path, *args]
         else:
             args = _action_args(mgr, action, name)

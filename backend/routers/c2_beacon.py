@@ -28,17 +28,19 @@ import secrets
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from lib import scope
+from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
 from lib.mode import get_engagement_id, get_mode
 from lib.validators import validate_ip
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/c2", tags=["c2-beacon"])
+router = APIRouter(prefix="/c2", tags=["c2-beacon"],
+                   dependencies=[Depends(require_local_auth)])
 
 # ── Listener state ──────────────────────────────────────────────────────────
 

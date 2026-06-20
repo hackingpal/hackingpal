@@ -52,12 +52,56 @@ _TCPDUMP_HINT = ("tcpdump wraps the libpcap-based tcpdump binary on macOS/Linux.
                  "native port pending.")
 
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-tcpdump"
+SUDOERS_VERSION = "v2-argv-restricted"
 
 # Resolve once at import. shutil.which() checks PATH; on Linux tcpdump lives
 # in /usr/sbin/ but is often not on a non-root user's PATH — fall back to the
 # canonical path so the sudoers entry and command both match.
 import shutil as _shutil
 TCPDUMP = _shutil.which("tcpdump") or "/usr/sbin/tcpdump"
+
+
+# Flag tokens the app never passes to tcpdump. Each lets an attacker who can
+# call `sudo tcpdump` with a custom argv pivot to root code execution or
+# arbitrary file I/O — see `tcpdump(1)` for the full semantics:
+#   -z / --postrotate-command  runs a command on each output rotate (as root)
+#   -w                          writes the pcap (arbitrary file write as root)
+#   -r                          reads a pcap file (info disclosure as root)
+#   -W / -G                     rotation control (chains with -z)
+#   -Z                          changes the post-init privilege-drop user
+# The deny patterns use a leading space so they only match standalone flag
+# tokens; the WS handler rejects leading-dash BPF tokens upstream so a BPF
+# term can never reach sudo as a flag.
+#
+# Known residual: combined-short-flag forms like `-lz cmd` (which tcpdump's
+# getopt parses as `-l -z cmd`) are NOT caught by these patterns — the `-z`
+# substring lacks a preceding space. Defending requires this entry to be
+# combined with the upstream WS-handler input validation in install_capture/
+# `bpf_tokens` (already in place). An attacker who can construct argv
+# directly already has local code execution and the sudoers entry is moot.
+_TCPDUMP_DENY_FLAGS = ("-z", "-w", "-r", "-W", "-G", "-Z",
+                       "--postrotate-command")
+
+
+def _build_sudoers_content(user: str, binary: str) -> str:
+    """Build the argv-restricted sudoers entry. See module docstring."""
+    lines = [
+        f"# MyHackingPal tcpdump sudoers — {SUDOERS_VERSION}",
+        f"# Allows {binary} with the flags the app uses (-l -n -v -c -i + BPF)",
+        f"# and denies {', '.join(_TCPDUMP_DENY_FLAGS)} (root code-exec vectors).",
+        f"# Re-run the Install Permission button from the UI to upgrade an",
+        f"# older install. See routers/tcpdump.py for the full threat model.",
+        f"{user} ALL=(root) NOPASSWD: {binary}, \\",
+    ]
+    # sudoers requires literal spaces in command patterns to be backslash-
+    # escaped; double-quotes are not a valid quoting form for patterns. The
+    # `\ *\ ` between the binary path and the deny flag ensures the pattern
+    # only matches the flag as a standalone argv token (preceded by a space),
+    # not as a substring inside a benign BPF term like `host my-z-thing.com`.
+    deny_lines = [f"    !{binary}\\ *\\ {flag}*" for flag in _TCPDUMP_DENY_FLAGS]
+    lines.append(", \\\n".join(deny_lines))
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _is_passwordless() -> bool:
@@ -71,13 +115,39 @@ def _is_passwordless() -> bool:
         return False
 
 
+def _detect_install_version() -> str:
+    """Return 'v2' if an argv-restricted entry is installed, 'v1' if a
+    legacy unrestricted entry is installed, or 'none' otherwise.
+
+    Inspects ``sudo -n -l`` (which prints the calling user's sudoers rules
+    without reading /etc/sudoers.d directly). v2 entries contain the
+    deny-pattern substring `-z*`; v1 entries don't.
+    """
+    if not _is_passwordless():
+        return "none"
+    try:
+        r = subprocess.run(["sudo", "-n", "-l"],
+                           capture_output=True, text=True, timeout=3)
+    except Exception:
+        return "v1"
+    if r.returncode != 0:
+        return "v1"
+    if TCPDUMP not in r.stdout:
+        return "none"
+    return "v2" if "-z*" in r.stdout else "v1"
+
+
 @router.get("/tcpdump/status")
 def status() -> dict[str, Any]:
     require_unix(_TCPDUMP_HINT)
+    version = _detect_install_version()
     return {
-        "passwordless": _is_passwordless(),
-        "sudoers_path": SUDOERS_PATH,
-        "user":         getpass.getuser(),
+        "passwordless":   version != "none",
+        "install_version": version,
+        "needs_upgrade":  version == "v1",
+        "sudoers_version": SUDOERS_VERSION,
+        "sudoers_path":   SUDOERS_PATH,
+        "user":           getpass.getuser(),
     }
 
 
@@ -127,12 +197,15 @@ def install_sudoers() -> dict[str, Any]:
     Shows the OS-native admin prompt: osascript on macOS, pkexec (polkit) on
     Linux. Returns whether the install succeeded.
     """
-    if _is_passwordless():
-        return {"installed": True, "already": True}
+    # Only short-circuit if the *current* (v2) entry is already in place.
+    # A legacy v1 install must be upgraded — fall through to the install flow,
+    # which overwrites the file atomically via `mv`.
+    if _detect_install_version() == "v2":
+        return {"installed": True, "already": True, "version": "v2"}
 
     user = getpass.getuser()
     tmp = Path(tempfile.gettempdir()) / "_nt_tcpdump_sudoers"
-    tmp.write_text(f"{user} ALL=(root) NOPASSWD: {TCPDUMP}\n")
+    tmp.write_text(_build_sudoers_content(user, TCPDUMP))
 
     if sys.platform == "darwin":
         install_cmd = (
@@ -346,7 +419,16 @@ async def tcpdump_ws(ws: WebSocket) -> None:
                     "filter contains forbidden characters",
                 ))
                 await ws.close(); return
-            flags += shlex.split(bpf)
+            bpf_tokens = shlex.split(bpf)
+            # Reject `-`-prefixed tokens: tcpdump treats them as options, not
+            # BPF terms — a filter like "-Z root" would alter privilege handling.
+            if any(t.startswith("-") for t in bpf_tokens):
+                await ws.send_json(ws_error(
+                    ErrorCode.VALIDATION_ERROR,
+                    "filter token may not start with '-'",
+                ))
+                await ws.close(); return
+            flags += bpf_tokens
 
         cmd = ["sudo", "-n", TCPDUMP, *flags]
         listener = asyncio.create_task(listen_for_stop())

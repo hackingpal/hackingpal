@@ -401,12 +401,34 @@ def build_argv(opts: NmapOptions, nmap_bin: str, xml_path: str) -> list[str]:
                 raise ValueError(f"invalid exclude entry: {x!r}")
         argv += ["--exclude", ",".join(opts.exclude)]
 
-    # Free-form extras — tokenise but reject shell metas
+    # Free-form extras — tokenise but reject shell metas AND flags that would
+    # let extra_args pivot to root code execution when sudo is active. The
+    # sudoers entry (see routers/nmap.py) can't deny `--script` because the
+    # app legitimately uses it via the curated `scripts` parameter, so the
+    # only line of defence against `extra_args="--script /tmp/evil.nse"` is
+    # right here.
     if opts.extra_args.strip():
         bad = set("`$;&|<>\n\r") & set(opts.extra_args)
         if bad:
             raise ValueError(f"extra_args contains forbidden chars: {bad}")
-        argv += shlex.split(opts.extra_args)
+        tokens = shlex.split(opts.extra_args)
+        _FORBIDDEN_EXTRA = (
+            "--script", "--script-args", "--script-args-file", "--script-help",
+            "--datadir",
+            "-iL",
+            "-oN", "-oG", "-oA",
+            "--interactive",
+        )
+        for tok in tokens:
+            # Match both `--script=val` and `--script` (value as next token).
+            head = tok.split("=", 1)[0]
+            if head in _FORBIDDEN_EXTRA:
+                raise ValueError(
+                    f"extra_args contains forbidden flag: {head!r}. "
+                    "Use the curated `scripts` field for NSE selection; "
+                    "the XML output path is fixed by the runner."
+                )
+        argv += tokens
 
     # Targets (last)
     if not opts.targets:

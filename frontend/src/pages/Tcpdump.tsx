@@ -79,6 +79,7 @@ export default function Tcpdump() {
   }
 
   const needsInstall = status !== null && !status.passwordless;
+  const needsUpgrade = status !== null && status.passwordless && !!status.needs_upgrade;
 
   const wizardSteps = useMemo<SetupStep[]>(() => {
     const passwordless = !!status?.passwordless;
@@ -178,19 +179,31 @@ export default function Tcpdump() {
         <div className="mt-2 text-[10px] tracking-widest text-ink-dim flex items-center gap-2">
           {status === null
             ? <span>Checking permissions…</span>
-            : status.passwordless
-              ? <span className="text-phos">● PASSWORDLESS SUDO READY · {status.user}</span>
-              : (
+            : needsUpgrade
+              ? (
                 <span className="text-amber">
-                  ⚠ ADMIN PASSWORD REQUIRED ·{" "}
+                  ⚠ LEGACY SUDOERS ENTRY · upgrade to argv-restricted ·{" "}
                   <button
                     onClick={() => setWizardOpen(true)}
                     className="underline decoration-dotted hover:text-accent transition"
                   >
-                    Run setup
+                    Re-install
                   </button>
                 </span>
               )
+              : status.passwordless
+                ? <span className="text-phos">● PASSWORDLESS SUDO READY · {status.user}</span>
+                : (
+                  <span className="text-amber">
+                    ⚠ ADMIN PASSWORD REQUIRED ·{" "}
+                    <button
+                      onClick={() => setWizardOpen(true)}
+                      className="underline decoration-dotted hover:text-accent transition"
+                    >
+                      Run setup
+                    </button>
+                  </span>
+                )
           }
           {!running && captured > 0 && (
             <span className="ml-auto">CAPTURED {captured}</span>
@@ -220,6 +233,33 @@ export default function Tcpdump() {
             <button onClick={() => setWizardOpen(true)}
                     className={btnPrimary()}>
               Run Setup
+            </button>
+          </div>
+        )}
+
+        {needsUpgrade && !wizardOpen && (
+          <div className="border border-amber/50 bg-amber/5 rounded px-4 py-3 mb-4
+                          flex items-start gap-3">
+            <div className="flex-1">
+              <div className="text-amber text-sm font-bold">
+                Sudoers entry needs upgrade
+              </div>
+              <div className="text-xs text-ink-muted mt-1 leading-relaxed">
+                Your existing tcpdump sudoers entry is the legacy unrestricted form.
+                Re-installing replaces it with an argv-restricted entry that denies
+                dangerous flags ({" "}
+                <code className="text-ink-primary">-z</code>{" / "}
+                <code className="text-ink-primary">-w</code>{" / "}
+                <code className="text-ink-primary">--postrotate-command</code>
+                {" "}…). One more admin prompt and you&apos;re done.
+              </div>
+            </div>
+            <button onClick={async () => {
+                      await installTcpdumpSudoers();
+                      await refreshStatus();
+                    }}
+                    className={btnPrimary()}>
+              Re-install
             </button>
           </div>
         )}

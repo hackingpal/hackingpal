@@ -25,7 +25,8 @@ from .settings import keychain_get
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(prefix="/chat", tags=["chat"],
+                   dependencies=[Depends(require_local_auth)])
 
 # ── Defaults + persisted chat settings ──────────────────────────────────────
 

@@ -46,10 +46,12 @@ def _journalctl() -> str | None:
 
 def _safe_unit_name(name: str) -> str:
     """Permit only letters, digits, ., -, _, @, : — block path traversal &
-    shell metacharacters before passing to systemctl/journalctl."""
+    shell metacharacters before passing to systemctl/journalctl. The first
+    character is restricted to [A-Za-z0-9_] so the unit name can't pose as
+    a CLI flag (e.g. `-h`, `-H host`)."""
     if not name or len(name) > 200:
         raise HTTPException(400, "bad unit name")
-    if not re.fullmatch(r"[A-Za-z0-9._@:\-]+", name):
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9._@:\-]*", name):
         raise HTTPException(400, "unit name contains forbidden characters")
     return name
 

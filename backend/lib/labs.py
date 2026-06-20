@@ -817,6 +817,13 @@ async def sidecar_exec(
     for a in args:
         if not isinstance(a, str) or len(a) > 256 or any(c in BAD for c in a):
             return {"rc": -1, "stdout": "", "stderr": f"invalid arg: {a!r}"}
+        # Reject `-`-prefixed args. The whitelisted commands (nmap, curl, ...)
+        # accept option flags like `--script` / `-K` that can pivot to code
+        # execution inside the sidecar; the sidecar API is meant for plain
+        # positional targets only.
+        if a.startswith("-"):
+            return {"rc": -1, "stdout": "",
+                    "stderr": f"arg may not start with '-': {a!r}"}
 
     if not await docker_running():
         return {"rc": -1, "stdout": "", "stderr": "docker daemon is not running"}

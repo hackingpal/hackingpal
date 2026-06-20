@@ -188,6 +188,21 @@ async def run_capture(ws: WebSocket) -> None:
                 "detail": f"refusing to run {binary!r} (not in allowlist)"})
             await ws.close(); return
 
+        # argv[1:] is intentionally a free-form compose surface — this is an
+        # advanced-user endpoint for airodump/aircrack/hcxdumptool flag combos
+        # we can't usefully whitelist. Per-arg shell-meta + length guard is
+        # defense in depth (argv goes to create_subprocess_exec without a shell).
+        BAD_CHARS = set(";|&`$\n\r\0")
+        for a in argv[1:]:
+            if not isinstance(a, str) or len(a) > 512:
+                await ws.send_json({"type": "error",
+                    "detail": "argv entry too long or not a string"})
+                await ws.close(); return
+            if any(c in BAD_CHARS for c in a):
+                await ws.send_json({"type": "error",
+                    "detail": f"argv entry contains forbidden characters: {a!r}"})
+                await ws.close(); return
+
         path = shutil.which(binary)
         if not path:
             hint = ("`brew install aircrack-ng hcxdumptool`" if IS_DARWIN

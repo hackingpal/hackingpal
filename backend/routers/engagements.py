@@ -13,15 +13,17 @@ import logging
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from lib import engagements
+from lib.auth import require_local_auth
 from .settings import keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/engagements", tags=["engagements"])
+router = APIRouter(prefix="/engagements", tags=["engagements"],
+                   dependencies=[Depends(require_local_auth)])
 
 
 def _md_code_fence(content: str) -> tuple[str, str]:
