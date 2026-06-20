@@ -11,6 +11,7 @@ import CopyButton from "../CopyButton";
 import StatsBar from "../StatsBar";
 import EmptyState from "../EmptyState";
 import PromoteToFindingButton from "../PromoteToFindingButton";
+import SummarizeButton from "../SummarizeButton";
 import type { FindingSeverity } from "../../lib/engagement";
 
 export type Attempt = {
@@ -146,6 +147,30 @@ export default function AttackResults({
           })}
         </div>
       </div>
+
+      {promoteTool && (findings.length > 0 || attempts.length > 0) && (
+        <SummarizeButton
+          tool={promoteTool}
+          target={promoteTarget ?? ""}
+          raw={{
+            findings: findings.map((f) => ({
+              severity: f.severity,
+              confirmed: !!f.confirmed,
+              payload: f.payload,
+              evidence: (f.evidence || "").slice(0, 1200),
+            })),
+            attempts: {
+              total: attempts.length,
+              sample: attempts.slice(-20).map((a) => ({
+                payload: a.payload,
+                status: a.status,
+                length: a.length,
+                elapsed_ms: a.elapsed_ms,
+              })),
+            },
+          }}
+        />
+      )}
 
       {/* Attempts — collapsible */}
       <div className="flex-1 overflow-hidden flex flex-col">

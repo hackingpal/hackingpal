@@ -8,6 +8,7 @@ import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import SummarizeButton from "../components/SummarizeButton";
 import { playNamed, getToolEffect } from "../lib/dopamine";
 import EffectPicker from "../components/EffectPicker";
 
@@ -366,6 +367,13 @@ export default function PortScanner() {
               total={total}
               target={meta?.target ?? target}
             />
+            {!scanning && rows.length > 0 && (
+              <SummarizeButton
+                tool="port-scanner"
+                target={meta?.target ?? target}
+                raw={{ target: meta?.target ?? target, ports, open: rows }}
+              />
+            )}
           </>
         )}
 

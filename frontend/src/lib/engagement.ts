@@ -9,7 +9,7 @@
 // only stores which one is currently focused.
 
 import { useEffect, useState } from "react";
-import { authFetch, BACKEND_URL, parseError } from "../api";
+import { authFetch, BACKEND_URL, getCachedAuthToken, parseError } from "../api";
 import { getMode } from "./mode";
 
 export type EngagementStatus = "active" | "completed" | "archived";
@@ -291,5 +291,61 @@ export async function fetchSuggestions(): Promise<
 }
 
 export function reportUrl(eid: string, format: "html" | "md"): string {
-  return `${BACKEND_URL}/engagements/${eid}/report?format=${format}`;
+  const token = getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  return `${BACKEND_URL}/engagements/${eid}/report?format=${format}${tokenParam}`;
+}
+
+// ── Report snapshots ────────────────────────────────────────────────────────
+
+export type ReportSnapshotMeta = {
+  id: string;
+  ts: string;
+  rollup_preview: string;
+  html_bytes: number;
+  md_bytes: number;
+};
+
+export function reportSnapshotUrl(
+  eid: string, sid: string, format: "html" | "md",
+): string {
+  const token = getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  return (
+    `${BACKEND_URL}/engagements/${eid}/report` +
+    `?format=${format}&snapshot_id=${encodeURIComponent(sid)}${tokenParam}`
+  );
+}
+
+export async function listReportSnapshots(
+  eid: string,
+): Promise<ReportSnapshotMeta[]> {
+  const r = await authFetch(`/engagements/${eid}/reports`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const body = (await r.json()) as { snapshots: ReportSnapshotMeta[] };
+  return body.snapshots ?? [];
+}
+
+export async function generateReportSnapshot(
+  eid: string,
+): Promise<ReportSnapshotMeta> {
+  const r = await authFetch(`/engagements/${eid}/report/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { detail = (await parseError(r)) || detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return (await r.json()) as ReportSnapshotMeta;
+}
+
+export async function deleteReportSnapshot(
+  eid: string, sid: string,
+): Promise<void> {
+  const r = await authFetch(`/engagements/${eid}/reports/${sid}`,
+    { method: "DELETE" });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }

@@ -9,6 +9,7 @@ import {
 } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import SummarizeButton from "../components/SummarizeButton";
 import ToolRequirements from "../components/ToolRequirements";
 import SetupWizard, { type SetupStep } from "../components/SetupWizard";
 import { shouldAutoOpen } from "../lib/setupState";
@@ -733,6 +734,25 @@ export default function Nmap() {
                   </div>
                 ))}
               </div>
+            )}
+            {report && !running && (
+              <SummarizeButton
+                tool="nmap"
+                target={report.hosts.map((h) => h.ip).join(", ")}
+                raw={{
+                  hosts: report.hosts.length,
+                  ports_open: portsAll.filter((r) => r.p.state === "open").length,
+                  ports: portsAll.slice(0, 200).map((r) => ({
+                    host: r.host,
+                    port: r.p.port,
+                    proto: r.p.proto,
+                    state: r.p.state,
+                    service: r.p.service,
+                    version: [r.p.product, r.p.version, r.p.extra_info]
+                      .filter(Boolean).join(" "),
+                  })),
+                }}
+              />
             )}
           </div>
         )}

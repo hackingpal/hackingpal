@@ -10,14 +10,19 @@ import { useEffect, useMemo, useState } from "react";
 import {
   createFinding,
   deleteFinding,
+  deleteReportSnapshot,
+  generateReportSnapshot,
   listEngagements,
   listFindings,
+  listReportSnapshots,
   listResults,
+  reportSnapshotUrl,
   reportUrl,
   updateFinding,
   useActiveEngagementId,
   type Engagement,
   type Finding,
+  type ReportSnapshotMeta,
   type ScanResult,
 } from "../lib/engagement";
 import { useMode } from "../lib/mode";
@@ -701,32 +706,193 @@ function FindingEditor({
   );
 }
 
-// ── Report (iframe) ─────────────────────────────────────────────────────────
+// ── Report (snapshot-driven) ────────────────────────────────────────────────
+//
+// Two-step UX: click "Generate Report" → the backend runs an AI rollup over
+// findings + per-tool summaries, bakes the HTML + Markdown, and stores a
+// timestamped snapshot. Download buttons then serve the saved snapshot —
+// so the report you hand over is deterministic, not a live render that
+// changes underneath you.
 
 function ReportPane({ eid }: { eid: string }) {
-  const html = reportUrl(eid, "html");
-  const md = reportUrl(eid, "md");
+  const [snapshots, setSnapshots] = useState<ReportSnapshotMeta[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [error, setError] = useState("");
+  const [previewLive, setPreviewLive] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setLoadingList(true);
+    listReportSnapshots(eid)
+      .then((list) => {
+        if (!active) return;
+        setSnapshots(list);
+        if (list.length > 0) setSelectedId(list[0].id);
+        setError("");
+      })
+      .catch((e) => active && setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => active && setLoadingList(false));
+    return () => { active = false; };
+  }, [eid]);
+
+  async function generate() {
+    if (generating) return;
+    setGenerating(true);
+    setError("");
+    try {
+      const snap = await generateReportSnapshot(eid);
+      const list = await listReportSnapshots(eid);
+      setSnapshots(list);
+      setSelectedId(snap.id);
+      setPreviewLive(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  async function removeSnap(sid: string) {
+    if (!confirm("Delete this report snapshot? The downloadable copy will be gone.")) return;
+    try {
+      await deleteReportSnapshot(eid, sid);
+      const list = await listReportSnapshots(eid);
+      setSnapshots(list);
+      if (selectedId === sid) {
+        setSelectedId(list.length > 0 ? list[0].id : null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const iframeSrc =
+    previewLive ? reportUrl(eid, "html") :
+    selectedId   ? reportSnapshotUrl(eid, selectedId, "html") :
+    "";
+
   return (
     <div className="h-full flex flex-col">
-      <div className="px-6 py-3 border-b border-divider flex items-center gap-2">
-        <span className="text-[11px] text-ink-muted">
-          Live render from the engagement's current findings + evidence.
-        </span>
+      <div className="px-6 py-3 border-b border-divider flex items-center gap-3 flex-wrap">
+        <div className="text-[11px] text-ink-muted">
+          Reports are generated as timestamped snapshots — the AI executive
+          summary + per-tool findings are baked in at generate time.
+        </div>
         <span className="flex-1" />
-        <a href={md} target="_blank" rel="noreferrer"
-           className="px-3 py-1.5 rounded bg-bg-card border border-divider
-                      text-ink-primary text-[12px] hover:border-accent transition">
-          Download Markdown
-        </a>
-        <a href={html} target="_blank" rel="noreferrer"
-           className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
-                      hover:bg-accentDim transition">
-          Download HTML
-        </a>
+        <button
+          type="button"
+          onClick={() => setPreviewLive((v) => !v)}
+          className="px-3 py-1.5 rounded text-[12px] border border-divider
+                     text-ink-muted hover:border-accent hover:text-accent transition"
+          title="Preview the report as it would look right now, without saving a snapshot"
+        >
+          {previewLive ? "↩ Back to snapshot" : "👁 Preview live"}
+        </button>
+        <button
+          type="button"
+          onClick={generate}
+          disabled={generating}
+          className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
+                     hover:bg-accentDim transition disabled:opacity-50
+                     disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {generating ? (
+            <>
+              <span className="inline-block w-3 h-3 border-2 border-white/30
+                               border-t-white rounded-full animate-spin" />
+              Generating…
+            </>
+          ) : (
+            <>✨ Generate Report</>
+          )}
+        </button>
       </div>
-      <div className="flex-1 bg-bg-card">
-        <iframe src={html} title="Engagement report"
-                className="w-full h-full border-0 bg-white" />
+
+      {error && (
+        <div className="px-6 py-2 text-[12px] text-danger border-b border-divider
+                        bg-danger/5">
+          {error}
+        </div>
+      )}
+
+      <div className="flex-1 flex min-h-0">
+        <aside className="w-72 border-r border-divider bg-bg-sidebar overflow-y-auto">
+          <div className="px-3 py-2 text-[10px] uppercase tracking-widest text-ink-dim
+                          border-b border-divider">
+            Snapshots
+          </div>
+          {loadingList ? (
+            <div className="p-3 text-[11px] text-ink-dim">Loading…</div>
+          ) : snapshots.length === 0 ? (
+            <div className="p-3 text-[11px] text-ink-muted">
+              No reports yet. Click <b className="text-accent">Generate Report</b> to
+              create one.
+            </div>
+          ) : (
+            <ul>
+              {snapshots.map((s) => (
+                <li key={s.id}
+                    className={
+                      "px-3 py-2 border-b border-divider cursor-pointer transition " +
+                      (selectedId === s.id && !previewLive
+                        ? "bg-accent/10 border-l-2 border-l-accent"
+                        : "hover:bg-bg-card border-l-2 border-l-transparent")
+                    }
+                    onClick={() => { setSelectedId(s.id); setPreviewLive(false); }}>
+                  <div className="flex items-center justify-between">
+                    <div className="text-[11px] font-mono text-ink-primary truncate">
+                      {s.ts}
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); removeSnap(s.id); }}
+                      className="text-[10px] text-ink-dim hover:text-danger px-1"
+                      title="Delete snapshot"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  {s.rollup_preview && (
+                    <div className="mt-1 text-[10px] text-ink-muted line-clamp-2">
+                      {s.rollup_preview}
+                    </div>
+                  )}
+                  <div className="mt-1 flex gap-2 text-[10px]">
+                    <a href={reportSnapshotUrl(eid, s.id, "html")}
+                       onClick={(e) => e.stopPropagation()}
+                       target="_blank" rel="noreferrer"
+                       className="text-accent hover:underline">
+                      HTML
+                    </a>
+                    <a href={reportSnapshotUrl(eid, s.id, "md")}
+                       onClick={(e) => e.stopPropagation()}
+                       target="_blank" rel="noreferrer"
+                       className="text-accent hover:underline">
+                      Markdown
+                    </a>
+                    <span className="ml-auto text-ink-dim">
+                      {Math.round(s.html_bytes / 1024)} KB
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </aside>
+
+        <div className="flex-1 bg-bg-card min-h-0">
+          {iframeSrc ? (
+            <iframe src={iframeSrc} title="Engagement report"
+                    className="w-full h-full border-0 bg-white" />
+          ) : (
+            <div className="h-full flex items-center justify-center text-ink-muted text-sm">
+              {previewLive
+                ? "Live preview loading…"
+                : "Generate a report to preview it here."}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

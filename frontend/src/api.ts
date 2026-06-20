@@ -210,6 +210,14 @@ export function resetAuthToken(): void {
   cachedAuthToken = null;
 }
 
+/** Synchronously returns the cached auth token, or null if not yet fetched.
+ *  Used by URL builders for `<a href>` / `<iframe src>` cases where headers
+ *  can't be set. The token must already be cached — call `fetchAuthToken()`
+ *  earlier in the page lifecycle if necessary. */
+export function getCachedAuthToken(): string | null {
+  return cachedAuthToken;
+}
+
 async function withAuthHeader(init?: RequestInit): Promise<RequestInit> {
   const token = await fetchAuthToken();
   const headers = new Headers(init?.headers);

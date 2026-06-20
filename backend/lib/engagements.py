@@ -134,6 +134,40 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS ix_targets_engagement ON targets(engagement_id)",
     "CREATE INDEX IF NOT EXISTS ix_targets_kind ON targets(kind, hidden)",
+    # ── Tool summaries (AI rollups of a single tool run) ────────────────────
+    # One row per "Summarize results" click. engagement_id is nullable so the
+    # button still works outside an active engagement (in that case the row
+    # just isn't persisted server-side — the streaming response is shown
+    # locally in the page state).
+    """
+    CREATE TABLE IF NOT EXISTS tool_summaries (
+      id            TEXT PRIMARY KEY,
+      engagement_id TEXT REFERENCES engagements(id) ON DELETE CASCADE,
+      result_id     TEXT REFERENCES scan_results(id) ON DELETE SET NULL,
+      ts            TEXT NOT NULL,
+      tool          TEXT NOT NULL,
+      target        TEXT NOT NULL DEFAULT '',
+      summary       TEXT NOT NULL,
+      raw_excerpt   TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_summaries_engagement ON tool_summaries(engagement_id, ts DESC)",
+    # ── Report snapshots ────────────────────────────────────────────────────
+    # A point-in-time export of the engagement. Generated explicitly via
+    # POST /engagements/{eid}/report/generate (which also runs the AI rollup).
+    # The HTML + MD blobs are stored inline so a snapshot stays usable even
+    # after findings change underneath it.
+    """
+    CREATE TABLE IF NOT EXISTS report_snapshots (
+      id            TEXT PRIMARY KEY,
+      engagement_id TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
+      ts            TEXT NOT NULL,
+      rollup        TEXT NOT NULL DEFAULT '',
+      html          TEXT NOT NULL DEFAULT '',
+      md            TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_snapshots_engagement ON report_snapshots(engagement_id, ts DESC)",
 ]
 
 
@@ -503,3 +537,95 @@ def engagement_stats(engagement_id: str) -> dict[str, Any]:
         "findings_by_severity": by_sev,
         "tools_used": sorted(tools),
     }
+
+
+# ── Tool summaries ──────────────────────────────────────────────────────────
+
+def record_tool_summary(
+    engagement_id: str | None, tool: str, target: str, summary: str,
+    raw_excerpt: str = "", result_id: str | None = None,
+) -> dict[str, Any]:
+    sid = str(uuid.uuid4())
+    ts = _now()
+    with cursor() as c:
+        c.execute(
+            "INSERT INTO tool_summaries "
+            "(id, engagement_id, result_id, ts, tool, target, summary, raw_excerpt) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (sid, engagement_id, result_id, ts, tool, target,
+             summary, raw_excerpt[:8000]),
+        )
+        if engagement_id:
+            c.execute(
+                "UPDATE engagements SET updated_at = ? WHERE id = ?",
+                (ts, engagement_id),
+            )
+    return {"id": sid, "engagement_id": engagement_id, "result_id": result_id,
+            "ts": ts, "tool": tool, "target": target, "summary": summary}
+
+
+def list_tool_summaries(
+    engagement_id: str, limit: int = 200,
+) -> list[dict[str, Any]]:
+    with cursor() as c:
+        rows = c.execute(
+            "SELECT id, result_id, ts, tool, target, summary "
+            "FROM tool_summaries WHERE engagement_id = ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (engagement_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_tool_summary(sid: str) -> dict[str, Any] | None:
+    with cursor() as c:
+        r = c.execute(
+            "SELECT * FROM tool_summaries WHERE id = ?", (sid,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+# ── Report snapshots ────────────────────────────────────────────────────────
+
+def create_report_snapshot(
+    engagement_id: str, rollup: str, html: str, md: str,
+) -> dict[str, Any]:
+    sid = str(uuid.uuid4())
+    ts = _now()
+    with cursor() as c:
+        c.execute(
+            "INSERT INTO report_snapshots (id, engagement_id, ts, rollup, html, md) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (sid, engagement_id, ts, rollup, html, md),
+        )
+        c.execute(
+            "UPDATE engagements SET updated_at = ? WHERE id = ?",
+            (ts, engagement_id),
+        )
+    return {"id": sid, "engagement_id": engagement_id, "ts": ts,
+            "rollup_preview": rollup[:280]}
+
+
+def list_report_snapshots(engagement_id: str) -> list[dict[str, Any]]:
+    with cursor() as c:
+        rows = c.execute(
+            "SELECT id, ts, substr(rollup, 1, 280) AS rollup_preview, "
+            "length(html) AS html_bytes, length(md) AS md_bytes "
+            "FROM report_snapshots WHERE engagement_id = ? ORDER BY ts DESC",
+            (engagement_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_report_snapshot(sid: str) -> dict[str, Any] | None:
+    with cursor() as c:
+        r = c.execute(
+            "SELECT * FROM report_snapshots WHERE id = ?", (sid,),
+        ).fetchone()
+        return dict(r) if r else None
+
+
+def delete_report_snapshot(sid: str) -> bool:
+    with cursor() as c:
+        c.execute("DELETE FROM report_snapshots WHERE id = ?", (sid,))
+        return c.rowcount > 0

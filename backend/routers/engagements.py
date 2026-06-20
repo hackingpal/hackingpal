@@ -10,15 +10,19 @@ import base64
 import html
 import json
 import logging
+import os
+import re
+from pathlib import Path
 from typing import Any, Literal
 
+import anthropic
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from lib import engagements
 from lib.auth import require_local_auth
-from .settings import keychain_get_named
+from .settings import keychain_get, keychain_get_named
 
 logger = logging.getLogger(__name__)
 
@@ -327,26 +331,285 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
 # ── Report export ───────────────────────────────────────────────────────────
 
 @router.get("/{eid}/report")
-def export_report(eid: str, format: Literal["html", "md"] = "html") -> Response:
+def export_report(
+    eid: str,
+    format: Literal["html", "md"] = "html",
+    snapshot_id: str | None = Query(default=None, max_length=64),
+) -> Response:
     e = engagements.get_engagement(eid)
     if not e:
         raise HTTPException(404, "engagement not found")
+
+    if snapshot_id:
+        snap = engagements.get_report_snapshot(snapshot_id)
+        if not snap or snap["engagement_id"] != eid:
+            raise HTTPException(404, "snapshot not found")
+        if format == "md":
+            return Response(
+                content=snap["md"], media_type="text/markdown",
+                headers={"Content-Disposition":
+                         f'attachment; filename="{_slug(e["name"])}-{snap["ts"]}.md"'},
+            )
+        return Response(
+            content=snap["html"], media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition":
+                     f'inline; filename="{_slug(e["name"])}-{snap["ts"]}.html"'},
+        )
+
     findings = engagements.list_findings(eid)
     stats = engagements.engagement_stats(eid)
     results = engagements.list_results(eid, limit=500)
+    summaries = engagements.list_tool_summaries(eid, limit=500)
 
     if format == "md":
-        body = _render_md(e, findings, results, stats)
+        body = _render_md(e, findings, results, stats, summaries=summaries)
         return Response(
             content=body, media_type="text/markdown",
             headers={"Content-Disposition": f'attachment; filename="{_slug(e["name"])}.md"'},
         )
 
-    body = _render_html(e, findings, results, stats)
+    body = _render_html(e, findings, results, stats, summaries=summaries)
     return Response(
         content=body, media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f'inline; filename="{_slug(e["name"])}.html"'},
     )
+
+
+# ── Report snapshot lifecycle ───────────────────────────────────────────────
+
+@router.post("/{eid}/report/generate")
+def generate_report(eid: str) -> dict[str, Any]:
+    """Generate a timestamped report snapshot.
+
+    Runs an AI executive-summary rollup over the engagement's findings + tool
+    summaries (skipped gracefully if no API key), bakes the HTML and Markdown
+    bodies, and persists the result so subsequent downloads are deterministic.
+    Returns the new snapshot's metadata.
+    """
+    e = engagements.get_engagement(eid)
+    if not e:
+        raise HTTPException(404, "engagement not found")
+
+    findings = engagements.list_findings(eid)
+    stats = engagements.engagement_stats(eid)
+    results = engagements.list_results(eid, limit=500)
+    summaries = engagements.list_tool_summaries(eid, limit=500)
+
+    rollup = _generate_rollup(e, findings, summaries, stats)
+
+    html_body = _render_html(e, findings, results, stats,
+                             summaries=summaries, rollup=rollup)
+    md_body = _render_md(e, findings, results, stats,
+                         summaries=summaries, rollup=rollup)
+
+    snap = engagements.create_report_snapshot(
+        engagement_id=eid, rollup=rollup, html=html_body, md=md_body,
+    )
+    return {
+        **snap,
+        "engagement_name": e["name"],
+        "finding_count": len(findings),
+        "summary_count": len(summaries),
+    }
+
+
+@router.get("/{eid}/reports")
+def list_reports(eid: str) -> dict[str, Any]:
+    if engagements.get_engagement(eid) is None:
+        raise HTTPException(404, "engagement not found")
+    return {"snapshots": engagements.list_report_snapshots(eid)}
+
+
+@router.delete("/{eid}/reports/{sid}")
+def delete_report(eid: str, sid: str) -> dict[str, bool]:
+    snap = engagements.get_report_snapshot(sid)
+    if not snap or snap["engagement_id"] != eid:
+        raise HTTPException(404, "snapshot not found")
+    engagements.delete_report_snapshot(sid)
+    return {"deleted": True}
+
+
+# ── AI rollup ───────────────────────────────────────────────────────────────
+
+def _rollup_prompt_path() -> Path:
+    override = os.getenv("MHP_ROLLUP_SYSTEM_PROMPT_FILE", "").strip()
+    if override:
+        return Path(override)
+    # Mirror chat.py's resolution: bundle path inside PyInstaller, repo path otherwise.
+    import sys as _sys
+    meipass = getattr(_sys, "_MEIPASS", None)
+    base = Path(meipass) / "prompts" if meipass else \
+           Path(__file__).resolve().parent.parent / "prompts"
+    return base / "report_rollup.md"
+
+
+def _resolve_rollup_prompt() -> str:
+    raw = os.getenv("MHP_ROLLUP_SYSTEM_PROMPT", "").strip()
+    if raw:
+        return raw
+    try:
+        return _rollup_prompt_path().read_text(encoding="utf-8")
+    except Exception:
+        return ("Write the engagement's executive summary: posture (2-3 lines), "
+                "top risks (bullets), recommended remediation (bullets). Terse, "
+                "markdown, no fluff.")
+
+
+def _generate_rollup(
+    e: dict[str, Any], findings: list[dict[str, Any]],
+    summaries: list[dict[str, Any]], stats: dict[str, Any],
+) -> str:
+    """Best-effort: produce an executive-summary blob in Markdown.
+
+    Returns empty string if no API key is configured or the call fails — the
+    rest of the report still renders.
+    """
+    api_key = keychain_get()
+    if not api_key:
+        return ""
+
+    # Compact, ranked feed: highest-severity findings first, then summaries.
+    findings_sorted = sorted(
+        findings,
+        key=lambda f: engagements.SEVERITY_ORDER.get(f["severity"], 99),
+    )
+    findings_block = "\n".join(
+        f"- [{f['severity']}] {f['title']}"
+        + (f" (target `{f['target']}`, tool `{f['tool']}`)"
+           if f.get("target") or f.get("tool") else "")
+        + (f" — {(f.get('description') or '')[:200]}"
+           if f.get("description") else "")
+        for f in findings_sorted[:40]
+    ) or "_no findings recorded_"
+
+    summaries_block = "\n\n".join(
+        f"**{s['tool']}** ({s.get('target') or 'no target'}, {s['ts']}):\n{s['summary']}"
+        for s in summaries[:20]
+    ) or "_no tool summaries recorded_"
+
+    user_message = (
+        f"**Engagement:** {e['name']}\n"
+        f"**Scope:** {', '.join(e['scope']) if e['scope'] else '_(unscoped)_'}\n"
+        f"**Stats:** {stats['result_count']} runs · "
+        f"{stats['finding_count']} findings · "
+        f"{len(stats['tools_used'])} tools used\n\n"
+        f"## Findings (severity-ordered)\n{findings_block}\n\n"
+        f"## Per-tool summaries\n{summaries_block}\n"
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        msg = client.messages.create(
+            model=os.getenv("MHP_CHAT_MODEL", "").strip() or "claude-sonnet-4-6",
+            max_tokens=1400,
+            system=[{
+                "type": "text",
+                "text": _resolve_rollup_prompt(),
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": user_message}],
+        )
+        chunks: list[str] = []
+        for block in msg.content:
+            if getattr(block, "type", None) == "text":
+                chunks.append(block.text)
+        return _strip_rollup_wrapper("".join(chunks).strip())
+    except Exception:
+        logger.exception("report rollup generation failed")
+        return ""
+
+
+def _strip_rollup_wrapper(text: str) -> str:
+    """Drop a leading wrapper heading like `## Executive Summary…` if the model
+    emitted one despite the prompt asking it not to.
+
+    Walks through any blank lines / horizontal rules between the wrapper and
+    the first real `## Posture` (or other expected) section. Idempotent.
+    """
+    if not text:
+        return text
+    lines = text.splitlines()
+    i = 0
+    # Skip leading blanks.
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines):
+        head = lines[i].strip().lower()
+        # Match any `#`/`##`/`###`/`####` line containing "executive summary"
+        # or generic "summary"/"report" — these are all the wrapper variants
+        # we've seen the model emit despite the prompt asking it not to.
+        if re.match(r"^#{1,4}\s+", head) and (
+            "executive summary" in head
+            or head.endswith("summary")
+            or head.endswith("report")
+        ):
+            i += 1
+            # Skip blank lines and horizontal rules right after the wrapper.
+            while i < len(lines) and (not lines[i].strip() or
+                                       lines[i].strip().startswith("---")):
+                i += 1
+            return "\n".join(lines[i:]).strip()
+    return text.strip()
+
+
+# ── Tiny markdown subset → HTML (for AI-authored sections) ──────────────────
+
+_MD_INLINE_PATTERNS = (
+    (re.compile(r"`([^`\n]+)`"), r"<code>\1</code>"),
+    (re.compile(r"\*\*([^*\n]+)\*\*"), r"<strong>\1</strong>"),
+    (re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)"), r"<em>\1</em>"),
+)
+
+
+def _md_to_html(md: str) -> str:
+    """Convert the constrained markdown the AI prompts produce into safe HTML.
+
+    Handles only: ## / ### headers, - / * bullets, **bold**, *em*, `code`,
+    blank-line paragraphs. Everything else is escaped. Output is wrapped in
+    a single <div> so callers can style it as a block.
+    """
+    if not md:
+        return ""
+    lines = md.replace("\r\n", "\n").split("\n")
+    out: list[str] = []
+    in_ul = False
+
+    def close_ul() -> None:
+        nonlocal in_ul
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+
+    def inline(s: str) -> str:
+        s = html.escape(s)
+        for pat, rep in _MD_INLINE_PATTERNS:
+            s = pat.sub(rep, s)
+        return s
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        if not line.strip():
+            close_ul()
+            continue
+        m = re.match(r"^(#{2,4})\s+(.*)$", line)
+        if m:
+            close_ul()
+            # Demote one level so AI-authored subheadings sit under the
+            # report's outer <h2> section header.
+            level = min(len(m.group(1)) + 1, 5)
+            out.append(f"<h{level}>{inline(m.group(2))}</h{level}>")
+            continue
+        m = re.match(r"^[-*]\s+(.*)$", line)
+        if m:
+            if not in_ul:
+                out.append("<ul>")
+                in_ul = True
+            out.append(f"<li>{inline(m.group(1))}</li>")
+            continue
+        close_ul()
+        out.append(f"<p>{inline(line)}</p>")
+    close_ul()
+    return '<div class="ai-block">' + "".join(out) + "</div>"
 
 
 # ── Renderers ───────────────────────────────────────────────────────────────
@@ -367,7 +630,10 @@ def _slug(name: str) -> str:
 def _render_html(
     e: dict[str, Any], findings: list[dict[str, Any]],
     results: list[dict[str, Any]], stats: dict[str, Any],
+    summaries: list[dict[str, Any]] | None = None,
+    rollup: str = "",
 ) -> str:
+    summaries = summaries or []
     screenshots = engagements.screenshots_for_engagement(e["id"])
     # Sort findings: critical → info, then most-recent within tier (by created_at desc)
     findings = sorted(
@@ -403,6 +669,21 @@ def _render_html(
                   overflow-x: auto; font-size: 12px; }}
   footer {{ margin-top: 4em; padding-top: 1em; border-top: 1px solid #d0d7de;
             color: #57606a; font-size: 12px; }}
+  .ai-block {{ background: #f6f8fa; border-left: 3px solid #6e40c9;
+              border-radius: 4px; padding: .25em 1em; margin: .75em 0; }}
+  .ai-block h3, .ai-block h4 {{ margin-top: 1em; margin-bottom: .3em;
+                                font-size: 13px; text-transform: uppercase;
+                                letter-spacing: .04em; color: #6e40c9; }}
+  .ai-block ul {{ margin: .3em 0 .8em 1.2em; padding: 0; }}
+  .ai-block li {{ margin: .2em 0; }}
+  .ai-block p {{ margin: .4em 0; }}
+  .tool-summary {{ border: 1px solid #d0d7de; border-left: 3px solid #6e40c9;
+                  border-radius: 4px; padding: .5em 1em; margin-bottom: .75em; }}
+  .tool-summary .meta {{ font-size: 12px; color: #57606a; margin: 0 0 .25em 0; }}
+  .badge {{ display: inline-block; font-size: 10px; font-weight: bold;
+           text-transform: uppercase; letter-spacing: .04em; color: white;
+           background: #6e40c9; padding: 1px 6px; border-radius: 8px;
+           margin-right: .4em; }}
   @media print {{ body {{ max-width: none; margin: 0; }} }}
 </style></head><body>
 <h1>{html.escape(e['name'])}</h1>
@@ -435,7 +716,10 @@ def _render_html(
         )
 
     # Executive summary
-    parts.append("<h2>Executive Summary</h2><div class='summary'>")
+    parts.append("<h2>Executive Summary</h2>")
+    if rollup:
+        parts.append(_md_to_html(rollup))
+    parts.append("<div class='summary'>")
     parts.append(f"<p>{stats['result_count']} scan results recorded across "
                  f"{len(stats['tools_used'])} distinct tools.</p>")
     if stats["findings_by_severity"]:
@@ -489,6 +773,24 @@ def _render_html(
                 pass
         parts.append("</div>")
 
+    # Tool summaries (AI rollups per tool run — between findings and raw log)
+    if summaries:
+        parts.append("<h2>Tool Summaries</h2>")
+        parts.append("<p style='color:#57606a;font-size:13px;'>"
+                     "AI-generated synthesis of each tool run that was "
+                     "summarized during the engagement.</p>")
+        for s in summaries:
+            target_html = (f" · <code>{html.escape(s.get('target') or '')}</code>"
+                           if s.get("target") else "")
+            parts.append(
+                f'<div class="tool-summary">'
+                f'<div class="meta"><span class="badge">AI</span>'
+                f'<code>{html.escape(s["tool"])}</code>{target_html} · '
+                f'{html.escape(s["ts"])}</div>'
+                f'{_md_to_html(s["summary"])}'
+                f'</div>'
+            )
+
     # Results summary (tool/target/timestamp only — raw bodies omitted from report)
     parts.append("<h2>Activity Log</h2>")
     if not results:
@@ -515,7 +817,10 @@ to export this report as a PDF.
 def _render_md(
     e: dict[str, Any], findings: list[dict[str, Any]],
     results: list[dict[str, Any]], stats: dict[str, Any],
+    summaries: list[dict[str, Any]] | None = None,
+    rollup: str = "",
 ) -> str:
+    summaries = summaries or []
     findings = sorted(
         findings,
         key=lambda f: engagements.SEVERITY_ORDER.get(f["severity"], 99),
@@ -541,6 +846,10 @@ def _render_md(
         out.append(f"\n## Notes\n\n{e['notes']}\n")
 
     out.append("\n## Executive Summary\n")
+    if rollup:
+        out.append(rollup)
+        out.append("")
+        out.append("### Activity totals")
     out.append(f"- {stats['result_count']} scan results across {len(stats['tools_used'])} tools.")
     if stats["findings_by_severity"]:
         for sev in ("critical", "high", "medium", "low", "info"):
@@ -561,6 +870,17 @@ def _render_md(
         if f["evidence"]:
             open_fence, close_fence = _md_code_fence(f["evidence"])
             out.append(f"\n{open_fence}\n{f['evidence']}\n{close_fence}\n")
+
+    if summaries:
+        out.append("\n## Tool Summaries\n")
+        out.append("_AI-generated synthesis of each tool run that was "
+                   "summarized during the engagement._\n")
+        for s in summaries:
+            target_part = f" · target `{s['target']}`" if s.get("target") else ""
+            out.append(f"### `{s['tool']}`{target_part}\n")
+            out.append(f"_{s['ts']}_\n")
+            out.append(s["summary"])
+            out.append("")
 
     out.append("\n## Activity Log\n")
     if not results:

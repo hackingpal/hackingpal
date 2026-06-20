@@ -5,6 +5,7 @@ import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
 import CopyButton from "../components/CopyButton";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import SummarizeButton from "../components/SummarizeButton";
 import type { FindingSeverity } from "../lib/engagement";
 
 const PROTO_TIER: Record<string, "legacy" | "modern"> = {
@@ -209,6 +210,29 @@ export default function TlsAudit() {
                 />
               </Card>
             )}
+            <SummarizeButton
+              tool="tls-auditor"
+              target={`${report.host}:${report.port}`}
+              raw={{
+                host: report.host,
+                port: report.port,
+                cert: {
+                  subject: report.cert.subject,
+                  issuer: report.cert.issuer,
+                  not_after: report.cert.not_after,
+                  days_until_expiry: report.cert.days_until_expiry,
+                  hostname_matches: report.cert.hostname_matches,
+                  self_signed: report.cert.self_signed,
+                  key_type: report.cert.key_type,
+                  key_bits: report.cert.key_bits,
+                  signature_algorithm: report.cert.signature_algorithm,
+                },
+                protocols: report.protocols,
+                hsts: report.hsts,
+                http_redirect_to_https: report.http_redirect_to_https,
+                findings: report.findings,
+              }}
+            />
           </>
         )}
       </div>
