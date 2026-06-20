@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   FINDING_SEVERITIES,
   promoteToFinding,
+  summarizeFinding,
   useActiveEngagementId,
   type FindingSeverity,
 } from "../lib/engagement";
@@ -79,7 +80,6 @@ function PromoteModal({
   const activeId = useActiveEngagementId();
   const [title, setTitle] = useState(seed.title);
   const [severity, setSeverity] = useState<FindingSeverity>(seed.severity);
-  const [description, setDescription] = useState(seed.description ?? "");
   const [target, setTarget] = useState(seed.target);
   const [evidence, setEvidence] = useState(seed.evidence);
   const [saving, setSaving] = useState(false);
@@ -110,16 +110,24 @@ function PromoteModal({
         engagement_id: activeId,
         title:       title.trim(),
         severity,
-        description: description.trim(),
+        // Seed-provided description carries through (e.g. TLS auditor's
+        // per-finding detail). The AI summary lands separately in
+        // `ai_summary` — the manual description text input was removed
+        // from the modal because the AI fills that role now.
+        description: (seed.description ?? "").trim(),
         tool:        seed.tool,
         target:      target.trim(),
         evidence:    evidence,
       });
       setSavedId(f.id);
       onPromoted?.();
-      // Brief confirmation then close — short enough to feel snappy, long
-      // enough to register without being a banner.
-      window.setTimeout(() => onClose(), 900);
+      // Kick the AI summary in the background. Failures (no API key, rate
+      // limit) are intentionally swallowed — the finding still exists and
+      // the detail page exposes a "Generate AI summary" retry button.
+      void summarizeFinding(f.id).catch(() => { /* surfaced on detail page */ });
+      // Slightly longer than before so the user sees the "summarizing" hint
+      // before the modal closes.
+      window.setTimeout(() => onClose(), 1400);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -160,8 +168,11 @@ function PromoteModal({
             </div>
           </div>
         ) : savedId ? (
-          <div className="p-5 text-[12px] text-phos">
-            ✓ Promoted — finding created on the active engagement.
+          <div className="p-5 text-[12px] text-phos space-y-1">
+            <div>✓ Promoted — finding created on the active engagement.</div>
+            <div className="text-ink-muted">
+              ✨ Summarizing evidence… open the Findings tab to see it land.
+            </div>
           </div>
         ) : (
           <>
@@ -197,17 +208,6 @@ function PromoteModal({
                          className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
                                     text-[12px] font-mono focus:outline-none focus:border-accent" />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] text-ink-muted tracking-wider mb-1">
-                  DESCRIPTION <span className="text-ink-dim normal-case tracking-normal">(optional)</span>
-                </label>
-                <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                          rows={3}
-                          placeholder="Impact, root cause, remediation…"
-                          className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
-                                     text-[12px] focus:outline-none focus:border-accent" />
               </div>
 
               <div>

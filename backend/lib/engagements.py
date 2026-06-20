@@ -79,6 +79,7 @@ SCHEMA = [
       target            TEXT NOT NULL DEFAULT '',
       description       TEXT NOT NULL DEFAULT '',
       evidence          TEXT NOT NULL DEFAULT '',
+      ai_summary        TEXT NOT NULL DEFAULT '',
       linked_result_id  TEXT REFERENCES scan_results(id) ON DELETE SET NULL,
       status            TEXT NOT NULL DEFAULT 'open'
       -- status: open|confirmed|false_positive|remediated (canonical)
@@ -189,6 +190,8 @@ def _migrate_findings(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE findings ADD COLUMN cvss_vector TEXT")
     if "updated_at" not in cols:
         conn.execute("ALTER TABLE findings ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+    if "ai_summary" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN ai_summary TEXT NOT NULL DEFAULT ''")
 
 
 def _connect() -> sqlite3.Connection:
@@ -412,7 +415,7 @@ def update_finding(fid: str, patch: dict[str, Any]) -> dict[str, Any] | None:
     fields: list[str] = []
     values: list[Any] = []
     for key in ("title", "severity", "description", "evidence", "status",
-                "tool", "target"):
+                "tool", "target", "ai_summary"):
         if key in patch:
             if key == "severity" and patch[key] not in SEVERITY_ORDER:
                 raise ValueError(f"unknown severity {patch[key]!r}")

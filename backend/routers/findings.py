@@ -20,12 +20,17 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+import anthropic
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from lib import audit_log, engagements
 from lib.auth import require_local_auth
 from lib.errors import ErrorCode, MhpError
+
+from .chat import resolve_model
+from .settings import keychain_get
+from .summarize import _resolve_summarize_prompt, _serialize_raw
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,7 @@ class FindingPatch(BaseModel):
     tool:         str | None = Field(None, max_length=200)
     target:       str | None = Field(None, max_length=500)
     evidence:     str | None = Field(None, max_length=200_000)
+    ai_summary:   str | None = Field(None, max_length=20_000)
     cvss_vector:  str | None = Field(None, max_length=200)
     cvss:         float | None = Field(None, ge=0, le=10)
     status:       Status | None = None
@@ -157,6 +163,115 @@ def patch(fid: str, body: FindingPatch) -> dict[str, Any]:
         tool="finding-update",
         target=updated.get("target") or updated.get("title") or fid,
         argv=sorted(patch_dict.keys()),
+        engagement_id=existing.get("engagement_id"),
+    )
+    audit_log.complete(aid, summary=_audit_summary(updated))
+    return updated
+
+
+@router.post("/{fid}/ai-summary")
+def ai_summary(fid: str) -> dict[str, Any]:
+    """Generate an AI summary of the finding's evidence and store it on the row.
+
+    Synchronous (non-streaming) — the call site fires-and-forgets after
+    promotion. Reuses the same Anthropic client + prompt + model the
+    `/summarize/stream` route uses so the wording is consistent with the
+    in-tool "Summarize results" button.
+    """
+    existing = _require_finding(fid)
+
+    api_key = keychain_get()
+    if not api_key:
+        raise MhpError(
+            "Anthropic API key not set. Add one in Settings to enable summaries.",
+            code="MISSING_API_KEY",
+            status_code=401,
+        )
+
+    tool = existing.get("tool") or "(unknown tool)"
+    target = existing.get("target") or ""
+    evidence = existing.get("evidence") or ""
+    description = existing.get("description") or ""
+    title = existing.get("title") or ""
+
+    if not evidence.strip() and not description.strip():
+        raise MhpError(
+            "Finding has no evidence or description to summarize.",
+            code=ErrorCode.VALIDATION_ERROR,
+            status_code=400,
+        )
+
+    raw_payload: dict[str, Any] = {"title": title}
+    if description.strip():
+        raw_payload["description"] = description
+    if evidence.strip():
+        raw_payload["evidence"] = evidence
+    raw_serialized = _serialize_raw(raw_payload)
+
+    user_message = (
+        f"**Tool:** `{tool}`\n"
+        + (f"**Target:** `{target}`\n" if target else "")
+        + "\n**Raw result:**\n```\n"
+        + raw_serialized
+        + "\n```"
+    )
+
+    client = anthropic.Anthropic(api_key=api_key)
+    model_name = resolve_model()
+    system_prompt = _resolve_summarize_prompt()
+
+    try:
+        msg = client.messages.create(
+            model=model_name,
+            max_tokens=900,
+            system=[{
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }],
+            messages=[{"role": "user", "content": user_message}],
+        )
+    except anthropic.AuthenticationError as e:
+        raise MhpError(
+            "Anthropic rejected the API key. Check it in Settings.",
+            code="UPSTREAM_AUTH",
+            status_code=401,
+        ) from e
+    except anthropic.RateLimitError as e:
+        raise MhpError(
+            "Rate limited by Anthropic. Retry shortly.",
+            code="UPSTREAM_RATE_LIMIT",
+            status_code=429,
+        ) from e
+    except anthropic.APIError as e:
+        logger.warning("anthropic api error type=%s", type(e).__name__)
+        raise MhpError(
+            "Anthropic API error — check the logs",
+            code="UPSTREAM_ERROR",
+            status_code=502,
+        ) from e
+
+    full_text = "".join(
+        block.text for block in msg.content if getattr(block, "type", "") == "text"
+    ).strip()
+    if not full_text:
+        raise MhpError(
+            "Anthropic returned an empty summary.",
+            code="UPSTREAM_ERROR",
+            status_code=502,
+        )
+
+    try:
+        updated = engagements.update_finding(fid, {"ai_summary": full_text})
+    except ValueError as e:
+        raise MhpError(str(e), code=ErrorCode.VALIDATION_ERROR, status_code=400) from e
+    if updated is None:
+        raise MhpError("finding not found", code=ErrorCode.NOT_FOUND, status_code=404)
+
+    aid = audit_log.start(
+        tool="finding-ai-summary",
+        target=updated.get("target") or updated.get("title") or fid,
+        argv=[model_name],
         engagement_id=existing.get("engagement_id"),
     )
     audit_log.complete(aid, summary=_audit_summary(updated))

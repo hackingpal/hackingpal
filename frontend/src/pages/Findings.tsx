@@ -13,6 +13,7 @@ import {
   FINDING_STATUSES,
   listFindings,
   patchTrackedFinding,
+  summarizeFinding,
   useActiveEngagementId,
   type Finding,
   type FindingSeverity,
@@ -299,6 +300,8 @@ function DetailPanel({
   const [evidence, setEvidence] = useState(finding.evidence);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [summarizing, setSummarizing] = useState(false);
+  const [summaryError, setSummaryError] = useState("");
 
   useEffect(() => {
     setTitle(finding.title);
@@ -308,7 +311,21 @@ function DetailPanel({
     setEvidence(finding.evidence);
     setEditing(false);
     setError("");
+    setSummarizing(false);
+    setSummaryError("");
   }, [finding.id]);
+
+  async function generateSummary() {
+    setSummarizing(true); setSummaryError("");
+    try {
+      const updated = await summarizeFinding(finding.id);
+      onChange(updated);
+    } catch (e) {
+      setSummaryError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSummarizing(false);
+    }
+  }
 
   async function quickStatus(next: FindingStatus) {
     setSaving(true); setError("");
@@ -352,13 +369,6 @@ function DetailPanel({
         <h3 className="text-[15px] font-bold text-ink-primary flex-1 truncate">
           {finding.title}
         </h3>
-        {!editing && (
-          <button onClick={() => setEditing(true)}
-                  className="text-[11px] uppercase tracking-wider border border-divider
-                             rounded px-2 py-0.5 text-ink-muted hover:text-ink-primary">
-            Edit
-          </button>
-        )}
         <button onClick={() => void remove()}
                 className="text-[11px] uppercase tracking-wider border border-danger
                            rounded px-2 py-0.5 text-danger">
@@ -457,6 +467,60 @@ function DetailPanel({
         </div>
       ) : (
         <>
+          {/* AI summary — primary content. Auto-populated on promote; legacy
+              findings get a Generate button. */}
+          <section>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="text-[10px] uppercase tracking-wider text-accent">
+                ✨ AI SUMMARY
+              </div>
+              {finding.ai_summary && (
+                <button onClick={() => void generateSummary()}
+                        disabled={summarizing}
+                        className="text-[10px] uppercase tracking-wider text-ink-dim
+                                   hover:text-accent disabled:opacity-40">
+                  {summarizing ? "Regenerating…" : "Regenerate"}
+                </button>
+              )}
+            </div>
+            {finding.ai_summary ? (
+              <div className="text-[12px] whitespace-pre-wrap text-ink-primary
+                              bg-accent/5 border border-accent/20 rounded p-3">
+                {finding.ai_summary}
+              </div>
+            ) : (
+              <div className="text-[12px] text-ink-muted border border-divider rounded p-3">
+                {summarizing ? (
+                  <span className="text-accent">Generating summary…</span>
+                ) : (
+                  <>
+                    <span className="italic">No AI summary yet.</span>{" "}
+                    <button onClick={() => void generateSummary()}
+                            className="text-accent hover:underline">
+                      Generate AI summary
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            {summaryError && (
+              <div className="mt-1 text-[11px] text-danger">⚠ {summaryError}</div>
+            )}
+          </section>
+
+          {/* Secondary actions — manual notes editing lives below the AI
+              summary now, not at the top. */}
+          <div className="flex items-center gap-2 text-[11px]">
+            <button onClick={() => setEditing(true)}
+                    className="uppercase tracking-wider border border-divider
+                               rounded px-2 py-0.5 text-ink-muted hover:text-ink-primary">
+              Edit notes
+            </button>
+            <span className="text-ink-dim">
+              Edit the analyst description + evidence below if you want to add notes.
+            </span>
+          </div>
+
           {description && (
             <section>
               <div className="text-[10px] uppercase tracking-wider text-ink-muted mb-1">

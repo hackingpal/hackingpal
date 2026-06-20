@@ -54,6 +54,7 @@ export type Finding = {
   target: string;
   description: string;
   evidence: string;
+  ai_summary: string;
   linked_result_id: string | null;
   status: FindingStatus;
 };
@@ -240,6 +241,21 @@ export async function patchTrackedFinding(
 export async function deleteTrackedFinding(fid: string): Promise<void> {
   const r = await authFetch(`/findings/${fid}`, { method: "DELETE" });
   if (!r.ok) throw new Error(await parseError(r));
+}
+
+/**
+ * Generate an AI summary of the finding's evidence and persist it to
+ * `ai_summary` on the finding row. Returns the updated finding.
+ *
+ * Synchronous on the backend — the call usually takes a few seconds while
+ * Claude responds. PromoteToFindingButton calls this fire-and-forget after
+ * a successful promote; the Findings detail page calls it explicitly when
+ * the user clicks "Generate AI summary" on a finding that doesn't have one.
+ */
+export async function summarizeFinding(fid: string): Promise<Finding> {
+  const r = await authFetch(`/findings/${fid}/ai-summary`, { method: "POST" });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
 }
 
 export async function createFinding(eid: string, payload: {
