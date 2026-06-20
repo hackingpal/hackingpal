@@ -46,6 +46,36 @@ async def list_labs() -> dict[str, Any]:
     }
 
 
+@router.get("/labs/catalog")
+async def labs_catalog() -> dict[str, Any]:
+    """Full catalog — every defined lab tagged with its enabled state.
+
+    Drives the "+ Add Lab" drawer. The main grid still hits ``/labs``
+    which only returns enabled labs.
+    """
+    return {"labs": labs_lib.list_catalog()}
+
+
+class LabEnableBody(BaseModel):
+    enabled: bool = Field(...)
+
+
+@router.post("/labs/{lab_id}/enable")
+async def lab_enable(lab_id: str) -> dict[str, Any]:
+    """Mark a lab as enabled so it appears in the main grid."""
+    _require_lab(lab_id)
+    labs_lib.set_enabled(lab_id, True)
+    return {"id": lab_id, "enabled": True}
+
+
+@router.post("/labs/{lab_id}/disable")
+async def lab_disable(lab_id: str) -> dict[str, Any]:
+    """Hide a lab from the main grid. Does not stop or delete anything."""
+    _require_lab(lab_id)
+    labs_lib.set_enabled(lab_id, False)
+    return {"id": lab_id, "enabled": False}
+
+
 @router.get("/labs/preflight")
 async def lab_preflight() -> dict[str, Any]:
     """State-specific runtime check for the Labs Colima popup.

