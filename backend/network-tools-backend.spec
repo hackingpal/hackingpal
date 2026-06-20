@@ -89,6 +89,8 @@ hiddenimports = [
     # Anthropic SDK (chat assistant)
     *collect_submodules("anthropic"),
     *collect_submodules("httpx"),
+    # reportlab — PDF report exporter has dynamic imports for fonts + colors
+    *collect_submodules("reportlab"),
     # Cloud SDKs — only loaded on-demand by the recon routers but PyInstaller
     # needs the full submodule tree since boto3 etc. import lazily at runtime.
     *collect_submodules("boto3"),

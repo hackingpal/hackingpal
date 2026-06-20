@@ -263,6 +263,23 @@ async def test_findings_happy_path(client):
     assert removed.status_code == 200
     assert removed.json()["deleted"] is True
 
+    # Report preview: structured payload that the frontend renders. Must
+    # carry header (engagement_name), exec_summary (counts + summary),
+    # the findings list with evidence timeline, methodology and disclaimer.
+    preview = await client.get(
+        f"/reports/engagement/{eid}/preview", headers=AUTH,
+    )
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["header"]["engagement_name"] == "smoke"
+    assert body["exec_summary"]["total"] == 1
+    assert body["exec_summary"]["summary"]  # non-empty template summary
+    assert len(body["findings"]) == 1
+    assert body["findings"][0]["title"] == "Open SSH on 22"
+    assert body["findings"][0]["evidence"]  # auto-captured item
+    assert body["disclaimer"]
+    assert body["methodology"]
+
     deleted = await client.delete(f"/findings/{fid}", headers=AUTH)
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 
 export type NavId =
-  | "home" | "targets" | "tools" | "evidence" | "reports" | "assistant"
+  | "home" | "targets" | "tools" | "evidence" | "reports" | "report" | "assistant"
   | "workspace" | "playbook-builder"
   | "playbooks" | "labs" | "selfassess"
   | "dashboard" | "engagements" | "findings"

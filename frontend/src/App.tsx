@@ -88,6 +88,7 @@ import Tools from "./pages/Tools";
 import Targets from "./pages/Targets";
 import EngagementWorkspace from "./pages/EngagementWorkspace";
 import Findings from "./pages/Findings";
+import Report from "./pages/Report";
 import EffectsDebug from "./pages/EffectsDebug";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
@@ -326,6 +327,7 @@ export default function App() {
            active === "tools"       ? <Tools onJumpTo={navigate} /> :
            active === "workspace"   ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "evidence"    ? <EngagementWorkspace onJumpTo={navigate} /> :
+           active === "report"      ? <Report onJumpTo={navigate} /> :
            active === "reports"     ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "findings"    ? <Findings onJumpTo={navigate} /> :
            active === "assistant"   ? <AiAssistant activePage={active} /> :

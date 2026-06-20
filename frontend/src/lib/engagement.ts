@@ -455,3 +455,62 @@ export async function deleteReportSnapshot(
     { method: "DELETE" });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
 }
+
+// ── Engagement report exporter (markdown + PDF + preview) ───────────────────
+//
+// Distinct from the legacy snapshot/rollup flow above. The new exporter
+// renders directly from findings + CVSS + evidence; the executive summary
+// is template-based so reports work without an API key. Backend routes
+// live under /reports/engagement/{eid}.
+
+export type EngagementReportFinding = {
+  id: string;
+  title: string;
+  severity: FindingSeverity;
+  status: string;
+  tool: string;
+  target: string;
+  description: string;
+  cvss: number | null;
+  cvss_vector: string | null;
+  ai_summary: string;
+  captured_at: string;
+  evidence: Evidence[];
+};
+
+export type EngagementReport = {
+  header: {
+    engagement_id: string;
+    engagement_name: string;
+    scope: string[];
+    exclusions: string[];
+    notes: string;
+    status: string;
+    date_from: string;
+    date_to: string;
+    operator: string;
+    generated_at: string;
+  };
+  exec_summary: {
+    counts: Record<string, number>;
+    total: number;
+    summary: string;
+  };
+  findings: EngagementReportFinding[];
+  methodology: string;
+  disclaimer: string;
+};
+
+export async function fetchReportPreview(eid: string): Promise<EngagementReport> {
+  const r = await authFetch(`/reports/engagement/${eid}/preview`);
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export function reportExportUrl(
+  eid: string, format: "markdown" | "pdf",
+): string {
+  const token = getCachedAuthToken();
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  return `${BACKEND_URL}/reports/engagement/${eid}?format=${format}${tokenParam}`;
+}

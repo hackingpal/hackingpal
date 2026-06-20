@@ -34,7 +34,7 @@ from routers import (
     jwt_analyzer, kerberos_roast, labs, lan_scan, lateral, ldap_enum, lfi,
     local_discovery, linux_posture, macos_posture, nmap, people_enum,
     persistence, ping, playbook_suggest, port_scanner, presets, processes,
-    profile_finder, reverse_ip, reverse_shell, s3_scanner, scope, settings,
+    profile_finder, reports, reverse_ip, reverse_shell, s3_scanner, scope, settings,
     shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, summarize,
     system_info, takeover, targets, tcpdump, terminal, tls_audit,
     tool_requirements, triage, urlscan, wayback, whois, wifi, wifi_scan,
@@ -158,6 +158,7 @@ app.include_router(chat.router)
 app.include_router(engagements.router)
 app.include_router(findings.router)
 app.include_router(cvss.router)
+app.include_router(reports.router)
 app.include_router(summarize.router)
 app.include_router(imds.router)
 app.include_router(s3_scanner.router)
