@@ -7,6 +7,7 @@ import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 type Mode = "quick" | "enum";
 
@@ -380,6 +381,17 @@ function QuickReport({ report }: { report: DnsReport }) {
                 <span className="text-ink-primary flex-1">{f.label}</span>
                 <span className="text-ink-muted">{f.detail}</span>
                 <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
+                <PromoteToFindingButton
+                  variant="compact"
+                  seed={{
+                    tool: "dns-recon",
+                    target: report.domain,
+                    title: `DNS: ${f.label}`,
+                    severity: normalizeSeverity(f.severity),
+                    description: f.detail,
+                    evidence: `${f.label}\n${f.detail}`,
+                  }}
+                />
               </li>
             ))}
           </ul>
@@ -489,7 +501,7 @@ function EnumPanel({ state }: {
             {state.running ? "Probing…" : "No hits."}
           </div>
         ) : (
-          <div className="grid grid-cols-[1fr_1fr_auto] gap-x-3 gap-y-0.5">
+          <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-x-3 gap-y-0.5">
             {state.hits.map((h, i) => (
               <div
                 key={i}
@@ -499,6 +511,16 @@ function EnumPanel({ state }: {
                 <span className="text-ink-primary break-all">{h.subdomain}</span>
                 <span className="text-ink-muted">{h.ip}</span>
                 <CopyButton text={`${h.subdomain}\t${h.ip}`} />
+                <PromoteToFindingButton
+                  variant="compact"
+                  seed={{
+                    tool: "dns-recon",
+                    target: h.subdomain,
+                    title: `Subdomain: ${h.subdomain}`,
+                    severity: "info",
+                    evidence: JSON.stringify({ subdomain: h.subdomain, ip: h.ip }, null, 2),
+                  }}
+                />
               </div>
             ))}
           </div>

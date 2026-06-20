@@ -3,6 +3,7 @@ import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import { playNamed, getToolEffect } from "../lib/dopamine";
 import EffectPicker from "../components/EffectPicker";
 
@@ -186,7 +187,34 @@ export default function WifiScan() {
                       <td className="px-3 py-1 text-ink-muted">{bandLabel(n.band)}G</td>
                       <td className={"px-3 py-1 " + securityColor(n.security)}>{n.security}</td>
                       <td className="px-3 py-1 text-ink-dim uppercase">{n.country ?? ""}</td>
-                      <td className="px-3 py-1"><CopyButton text={copyText} /></td>
+                      <td className="px-3 py-1">
+                        <span className="flex items-center gap-1 justify-end">
+                          <CopyButton text={copyText} />
+                          <PromoteToFindingButton
+                            variant="compact"
+                            seed={{
+                              tool: "wifi-scan",
+                              target: n.ssid ?? n.bssid ?? `(hidden ch${n.channel})`,
+                              title: insecure
+                                ? `Insecure WiFi (${n.security}): ${n.ssid ?? "(hidden)"}`
+                                : `WiFi network: ${n.ssid ?? "(hidden)"}`,
+                              severity: insecure
+                                ? "high"
+                                : n.security.startsWith("WPA3")
+                                  ? "info"
+                                  : n.security.startsWith("WPA2")
+                                    ? "low"
+                                    : "medium",
+                              evidence: JSON.stringify(
+                                { ssid: n.ssid, bssid: n.bssid, security: n.security,
+                                  channel: n.channel, band: n.band, rssi: n.rssi,
+                                  country: n.country },
+                                null, 2,
+                              ),
+                            }}
+                          />
+                        </span>
+                      </td>
                     </tr>
                   );
                 })}

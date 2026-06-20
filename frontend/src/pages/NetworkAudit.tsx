@@ -4,6 +4,7 @@ import SeverityBadge, { type Severity } from "../components/SeverityBadge";
 import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import { useCriticalPulseSet } from "../lib/useCriticalPulse";
 
 type Row = {
@@ -208,7 +209,7 @@ export default function NetworkAudit() {
                 return (
                   <div key={r.ip}
                        style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
-                       className={"group grid grid-cols-[140px_1fr_240px_120px_60px] gap-3 px-3 py-1 items-start mhp-result-in" +
+                       className={"group grid grid-cols-[140px_1fr_240px_120px_auto] gap-3 px-3 py-1 items-start mhp-result-in" +
                                   (r.isSelf ? " bg-accent/10" : i % 2 === 0 ? " bg-bg-card" : " bg-bg-row-alt") + pulse}>
                     <span className={r.isSelf ? "text-accent" : "text-ink-primary"}>
                       {r.ip}{r.isSelf && <span className="ml-1">★</span>}
@@ -225,8 +226,23 @@ export default function NetworkAudit() {
                         ? <span className="text-phos text-[11px] font-bold uppercase tracking-wider">● Clean</span>
                         : <SeverityBadge severity={sev} />}
                     </span>
-                    <span className="flex justify-end">
+                    <span className="flex justify-end items-center gap-1">
                       <CopyButton text={copyText} />
+                      {r.risk !== "clean" && r.openRisky.length > 0 && (
+                        <PromoteToFindingButton
+                          variant="compact"
+                          seed={{
+                            tool: "network-audit",
+                            target: r.ip,
+                            title: `${r.openRisky.length} risky port${r.openRisky.length === 1 ? "" : "s"} on ${r.hostname || r.ip}`,
+                            severity: sev,
+                            evidence: JSON.stringify(
+                              { ip: r.ip, hostname: r.hostname, risk: r.risk, openRisky: r.openRisky },
+                              null, 2,
+                            ),
+                          }}
+                        />
+                      )}
                     </span>
                   </div>
                 );

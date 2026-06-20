@@ -3,6 +3,7 @@ import AdAuthForm, { useAdCreds } from "../components/AdAuthForm";
 import { authFetch, parseError } from "../api";
 import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 
@@ -128,6 +129,19 @@ export default function LdapEnum() {
                         <SeverityBadge severity={sev} />
                         <span className="text-ink-primary text-[12px] font-bold">{f.title}</span>
                         <CopyButton text={copyText} className="ml-auto" />
+                        <PromoteToFindingButton
+                          variant="compact"
+                          seed={{
+                            tool: "ldap-enum",
+                            target: result.domain,
+                            title: f.title,
+                            severity: sev,
+                            description: f.detail,
+                            evidence: f.evidence
+                              ? JSON.stringify(f.evidence, null, 2)
+                              : f.detail,
+                          }}
+                        />
                       </div>
                       <div className="text-[12px] text-ink-muted">{f.detail}</div>
                       {f.evidence != null && (

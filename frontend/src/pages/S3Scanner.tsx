@@ -4,6 +4,7 @@ import { useAttackWS } from "../components/webattack/useAttackWS";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 type S3Event =
   | { type: "started"; target: string; total: number }
@@ -195,7 +196,27 @@ export default function S3Scanner() {
                       {b.hint || ""}{b.region ? ` → ${b.region}` : ""}
                     </td>
                     <td className="px-3 py-1.5">
-                      <CopyButton text={copyText} />
+                      <span className="flex items-center gap-1 justify-end">
+                        <CopyButton text={copyText} />
+                        {b.exists && (
+                          <PromoteToFindingButton
+                            variant="compact"
+                            seed={{
+                              tool: "s3-scanner",
+                              target: b.name,
+                              title: b.listable
+                                ? `S3 bucket listable: ${b.name}`
+                                : `S3 bucket exists: ${b.name}`,
+                              severity: b.listable ? "critical" : "high",
+                              evidence: JSON.stringify(
+                                { name: b.name, status: b.status, listable: b.listable,
+                                  region: b.region, hint: b.hint },
+                                null, 2,
+                              ),
+                            }}
+                          />
+                        )}
+                      </span>
                     </td>
                   </tr>
                 );

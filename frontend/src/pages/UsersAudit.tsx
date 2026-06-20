@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { fetchUsersAudit, type UsersAudit } from "../api";
 import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import EmptyState from "../components/EmptyState";
 
 type Tab = "users" | "groups" | "ssh" | "sudoers" | "findings";
@@ -87,6 +88,17 @@ export default function UsersAuditPage() {
                       <span className="text-ink-primary flex-1">{f.label}</span>
                       <span className="text-ink-muted">{f.detail || ""}</span>
                       <CopyButton text={`[${sev}] ${f.label}${f.detail ? ` — ${f.detail}` : ""}`} />
+                      <PromoteToFindingButton
+                        variant="compact"
+                        seed={{
+                          tool: "users-audit",
+                          target: "local-system",
+                          title: f.label,
+                          severity: sev,
+                          description: f.detail || "",
+                          evidence: `${f.label}${f.detail ? `\n${f.detail}` : ""}`,
+                        }}
+                      />
                     </li>
                   );
                 })}

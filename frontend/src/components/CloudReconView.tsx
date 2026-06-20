@@ -7,6 +7,7 @@ import { api, authFetch, parseError } from "../api";
 import SeverityBadge, { normalizeSeverity, type Severity } from "./SeverityBadge";
 import ResultGroup from "./ResultGroup";
 import CopyButton from "./CopyButton";
+import PromoteToFindingButton from "./PromoteToFindingButton";
 import StatsBar from "./StatsBar";
 import EmptyState from "./EmptyState";
 import CloudSetupWizard, { type CloudKind } from "./CloudSetupWizard";
@@ -272,6 +273,19 @@ function ReconResults({ result, cloud }: { result: ReconResponse; cloud: string 
                       <SeverityBadge severity={fSev} />
                       <span className="text-ink-primary font-bold text-[12px]">{f.title}</span>
                       <CopyButton text={copyText} className="ml-auto" />
+                      <PromoteToFindingButton
+                        variant="compact"
+                        seed={{
+                          tool: `${cloud.toLowerCase()}-recon`,
+                          target: `${cloud.toLowerCase()}/${service}`,
+                          title: `${cloud} ${service}: ${f.title}`,
+                          severity: fSev,
+                          description: f.detail,
+                          evidence: f.evidence !== undefined && f.evidence !== null
+                            ? JSON.stringify(f.evidence, null, 2)
+                            : f.detail,
+                        }}
+                      />
                     </div>
                     <div className="text-[12px] text-ink-muted">{f.detail}</div>
                     {f.evidence !== undefined && f.evidence !== null && (

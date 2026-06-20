@@ -5,6 +5,7 @@ import { api } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 type SourceStatus = { name: string; needs_key: boolean; key_configured: boolean };
 
@@ -234,9 +235,24 @@ export default function SubdomainEnum() {
                       <td className="px-3 py-1.5 font-mono text-phos">{f.ip ?? "—"}</td>
                       <td className="px-3 py-1.5 text-ink-dim">{f.sources.join(", ")}</td>
                       <td className="px-3 py-1.5 text-right">
-                        <CopyButton
-                          text={`${f.name}\t${f.ip ?? ""}\t${f.sources.join(",")}`}
-                        />
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          <CopyButton
+                            text={`${f.name}\t${f.ip ?? ""}\t${f.sources.join(",")}`}
+                          />
+                          <PromoteToFindingButton
+                            variant="compact"
+                            seed={{
+                              tool: "subdom-enum",
+                              target: f.name,
+                              title: `Subdomain found: ${f.name}`,
+                              severity: f.ip ? "info" : "low",
+                              evidence: JSON.stringify(
+                                { name: f.name, ip: f.ip, sources: f.sources },
+                                null, 2,
+                              ),
+                            }}
+                          />
+                        </span>
                       </td>
                     </tr>
                   ))}

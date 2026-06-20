@@ -4,6 +4,7 @@ import { authFetch, parseError } from "../api";
 import { useLabIntent, intentHost } from "../lib/labIntent";
 import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 
@@ -128,6 +129,19 @@ export default function SmbEnum() {
                         <SeverityBadge severity={sev} />
                         <span className="text-ink-primary text-[12px] font-bold">{f.title}</span>
                         <CopyButton text={copyText} className="ml-auto" />
+                        <PromoteToFindingButton
+                          variant="compact"
+                          seed={{
+                            tool: "smb-enum",
+                            target: result.target,
+                            title: f.title,
+                            severity: sev,
+                            description: f.detail,
+                            evidence: f.evidence
+                              ? JSON.stringify(f.evidence, null, 2)
+                              : f.detail,
+                          }}
+                        />
                       </div>
                       <div className="text-[12px] text-ink-muted">{f.detail}</div>
                     </div>

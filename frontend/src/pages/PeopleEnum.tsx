@@ -3,6 +3,7 @@ import { api, authFetch, parseError } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 type SourceStatus = {
   name: string;
@@ -225,7 +226,24 @@ curl -X POST http://127.0.0.1:8765/settings/keys/hunter_api_key \\
                   >
                     <td className="px-3 py-1.5 font-mono text-ink-primary">{e.email}</td>
                     <td className="px-3 py-1.5 text-ink-dim text-[11px]">{e.sources.join(", ")}</td>
-                    <td className="px-3 py-1.5"><CopyButton text={e.email} /></td>
+                    <td className="px-3 py-1.5">
+                      <span className="flex items-center gap-1 justify-end">
+                        <CopyButton text={e.email} />
+                        <PromoteToFindingButton
+                          variant="compact"
+                          seed={{
+                            tool: "people-enum",
+                            target: e.email,
+                            title: `Email discovered: ${e.email}`,
+                            severity: "info",
+                            evidence: JSON.stringify(
+                              { email: e.email, sources: e.sources, domain: result.target },
+                              null, 2,
+                            ),
+                          }}
+                        />
+                      </span>
+                    </td>
                   </tr>
                 ))}
                 {result.emails.length === 0 && (

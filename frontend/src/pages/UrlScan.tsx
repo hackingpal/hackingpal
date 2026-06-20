@@ -3,6 +3,7 @@ import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import SeverityBadge from "../components/SeverityBadge";
 
 type Result = {
@@ -96,6 +97,23 @@ export default function UrlScan() {
                     </a>
                     {r.malicious && <SeverityBadge severity="critical" label="MALICIOUS" />}
                     <CopyButton text={copyText} />
+                    <PromoteToFindingButton
+                      variant="compact"
+                      seed={{
+                        tool: "urlscan",
+                        target: r.url,
+                        title: r.malicious
+                          ? `Malicious URL: ${r.domain}`
+                          : `URL scanned: ${r.domain}`,
+                        severity: r.malicious ? "critical" : "info",
+                        evidence: JSON.stringify(
+                          { url: r.url, domain: r.domain, ip: r.ip, country: r.country,
+                            server: r.server, tags: r.tags, score: r.score,
+                            result_url: r.result_url },
+                          null, 2,
+                        ),
+                      }}
+                    />
                   </div>
                   <div className="text-[10px] text-ink-dim mb-2">
                     {r.domain} · {r.ip || "—"} · {r.country || "—"} · {r.submitted?.slice(0, 10)}

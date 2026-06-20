@@ -4,6 +4,7 @@ import { useLabIntent, intentHost } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 const COMMON = "22, 80, 443, 21, 25, 53, 110, 143, 3306, 5432, 5900, 6379, 8080, 8443";
 
@@ -128,13 +129,13 @@ export default function Fingerprint() {
           />
         )}
 
-        {results && <ResultsTable results={results} />}
+        {results && <ResultsTable results={results} host={host} />}
       </div>
     </div>
   );
 }
 
-function ResultsTable({ results }: { results: FingerprintResult[] }) {
+function ResultsTable({ results, host }: { results: FingerprintResult[]; host: string }) {
   const open = results.filter((r) => r.open);
   const closed = results.filter((r) => !r.open);
 
@@ -160,7 +161,7 @@ function ResultsTable({ results }: { results: FingerprintResult[] }) {
               <span />
             </div>
             {open.map((r, i) => (
-              <ResultRow key={i} r={r} index={i} />
+              <ResultRow key={i} r={r} index={i} host={host} />
             ))}
           </div>
           <StatsBar
@@ -192,7 +193,8 @@ function ResultsTable({ results }: { results: FingerprintResult[] }) {
   );
 }
 
-function ResultRow({ r, index }: { r: FingerprintResult; index: number }) {
+function ResultRow({ r, index, host }: { r: FingerprintResult; index: number; host: string }) {
+  const RISKY_SERVICES = new Set(["ftp", "telnet", "smtp", "rdp", "vnc"]);
   const ex = r.extras as Record<string, unknown>;
   const headers = (ex.headers as Record<string, string>) ?? null;
   const caps = (ex.capabilities as string[]) ?? null;
@@ -216,7 +218,23 @@ function ResultRow({ r, index }: { r: FingerprintResult; index: number }) {
           {tlsErr && <span className="text-danger">TLS: {tlsErr}</span>}
         </div>
         <span className="text-right text-ink-dim">{r.elapsed_ms}</span>
-        <CopyButton text={copyText} />
+        <span className="flex items-center gap-1 justify-end">
+          <CopyButton text={copyText} />
+          <PromoteToFindingButton
+            variant="compact"
+            seed={{
+              tool: "fingerprint",
+              target: `${host}:${r.port}`,
+              title: `Service ${r.service_guess}${r.version ? ` (${r.version})` : ""} on ${host}:${r.port}`,
+              severity: RISKY_SERVICES.has(r.service_guess) ? "medium" : "info",
+              evidence: JSON.stringify(
+                { port: r.port, service: r.service_guess, version: r.version,
+                  banner: r.banner_lines, extras: r.extras },
+                null, 2,
+              ),
+            }}
+          />
+        </span>
       </div>
 
       {(isHttp && headers && Object.keys(headers).length > 0) && (

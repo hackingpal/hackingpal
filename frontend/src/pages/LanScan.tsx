@@ -4,6 +4,7 @@ import { fetchLanInfo, openWs, type LanEvent, type LanInfo } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import { playNamed, getToolEffect } from "../lib/dopamine";
 import EffectPicker from "../components/EffectPicker";
 
@@ -204,7 +205,7 @@ function HostsTable({
             key={h.ip}
             style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
             className={
-              "group grid grid-cols-[40px_140px_1fr_180px_60px] gap-3 px-3 py-1 mhp-result-in" +
+              "group grid grid-cols-[40px_140px_1fr_180px_auto] gap-3 px-3 py-1 mhp-result-in" +
               (h.isSelf ? " bg-accent/10" : i % 2 === 0 ? " bg-bg-card" : " bg-bg-row-alt")
             }
           >
@@ -214,8 +215,21 @@ function HostsTable({
             </span>
             <span className="text-ink-muted truncate">{h.hostname || "—"}</span>
             <span className="text-ink-primary tabular-nums">{h.mac || "—"}</span>
-            <span className="flex justify-end">
+            <span className="flex justify-end items-center gap-1">
               <CopyButton text={`${h.ip}\t${h.hostname || ""}\t${h.mac || ""}`} />
+              <PromoteToFindingButton
+                variant="compact"
+                seed={{
+                  tool: "lan-scan",
+                  target: h.ip,
+                  title: `Host discovered: ${h.hostname || h.ip}`,
+                  severity: "info",
+                  evidence: JSON.stringify(
+                    { ip: h.ip, hostname: h.hostname, mac: h.mac, isSelf: h.isSelf },
+                    null, 2,
+                  ),
+                }}
+              />
             </span>
           </div>
         ))}

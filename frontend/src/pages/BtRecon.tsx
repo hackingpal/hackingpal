@@ -3,6 +3,7 @@ import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 
 type BtDevice = {
   address: string;
@@ -139,7 +140,26 @@ export default function BtRecon() {
                             <td className="px-3 py-1 font-mono text-right tabular-nums">{d.rssi || "—"}</td>
                             <td className="px-3 py-1 font-mono text-right tabular-nums">{d.battery || "—"}</td>
                             <td className="px-3 py-1 text-ink-dim">{d.last_seen}</td>
-                            <td className="px-3 py-1"><CopyButton text={copyText} /></td>
+                            <td className="px-3 py-1">
+                              <span className="flex items-center gap-1 justify-end">
+                                <CopyButton text={copyText} />
+                                <PromoteToFindingButton
+                                  variant="compact"
+                                  seed={{
+                                    tool: "bt-recon",
+                                    target: d.address,
+                                    title: `Bluetooth device${group === "connected" ? " (connected)" : ""}: ${d.name || "(no name)"}${d.manufacturer ? ` · ${d.manufacturer}` : ""}`,
+                                    severity: group === "connected" ? "medium" : "info",
+                                    evidence: JSON.stringify(
+                                      { address: d.address, name: d.name,
+                                        manufacturer: d.manufacturer, type: d.minor_type,
+                                        group, rssi: d.rssi, last_seen: d.last_seen },
+                                      null, 2,
+                                    ),
+                                  }}
+                                />
+                              </span>
+                            </td>
                           </tr>
                         );
                       })}
