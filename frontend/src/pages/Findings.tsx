@@ -8,14 +8,20 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  addEvidence,
+  deleteEvidence,
   deleteTrackedFinding,
+  EVIDENCE_TYPES,
   FINDING_SEVERITIES,
   FINDING_STATUSES,
+  listEvidence,
   listFindings,
   patchTrackedFinding,
   scoreFindingCvss,
   summarizeFinding,
   useActiveEngagementId,
+  type Evidence,
+  type EvidenceType,
   type Finding,
   type FindingSeverity,
   type FindingStatus,
@@ -309,6 +315,28 @@ function DetailPanel({
   const [scoreError, setScoreError] = useState("");
   const [pendingScore, setPendingScore] = useState<CvssResult | null>(null);
 
+  // Evidence timeline state — separate from the legacy `evidence` blob above.
+  const [evItems, setEvItems] = useState<Evidence[]>([]);
+  const [evLoading, setEvLoading] = useState(false);
+  const [evError, setEvError] = useState("");
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerType, setComposerType] = useState<EvidenceType>("note");
+  const [composerContent, setComposerContent] = useState("");
+  const [composerCapturedAt, setComposerCapturedAt] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState("");
+
+  async function refreshEvidence() {
+    setEvLoading(true); setEvError("");
+    try {
+      setEvItems(await listEvidence(finding.id));
+    } catch (e) {
+      setEvError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEvLoading(false);
+    }
+  }
+
   useEffect(() => {
     setTitle(finding.title);
     setSeverity(finding.severity);
@@ -323,7 +351,51 @@ function DetailPanel({
     setScoringOpen(false);
     setScoreError("");
     setPendingScore(null);
+    setEvItems([]);
+    setEvError("");
+    setComposerOpen(false);
+    setComposerType("note");
+    setComposerContent("");
+    setComposerCapturedAt("");
+    setAdding(false);
+    setAddError("");
+    void refreshEvidence();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [finding.id]);
+
+  async function submitEvidence() {
+    setAdding(true); setAddError("");
+    try {
+      await addEvidence(finding.id, {
+        type: composerType,
+        content: composerContent,
+        source_tool: finding.tool || null,
+        captured_at: composerCapturedAt
+          ? new Date(composerCapturedAt).toISOString()
+          : null,
+      });
+      await refreshEvidence();
+      setComposerOpen(false);
+      setComposerType("note");
+      setComposerContent("");
+      setComposerCapturedAt("");
+    } catch (e) {
+      setAddError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function removeEvidence(item: Evidence) {
+    if (item.id.startsWith("legacy-")) return;
+    if (!confirm("Delete this evidence item?")) return;
+    try {
+      await deleteEvidence(finding.id, item.id);
+      await refreshEvidence();
+    } catch (e) {
+      setEvError(e instanceof Error ? e.message : String(e));
+    }
+  }
 
   async function generateSummary() {
     setSummarizing(true); setSummaryError("");
@@ -629,17 +701,142 @@ function DetailPanel({
               </div>
             </section>
           )}
-          {evidence && (
-            <section>
-              <div className="text-[10px] uppercase tracking-wider text-ink-muted mb-1">
-                EVIDENCE
+          <section>
+            <div className="text-[10px] uppercase tracking-wider text-ink-muted mb-1">
+              EVIDENCE TIMELINE
+            </div>
+            {evError && (
+              <div className="text-[11px] text-danger mb-1">⚠ {evError}</div>
+            )}
+            {evLoading && evItems.length === 0 ? (
+              <div className="text-[11px] text-ink-dim italic">Loading…</div>
+            ) : evItems.length === 0 ? (
+              <div className="text-[12px] text-ink-muted italic">
+                No evidence captured yet. Add a manual item or promote a scan
+                result from any tool page.
               </div>
-              <pre className="text-[11px] font-mono whitespace-pre-wrap bg-bg-base
-                              border border-divider rounded p-2 max-h-96 overflow-y-auto">
-                {evidence}
-              </pre>
-            </section>
-          )}
+            ) : (
+              <ul className="space-y-2">
+                {evItems.map((item) => (
+                  <EvidenceItem
+                    key={item.id}
+                    item={item}
+                    onDelete={() => void removeEvidence(item)}
+                  />
+                ))}
+              </ul>
+            )}
+
+            <div className="mt-3">
+              <button onClick={() => setComposerOpen((o) => !o)}
+                      className="text-[11px] uppercase tracking-wider text-ink-muted
+                                 hover:text-accent flex items-center gap-1">
+                <span className="text-ink-dim">
+                  {composerOpen ? "▾" : "▸"}
+                </span>
+                Add evidence
+              </button>
+              {composerOpen && (
+                <div className="mt-2 border border-divider rounded p-3 space-y-3
+                                bg-bg-base">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-widest
+                                     text-ink-muted block mb-1">
+                      TYPE
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      {EVIDENCE_TYPES.map((t) => (
+                        <button key={t}
+                                onClick={() => setComposerType(t)}
+                                className={
+                                  "px-2 py-0.5 rounded border text-[10px] " +
+                                  "uppercase tracking-wider " +
+                                  (composerType === t
+                                    ? "border-accent text-accent bg-accent/10"
+                                    : "border-divider text-ink-muted hover:text-ink-primary")
+                                }>
+                          {evTypeLabel(t)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] uppercase tracking-widest
+                                     text-ink-muted block mb-1">
+                      {composerType === "screenshot_ref" ? "PATH / URL" : "CONTENT"}
+                    </span>
+                    {composerType === "screenshot_ref" ? (
+                      <input
+                        value={composerContent}
+                        onChange={(e) => setComposerContent(e.target.value)}
+                        placeholder="/path/to/screenshot.png or https://..."
+                        className="w-full bg-bg-base border border-divider rounded
+                                   px-2 py-1.5 text-[12px] font-mono
+                                   focus:outline-none focus:border-accent" />
+                    ) : composerType === "note" ? (
+                      <textarea
+                        value={composerContent}
+                        onChange={(e) => setComposerContent(e.target.value)}
+                        rows={3}
+                        className="w-full bg-bg-base border border-divider rounded
+                                   px-2 py-1.5 text-[12px]
+                                   focus:outline-none focus:border-accent" />
+                    ) : (
+                      <textarea
+                        value={composerContent}
+                        onChange={(e) => setComposerContent(e.target.value)}
+                        rows={6}
+                        className="w-full bg-bg-base border border-divider rounded
+                                   px-2 py-1.5 text-[11px] font-mono
+                                   focus:outline-none focus:border-accent" />
+                    )}
+                  </div>
+
+                  <div>
+                    <span className="text-[10px] uppercase tracking-widest
+                                     text-ink-muted block mb-1">
+                      CAPTURED AT (optional)
+                    </span>
+                    <input
+                      type="datetime-local"
+                      value={composerCapturedAt}
+                      onChange={(e) => setComposerCapturedAt(e.target.value)}
+                      className="bg-bg-base border border-divider rounded px-2 py-1
+                                 text-[11px] font-mono tabular-nums
+                                 focus:outline-none focus:border-accent" />
+                    <div className="text-[10px] text-ink-dim mt-1">
+                      Defaults to now — set to backfill an observation.
+                    </div>
+                  </div>
+
+                  {addError && (
+                    <div className="text-[11px] text-danger">⚠ {addError}</div>
+                  )}
+
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => {
+                              setComposerOpen(false);
+                              setComposerContent("");
+                              setComposerCapturedAt("");
+                              setAddError("");
+                            }}
+                            className="px-3 py-1 rounded border border-divider
+                                       text-ink-muted text-[11px]">
+                      Cancel
+                    </button>
+                    <button onClick={() => void submitEvidence()}
+                            disabled={adding || !composerContent.trim()}
+                            className="px-3 py-1 rounded bg-accent text-white
+                                       text-[11px] font-bold uppercase tracking-wider
+                                       disabled:opacity-40 disabled:cursor-not-allowed">
+                      {adding ? "Adding…" : "Add"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
           {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
         </>
       )}
@@ -655,5 +852,96 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+// ── Evidence timeline ──────────────────────────────────────────────────────
+
+function evTypeLabel(t: EvidenceType): string {
+  switch (t) {
+    case "scan_output":      return "SCAN";
+    case "request_response": return "REQ/RES";
+    case "screenshot_ref":   return "IMG";
+    case "note":             return "NOTE";
+    case "command":          return "CMD";
+  }
+}
+
+const PREVIEW_LINES = 3;
+
+function EvidenceItem({
+  item, onDelete,
+}: {
+  item: Evidence;
+  onDelete: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const lines = item.content.split("\n");
+  const truncated = lines.length > PREVIEW_LINES;
+  const displayContent = expanded || !truncated
+    ? item.content
+    : lines.slice(0, PREVIEW_LINES).join("\n");
+  const isLegacy = item.id.startsWith("legacy-");
+
+  return (
+    <li className="border border-divider rounded bg-bg-card/40">
+      <div className="flex items-center gap-2 px-2 py-1 border-b border-divider">
+        <span className="text-[10px] uppercase tracking-wider text-accent
+                         border border-accent/30 rounded px-1.5 py-0.5
+                         bg-accent/5 font-bold">
+          {evTypeLabel(item.type)}
+        </span>
+        {item.source_tool && (
+          <span className="text-[10px] font-mono text-accent bg-accent/5
+                           border border-accent/20 rounded px-1.5 py-0.5 truncate">
+            {item.source_tool}
+          </span>
+        )}
+        <span className="text-ink-muted text-[11px] tabular-nums">
+          {new Date(item.captured_at).toLocaleString()}
+        </span>
+        {isLegacy && (
+          <span className="text-[10px] uppercase tracking-wider text-ink-dim
+                           border border-divider rounded px-1.5">
+            legacy
+          </span>
+        )}
+        <span className="flex-1" />
+        {!isLegacy && (
+          <button onClick={onDelete}
+                  className="text-[10px] uppercase tracking-wider text-danger
+                             hover:underline">
+            Delete
+          </button>
+        )}
+      </div>
+
+      <div className="p-2">
+        {item.type === "note" ? (
+          <div className="text-[12px] whitespace-pre-wrap text-ink-primary">
+            {displayContent}
+          </div>
+        ) : item.type === "screenshot_ref" ? (
+          <a href={item.content}
+             target="_blank"
+             rel="noreferrer"
+             className="text-[12px] font-mono text-accent hover:underline break-all">
+            {item.content}
+          </a>
+        ) : (
+          <pre className="text-[11px] font-mono whitespace-pre-wrap bg-bg-base
+                          border border-divider rounded p-2 max-h-96 overflow-y-auto">
+            {displayContent}
+          </pre>
+        )}
+        {truncated && (
+          <button onClick={() => setExpanded((v) => !v)}
+                  className="mt-1 text-[10px] uppercase tracking-wider text-ink-muted
+                             hover:text-accent">
+            {expanded ? "Show less" : "Show more"}
+          </button>
+        )}
+      </div>
+    </li>
   );
 }

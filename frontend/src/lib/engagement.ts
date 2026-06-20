@@ -243,6 +243,59 @@ export async function deleteTrackedFinding(fid: string): Promise<void> {
   if (!r.ok) throw new Error(await parseError(r));
 }
 
+// ── Evidence (multi-item, per-finding) ──────────────────────────────────────
+
+export const EVIDENCE_TYPES = [
+  "scan_output", "request_response", "screenshot_ref", "note", "command",
+] as const;
+
+export type EvidenceType = typeof EVIDENCE_TYPES[number];
+
+export type Evidence = {
+  id: string;
+  finding_id: string;
+  type: EvidenceType;
+  content: string;
+  source_tool: string | null;
+  captured_at: string;   // observation time
+  created_at: string;    // write time
+};
+
+export type EvidenceCreate = {
+  type: EvidenceType;
+  content?: string;
+  source_tool?: string | null;
+  captured_at?: string | null;
+};
+
+export async function listEvidence(fid: string): Promise<Evidence[]> {
+  const r = await authFetch(`/findings/${fid}/evidence`);
+  if (!r.ok) throw new Error(await parseError(r));
+  const body = (await r.json()) as { items: Evidence[] };
+  return body.items;
+}
+
+export async function addEvidence(
+  fid: string, payload: EvidenceCreate,
+): Promise<Evidence> {
+  const r = await authFetch(`/findings/${fid}/evidence`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function deleteEvidence(
+  fid: string, eid: string,
+): Promise<void> {
+  const r = await authFetch(`/findings/${fid}/evidence/${eid}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+}
+
 // ── CVSS scoring ────────────────────────────────────────────────────────────
 
 export type CvssCalculated = {

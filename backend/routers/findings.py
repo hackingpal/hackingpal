@@ -46,6 +46,10 @@ Severity = Literal["info", "low", "medium", "high", "critical"]
 # load from the DB but the tracker won't accept new writes against them.
 Status = Literal["open", "confirmed", "false_positive", "remediated"]
 
+EvidenceType = Literal[
+    "scan_output", "request_response", "screenshot_ref", "note", "command",
+]
+
 
 class FindingCreate(BaseModel):
     engagement_id:   str = Field(..., min_length=1, max_length=64)
@@ -59,6 +63,20 @@ class FindingCreate(BaseModel):
     cvss:            float | None = Field(None, ge=0, le=10)
     linked_result_id: str | None = Field(None, max_length=64)
     status:          Status = "open"
+
+
+class EvidenceCreate(BaseModel):
+    """Append a piece of evidence to a finding.
+
+    `captured_at` is the OBSERVATION time (when the scan ran, when the
+    request was sent). It defaults to "now" but the composer can override
+    it so a tester can backfill historical proof and the timeline still
+    tells the truth. `created_at` is set server-side at write time.
+    """
+    type:         EvidenceType
+    content:      str = Field("", max_length=200_000)
+    source_tool:  str | None = Field(default=None, max_length=200)
+    captured_at:  str | None = Field(default=None, max_length=40)
 
 
 class CvssScoreRequest(BaseModel):
@@ -180,6 +198,68 @@ def patch(fid: str, body: FindingPatch) -> dict[str, Any]:
     )
     audit_log.complete(aid, summary=_audit_summary(updated))
     return updated
+
+
+@router.get("/{fid}/evidence")
+def list_evidence(fid: str) -> dict[str, Any]:
+    """List evidence items chronologically (oldest captured_at first).
+
+    Read-time fallback: if a finding pre-dates the evidence table, the
+    legacy `findings.evidence` blob is synthesized into a virtual
+    scan_output item (id starts with `legacy-`) so older findings keep
+    their proof on the timeline. The virtual item can't be DELETEd
+    through this surface — edit the finding's description/evidence
+    instead.
+    """
+    _require_finding(fid)
+    items = engagements.list_evidence(fid)
+    return {"count": len(items), "items": items}
+
+
+@router.post("/{fid}/evidence")
+def add_evidence(fid: str, body: EvidenceCreate) -> dict[str, Any]:
+    existing = _require_finding(fid)
+    try:
+        item = engagements.add_evidence(
+            finding_id=fid,
+            type=body.type,
+            content=body.content,
+            source_tool=body.source_tool,
+            captured_at=body.captured_at,
+        )
+    except ValueError as e:
+        raise MhpError(str(e), code=ErrorCode.VALIDATION_ERROR, status_code=400) from e
+    aid = audit_log.start(
+        tool="evidence-add",
+        target=existing.get("target") or existing.get("title") or fid,
+        argv=[body.type, body.source_tool or ""],
+        engagement_id=existing.get("engagement_id"),
+    )
+    audit_log.complete(aid, summary=f"[{body.type}] {body.content[:80]}")
+    return item
+
+
+@router.delete("/{fid}/evidence/{eid}")
+def remove_evidence(fid: str, eid: str) -> dict[str, Any]:
+    existing = _require_finding(fid)
+    if eid.startswith("legacy-"):
+        raise MhpError(
+            "This is a synthesized item from the legacy evidence blob. "
+            "Edit the finding's evidence field directly to remove it.",
+            code=ErrorCode.VALIDATION_ERROR,
+            status_code=400,
+        )
+    ok = engagements.delete_evidence(eid)
+    if not ok:
+        raise MhpError("evidence not found", code=ErrorCode.NOT_FOUND, status_code=404)
+    aid = audit_log.start(
+        tool="evidence-delete",
+        target=existing.get("target") or existing.get("title") or fid,
+        argv=[eid],
+        engagement_id=existing.get("engagement_id"),
+    )
+    audit_log.complete(aid, summary=_audit_summary(existing))
+    return {"deleted": True, "id": eid}
 
 
 @router.post("/{fid}/ai-summary")

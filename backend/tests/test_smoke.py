@@ -227,6 +227,42 @@ async def test_findings_happy_path(client):
     assert audit.status_code == 200
     assert audit.json()["count"] >= 1
 
+    # Evidence timeline: promoting the finding above auto-captured one
+    # scan_output item from the seeded `evidence` field. Listing returns it
+    # under the multi-item contract, and a manual add lands a second item.
+    evlist = await client.get(f"/findings/{fid}/evidence", headers=AUTH)
+    assert evlist.status_code == 200, evlist.text
+    evbody = evlist.json()
+    assert evbody["count"] == 1
+    first = evbody["items"][0]
+    assert first["type"] == "scan_output"
+    assert first["source_tool"] == "port-scanner"
+    assert "OpenSSH" in first["content"]
+
+    added = await client.post(
+        f"/findings/{fid}/evidence", headers=AUTH,
+        json={"type": "note", "content": "Reproduced from a separate host."},
+    )
+    assert added.status_code == 200, added.text
+    eid_added = added.json()["id"]
+    assert added.json()["type"] == "note"
+
+    after = await client.get(f"/findings/{fid}/evidence", headers=AUTH)
+    assert after.json()["count"] == 2
+
+    # Evidence mutations leave audit-log breadcrumbs.
+    ev_audit = await client.get(
+        f"/audit-log?engagement_id={eid}&tool=evidence-add", headers=AUTH,
+    )
+    assert ev_audit.status_code == 200
+    assert ev_audit.json()["count"] >= 1
+
+    removed = await client.delete(
+        f"/findings/{fid}/evidence/{eid_added}", headers=AUTH,
+    )
+    assert removed.status_code == 200
+    assert removed.json()["deleted"] is True
+
     deleted = await client.delete(f"/findings/{fid}", headers=AUTH)
     assert deleted.status_code == 200
     assert deleted.json()["deleted"] is True

@@ -42,6 +42,30 @@ SCHEMA = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_screenshots_finding ON finding_screenshots(finding_id, ts)",
+    # ── Evidence (multi-item, per-finding) ──────────────────────────────────
+    # Replaces the single `findings.evidence` blob. Each item is a discrete
+    # piece of proof — a scan output, a request/response, an analyst note, a
+    # screenshot pointer, a command. `captured_at` is the OBSERVATION time
+    # (when the scan ran, when the request was sent), distinct from
+    # `created_at` which is the write time. The split is what makes the
+    # evidence timeline defensible: a tester can backfill historical proof
+    # and the chronology still tells the truth.
+    #
+    # Legacy `findings.evidence` is left in place; if a finding has zero
+    # rows here but a non-empty legacy blob, list_evidence() synthesizes a
+    # virtual scan_output item on read so older findings keep their proof.
+    """
+    CREATE TABLE IF NOT EXISTS evidence (
+      id            TEXT PRIMARY KEY,
+      finding_id    TEXT NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+      type          TEXT NOT NULL,    -- scan_output|request_response|screenshot_ref|note|command
+      content       TEXT NOT NULL DEFAULT '',
+      source_tool   TEXT,             -- nullable: notes don't have a tool
+      captured_at   TEXT NOT NULL,    -- observation time
+      created_at    TEXT NOT NULL     -- write time
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_evidence_finding ON evidence(finding_id, captured_at)",
     """
     CREATE TABLE IF NOT EXISTS engagements (
       id           TEXT PRIMARY KEY,
@@ -373,6 +397,7 @@ def create_finding(
     cvss: float | None = None, linked_result_id: str | None = None,
     tool: str = "", target: str = "", cvss_vector: str | None = None,
     status: str = "open",
+    evidence_captured_at: str | None = None,
 ) -> dict[str, Any]:
     if severity not in SEVERITY_ORDER:
         raise ValueError(f"unknown severity {severity!r}")
@@ -393,6 +418,21 @@ def create_finding(
             "UPDATE engagements SET updated_at = ? WHERE id = ?",
             (ts, engagement_id),
         )
+        # Auto-capture: if the caller provided an evidence blob, mirror it
+        # into the new evidence timeline as the first item so the finding
+        # starts with one piece of real proof. We keep filling
+        # `findings.evidence` too so legacy readers (AI summary endpoint,
+        # report exporter) keep working unchanged during the transition.
+        if (evidence or "").strip():
+            eid = str(uuid.uuid4())
+            captured = evidence_captured_at or ts
+            c.execute(
+                "INSERT INTO evidence (id, finding_id, type, content, "
+                "source_tool, captured_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (eid, fid, "scan_output", evidence, tool or None,
+                 captured, ts),
+            )
     return get_finding(fid)  # type: ignore[return-value]
 
 
@@ -443,6 +483,99 @@ def update_finding(fid: str, patch: dict[str, Any]) -> dict[str, Any] | None:
 def delete_finding(fid: str) -> bool:
     with cursor() as c:
         c.execute("DELETE FROM findings WHERE id = ?", (fid,))
+        return c.rowcount > 0
+
+
+# ── Evidence (multi-item, per-finding) ──────────────────────────────────────
+
+VALID_EVIDENCE_TYPES: frozenset[str] = frozenset({
+    "scan_output", "request_response", "screenshot_ref", "note", "command",
+})
+
+
+def add_evidence(
+    finding_id: str,
+    type: str,
+    content: str,
+    source_tool: str | None = None,
+    captured_at: str | None = None,
+) -> dict[str, Any]:
+    """Append an evidence item to a finding.
+
+    `captured_at` defaults to now but is overridable so promoting an old
+    scan keeps the observation time honest. `created_at` always reflects
+    the write time and is the audit anchor.
+    """
+    if type not in VALID_EVIDENCE_TYPES:
+        raise ValueError(f"unknown evidence type {type!r}")
+    eid = str(uuid.uuid4())
+    now = _now()
+    captured = captured_at or now
+    with cursor() as c:
+        c.execute(
+            "INSERT INTO evidence (id, finding_id, type, content, "
+            "source_tool, captured_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (eid, finding_id, type, content, source_tool, captured, now),
+        )
+        # Touch the finding's updated_at so the badge ordering stays current
+        # without bumping the finding's `ts` (observation chronology lives
+        # in the evidence rows themselves).
+        c.execute(
+            "UPDATE findings SET updated_at = ? WHERE id = ?",
+            (now, finding_id),
+        )
+    return get_evidence(eid)  # type: ignore[return-value]
+
+
+def get_evidence(eid: str) -> dict[str, Any] | None:
+    with cursor() as c:
+        r = c.execute("SELECT * FROM evidence WHERE id = ?", (eid,)).fetchone()
+        return dict(r) if r else None
+
+
+def list_evidence(finding_id: str) -> list[dict[str, Any]]:
+    """List evidence items oldest-first by `captured_at`.
+
+    Read-time fallback: if a finding has zero real rows but the legacy
+    `findings.evidence` blob is non-empty, synthesize a virtual scan_output
+    item so older findings keep their proof on the timeline. The virtual
+    row is marked with a sentinel id (`legacy-<finding_id>`) and is not
+    persisted — calling DELETE on it is a no-op handled by the router.
+    """
+    with cursor() as c:
+        rows = c.execute(
+            "SELECT * FROM evidence WHERE finding_id = ? ORDER BY captured_at ASC",
+            (finding_id,),
+        ).fetchall()
+        if rows:
+            return [dict(r) for r in rows]
+        # No real rows — check the legacy blob on the finding itself.
+        f = c.execute(
+            "SELECT evidence, tool, ts FROM findings WHERE id = ?",
+            (finding_id,),
+        ).fetchone()
+        if f is None or not (f["evidence"] or "").strip():
+            return []
+        return [{
+            "id":          f"legacy-{finding_id}",
+            "finding_id":  finding_id,
+            "type":        "scan_output",
+            "content":     f["evidence"],
+            "source_tool": f["tool"] or None,
+            "captured_at": f["ts"],
+            "created_at":  f["ts"],
+        }]
+
+
+def delete_evidence(eid: str) -> bool:
+    """Remove an evidence row. Legacy sentinel ids are a no-op (return False)
+    so the UI can show a friendly "this is from the legacy blob, edit the
+    finding directly to remove it" instead of a 404."""
+    if eid.startswith("legacy-"):
+        return False
+    with cursor() as c:
+        c.execute("DELETE FROM evidence WHERE id = ?", (eid,))
         return c.rowcount > 0
 
 
