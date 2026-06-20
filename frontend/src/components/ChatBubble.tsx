@@ -408,7 +408,7 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
           e.currentTarget.style.background = "var(--accent)";
           e.currentTarget.style.transform = "scale(1)";
         }}
-        title="MyHackingPal Assistant"
+        title="HackingPal Assistant"
         aria-label="Open chat assistant"
       >
         <SparkleIcon size={22} />

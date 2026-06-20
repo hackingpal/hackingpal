@@ -1,11 +1,11 @@
 {
-  "name": "myhackingpal",
+  "name": "hackingpal",
   "version": "0.3.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
-  "description": "MyHackingPal — AI-assisted security testing workspace for authorized engagements (Electron + FastAPI).",
-  "homepage": "https://github.com/myhackingpal/myhackingpal",
+  "description": "HackingPal — AI-assisted security testing workspace for authorized engagements (Electron + FastAPI).",
+  "homepage": "https://github.com/hackingpal/hackingpal",
   "author": {
     "name": "Jack Adams-Lovell",
     "email": "adamsjack711@gmail.com"
@@ -26,7 +26,7 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy": "vite build && electron-builder --dir && rm -rf \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && ditto dist-electron/mac-arm64/MyHackingPal.app \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && touch \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/MyHackingPal.app}\" && killall Dock"
+    "deploy": "vite build && electron-builder --dir && rm -rf \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/HackingPal.app}\" && ditto dist-electron/mac-arm64/HackingPal.app \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/HackingPal.app}\" && touch \"${MHP_DEPLOY_TARGET:-$HOME/Desktop/HackingPal.app}\" && killall Dock"
   },
   "dependencies": {
     "@dopaminefx/effects": "^0.1.0",
@@ -58,8 +58,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.myhackingpal.app",
-    "productName": "MyHackingPal",
+    "appId": "com.hackingpal.app",
+    "productName": "HackingPal",
     "asar": true,
     "directories": {
       "buildResources": "build",
@@ -72,8 +72,8 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "myhackingpal",
-      "repo": "myhackingpal"
+      "owner": "hackingpal",
+      "repo": "hackingpal"
     },
     "mac": {
       "target": [

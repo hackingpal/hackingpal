@@ -118,7 +118,7 @@ export default function WifiScan() {
           </p>
           <ol className="text-ink-muted list-decimal pl-5 mt-1 space-y-0.5">
             <li>Open <b>System Settings → Privacy &amp; Security → Location Services</b>.</li>
-            <li>Find <b>MyHackingPal</b> in the list and enable it.</li>
+            <li>Find <b>HackingPal</b> in the list and enable it.</li>
             <li>Click Rescan above.</li>
           </ol>
         </div>

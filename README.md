@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/brand/icon.png" alt="MyHackingPal" width="120" height="120" />
+  <img src="docs/brand/icon.png" alt="HackingPal" width="120" height="120" />
 </p>
 
 <h1 align="center">HackingPal</h1>
@@ -9,7 +9,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Docker-blue" alt="Platforms" />
   <img src="https://img.shields.io/badge/Windows-experimental%20%2F%20deferred-lightgrey" alt="Windows" />
-  <a href="https://github.com/myhackingpal/myhackingpal/releases/latest"><img src="https://img.shields.io/github/v/release/myhackingpal/myhackingpal?include_prereleases&label=release" alt="Release" /></a>
+  <a href="https://github.com/hackingpal/hackingpal/releases/latest"><img src="https://img.shields.io/github/v/release/hackingpal/hackingpal?include_prereleases&label=release" alt="Release" /></a>
 </p>
 
 > 📸 **Demo coming soon** — screenshot and walkthrough GIF will be added with the v0.1.0-beta release.
@@ -40,7 +40,7 @@ exploitation logic. See [ROADMAP.md](ROADMAP.md) for the direction and
 [CLAUDE.md](CLAUDE.md) for the architecture + contributor guide.
 
 ```
-myhackingpal/
+hackingpal/
 ├── backend/        FastAPI server — one router per tool
 │   ├── lib/        shared libs: target_policy, web_fuzz, hids_notify, …
 │   ├── routers/    tool routers/endpoints, one per page or capability
@@ -57,7 +57,7 @@ myhackingpal/
 ```
 
 Internal sidecar binary is still named `network-tools-backend` (unchanged for
-build-pipeline simplicity) — only the user-facing branding is **MyHackingPal**.
+build-pipeline simplicity) — only the user-facing branding is **HackingPal**.
 
 ---
 
@@ -71,12 +71,12 @@ they always point at the newest published release.)
 
 | Platform | Download | Notes |
 |---|---|---|
-| macOS (Apple Silicon) | [MyHackingPal-macos-arm64.dmg](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-macos-arm64.dmg) · [.zip](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-macos-arm64.zip) | Mount the DMG and drag to `/Applications`, then run the Gatekeeper bypass below. The `.zip` is a `ditto`-packed `.app` for tooling that can't mount DMGs. |
-| Linux (x86_64) | [MyHackingPal-linux-x86_64.AppImage](https://github.com/myhackingpal/myhackingpal/releases/latest/download/MyHackingPal-linux-x86_64.AppImage) | `chmod +x` then run |
+| macOS (Apple Silicon) | [HackingPal-macos-arm64.dmg](https://github.com/hackingpal/hackingpal/releases/latest/download/HackingPal-macos-arm64.dmg) · [.zip](https://github.com/hackingpal/hackingpal/releases/latest/download/HackingPal-macos-arm64.zip) | Mount the DMG and drag to `/Applications`, then run the Gatekeeper bypass below. The `.zip` is a `ditto`-packed `.app` for tooling that can't mount DMGs. |
+| Linux (x86_64) | [HackingPal-linux-x86_64.AppImage](https://github.com/hackingpal/hackingpal/releases/latest/download/HackingPal-linux-x86_64.AppImage) | `chmod +x` then run |
 
-**macOS first launch (the build is unsigned).** MyHackingPal does not yet
+**macOS first launch (the build is unsigned).** HackingPal does not yet
 have a paid Apple Developer certificate, so the OS will refuse a plain
-double-click on the first run with "MyHackingPal can't be opened because
+double-click on the first run with "HackingPal can't be opened because
 Apple cannot check it for malicious software." Two ways through:
 
 1. **Right-click → Open** in Finder (then click **Open** in the dialog).
@@ -85,7 +85,7 @@ Apple cannot check it for malicious software." Two ways through:
    if you prefer not to touch a terminal.
 2. **Strip the quarantine attribute from a terminal**, then launch:
    ```sh
-   xattr -cr /Applications/MyHackingPal.app && open /Applications/MyHackingPal.app
+   xattr -cr /Applications/HackingPal.app && open /Applications/HackingPal.app
    ```
    `xattr -cr` clears the `com.apple.quarantine` flag macOS attaches to
    downloaded files; `open` launches the bundle. Use this if you
@@ -102,7 +102,7 @@ take. Installed apps auto-check for updates via
 and Linux this also auto-installs; on Mac the OS rejects the unsigned
 replacement, so updates are detected but require re-downloading the DMG.
 Per-commit CI artifacts (including Linux arm64 AppImage and `.deb`)
-remain available on the [Actions tab](https://github.com/myhackingpal/myhackingpal/actions/workflows/build.yml).
+remain available on the [Actions tab](https://github.com/hackingpal/hackingpal/actions/workflows/build.yml).
 
 ### Option 2 — Docker (backend API only)
 
@@ -111,8 +111,8 @@ deployments or remote use. There's no Electron GUI in the container; you
 talk to it over HTTP from a browser, curl, or another client.
 
 ```sh
-git clone https://github.com/myhackingpal/myhackingpal.git
-cd myhackingpal
+git clone https://github.com/hackingpal/hackingpal.git
+cd hackingpal
 docker compose up -d
 curl http://127.0.0.1:8765/health
 # {"status":"ok","version":"0.1.0","pid":"1"}
@@ -284,7 +284,7 @@ SSE from `POST /chat/stream`.
   `api()` response (last ~50 entries, truncated to ~1.2KB each).
 - Each chat turn ships the last 30 session-log entries plus the active page
   as context, so the assistant can interpret your latest scan results.
-- API key stored in macOS Keychain under service `MyHackingPal`, account
+- API key stored in macOS Keychain under service `HackingPal`, account
   `anthropic_api_key`.
 - Prompt caching is enabled on the (large, stable) system prompt that
   explains every tool category to Claude.
@@ -317,7 +317,7 @@ preserved when hidden via `pl-[88px]` inset.
 In-app: open **Settings → API keys** → paste `sk-ant-…` → Save. Or:
 
 ```sh
-security add-generic-password -a anthropic_api_key -s MyHackingPal -w 'sk-ant-…' -U
+security add-generic-password -a anthropic_api_key -s HackingPal -w 'sk-ant-…' -U
 ```
 
 ### Paid subdomain-enum APIs (optional)
@@ -413,16 +413,16 @@ In dev it expects you to be running uvicorn yourself.
 ```sh
 cd frontend
 npm run dist:dir   # PyInstaller backend → Vite build → electron-builder
-                   # → dist-electron/mac-arm64/MyHackingPal.app
+                   # → dist-electron/mac-arm64/HackingPal.app
 ```
 
 Install to Desktop:
 
 ```sh
 # Quit a running instance first or electron-builder may fail.
-osascript -e 'quit app "MyHackingPal"' 2>/dev/null
-rm -rf ~/Desktop/MyHackingPal.app
-cp -R ~/network_tools/frontend/dist-electron/mac-arm64/MyHackingPal.app ~/Desktop/
+osascript -e 'quit app "HackingPal"' 2>/dev/null
+rm -rf ~/Desktop/HackingPal.app
+cp -R ~/network_tools/frontend/dist-electron/mac-arm64/HackingPal.app ~/Desktop/
 ```
 
 Cross-platform builds are produced by CI on every push (see [Roadmap](#roadmap)):
@@ -530,7 +530,7 @@ init message. See `routers/port_scanner.py` for the canonical example.
 - **Frontend:** React 18, Vite, TypeScript, Tailwind (CSS-variable theme),
   Electron 33.
 - **Mobile:** Flutter 3.x (Dart), targets Android 7+ (minSdk 24), compileSdk 36.
-  Package `dev.adamsjack.myhackingpal`. Connects to the FastAPI backend over
+  Package `dev.adamsjack.hackingpal`. Connects to the FastAPI backend over
   Tailscale.
 - **Container:** Docker (`python:3.11-slim`), bundled with nmap 7.95 +
   tcpdump 4.99.5 + cloud SDKs (boto3, azure-mgmt-*, google-cloud-*) +

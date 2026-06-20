@@ -42,7 +42,7 @@ from routers import (
 )
 
 logging_setup.configure()
-logger = logging.getLogger("myhackingpal")
+logger = logging.getLogger("hackingpal")
 
 # ── PATH augmentation for GUI-launched sidecars ─────────────────────────────
 # macOS launchd hands GUI apps a minimal PATH like ``/usr/bin:/bin:/usr/sbin:
@@ -65,30 +65,35 @@ if sys.platform == "darwin":
 # bail out hard before FastAPI ever binds a socket.
 #
 # Escape hatch for the Docker deployment (see SECURITY.md "Threat Model"):
-# set MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 to acknowledge that you are lifting
+# set HACKINGPAL_ALLOW_PUBLIC_HOST=1 to acknowledge that you are lifting
 # the loopback restriction deliberately. Required because the container's
 # `ports: 8765:8765` mapping in docker-compose.yml needs the app to bind
 # the container's external interface.
+# Legacy name MYHACKINGPAL_ALLOW_PUBLIC_HOST is still honored as a
+# pre-rebrand fallback.
 _FORBIDDEN_HOSTS = {"0.0.0.0", "::", "*"}
-_ALLOW_PUBLIC = os.environ.get("MYHACKINGPAL_ALLOW_PUBLIC_HOST", "").strip() == "1"
+_ALLOW_PUBLIC = (
+    os.environ.get("HACKINGPAL_ALLOW_PUBLIC_HOST", "").strip() == "1"
+    or os.environ.get("MYHACKINGPAL_ALLOW_PUBLIC_HOST", "").strip() == "1"
+)
 for _var in ("NT_BACKEND_HOST", "HOST"):
     _val = os.environ.get(_var, "").strip()
     if _val in _FORBIDDEN_HOSTS and not _ALLOW_PUBLIC:
         sys.stderr.write(
-            f"[myhackingpal] {_var}={_val!r}: "
-            "MyHackingPal backend must not be exposed to the network. "
+            f"[hackingpal] {_var}={_val!r}: "
+            "HackingPal backend must not be exposed to the network. "
             "Refusing to start.\n"
-            "(Docker deployments: set MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 to opt in.)\n"
+            "(Docker deployments: set HACKINGPAL_ALLOW_PUBLIC_HOST=1 to opt in.)\n"
         )
         raise SystemExit(2)
 if _ALLOW_PUBLIC:
     sys.stderr.write(
-        "[myhackingpal] MYHACKINGPAL_ALLOW_PUBLIC_HOST=1 — startup guard bypassed. "
+        "[hackingpal] HACKINGPAL_ALLOW_PUBLIC_HOST=1 — startup guard bypassed. "
         "Backend will accept non-loopback connections. The per-launch auth token "
         "is now the only thing protecting privileged endpoints.\n"
     )
 
-app = FastAPI(title="MyHackingPal", version="0.2.0")
+app = FastAPI(title="HackingPal", version="0.2.0")
 
 # Global error envelope + handlers. Every uncaught exception becomes
 # {"error": "...", "code": "..."} with the stack trace logged server-side

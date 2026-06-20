@@ -159,7 +159,7 @@ LABS: dict[str, LabDef] = {
             "Three vulnerable hosts on a private docker bridge (10.20.0.0/24): "
             "node-web (Apache + SQLi/cmdi), node-files (anonymous FTP + Samba), "
             "node-db (MariaDB root no-pw + Redis no-auth). Plus a scanner sidecar "
-            "on the same bridge so the MyHackingPal tools can reach the internal "
+            "on the same bridge so the HackingPal tools can reach the internal "
             "IPs that Docker Desktop hides from macOS."
         ),
         image_tag="mhp/lab-vulhub-net-scanner:latest",

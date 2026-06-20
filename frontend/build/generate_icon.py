@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the MyHackingPal Terminal Wink icon set.
+"""Generate the HackingPal Terminal Wink icon set.
 
 Renders a 1024x1024 master with Apple's icon grid padding (the visible
 mark occupies ~824/1024 with a rounded-square fill), centers the

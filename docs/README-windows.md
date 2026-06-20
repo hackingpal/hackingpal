@@ -1,4 +1,4 @@
-# MyHackingPal on Windows
+# HackingPal on Windows
 
 This is the Windows-specific install + gotchas guide. For the tool catalogue,
 configuration, safety model, and dev loop, see the [root README](../README.md).
@@ -13,7 +13,7 @@ configuration, safety model, and dev loop, see the [root README](../README.md).
 
 *(Coming soon — once CI produces a signed `.exe` installer.)*
 
-Planned download: `MyHackingPal-win-x64.exe` from [Releases](https://github.com/myhackingpal/myhackingpal/releases).
+Planned download: `HackingPal-win-x64.exe` from [Releases](https://github.com/hackingpal/hackingpal/releases).
 
 Until then, build from source — see the root README's
 [Development](../README.md#development) section. PyInstaller can only build
@@ -49,7 +49,7 @@ via the Python `keyring` package, which uses the Win32 `vault` backend).
 
 ```powershell
 # Inspect from PowerShell:
-cmdkey /list:MyHackingPal
+cmdkey /list:HackingPal
 ```
 
 ---

@@ -1,4 +1,4 @@
-package dev.adamsjack.myhackingpal
+package dev.adamsjack.hackingpal
 
 import io.flutter.embedding.android.FlutterActivity
 

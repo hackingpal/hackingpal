@@ -1,6 +1,6 @@
 # Platform Support
 
-MyHackingPal v1.0 is **macOS + Linux + Docker first**. Windows is not removed from the codebase, but native Windows parity is deferred until the engagement workflow, safety controls, evidence system, and reporting loop are stable.
+HackingPal v1.0 is **macOS + Linux + Docker first**. Windows is not removed from the codebase, but native Windows parity is deferred until the engagement workflow, safety controls, evidence system, and reporting loop are stable.
 
 ## Support tiers
 

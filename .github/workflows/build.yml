@@ -1,4 +1,4 @@
-# Build the MyHackingPal desktop app on a matrix of OSes.
+# Build the HackingPal desktop app on a matrix of OSes.
 #
 # PyInstaller can only build for the OS it runs on — that's why this uses a
 # matrix instead of cross-compiling. Each runner produces its native sidecar
@@ -125,7 +125,7 @@ jobs:
               frontend/dist-electron/*.dmg
               frontend/dist-electron/*.dmg.blockmap
               frontend/dist-electron/latest*.yml
-              frontend/dist-electron/MyHackingPal-macos-arm64.zip
+              frontend/dist-electron/HackingPal-macos-arm64.zip
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.os }}
@@ -322,14 +322,14 @@ jobs:
           fi
           APP_PARENT=$(dirname "$APP_DIR")
           APP_NAME=$(basename "$APP_DIR")
-          echo "packing $APP_DIR -> MyHackingPal-macos-arm64.zip"
-          (cd "$APP_PARENT" && ditto -c -k --keepParent "$APP_NAME" "MyHackingPal-macos-arm64.zip")
-          ls -lh "$APP_PARENT/MyHackingPal-macos-arm64.zip"
+          echo "packing $APP_DIR -> HackingPal-macos-arm64.zip"
+          (cd "$APP_PARENT" && ditto -c -k --keepParent "$APP_NAME" "HackingPal-macos-arm64.zip")
+          ls -lh "$APP_PARENT/HackingPal-macos-arm64.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: MyHackingPal-${{ matrix.os }}
+          name: HackingPal-${{ matrix.os }}
           path: ${{ matrix.artifact_glob }}
           if-no-files-found: warn
           retention-days: 14
@@ -342,7 +342,7 @@ jobs:
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: MyHackingPal-ubuntu-latest
+          name: HackingPal-ubuntu-latest
           path: artifacts/
 
       - name: Install AppImage runtime deps
@@ -445,7 +445,7 @@ jobs:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: MyHackingPal-macos-latest
+          name: HackingPal-macos-latest
           path: artifacts/macos/
 
       - name: Download Windows artifact
@@ -455,13 +455,13 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: MyHackingPal-windows-latest
+          name: HackingPal-windows-latest
           path: artifacts/windows/
 
       - name: Download Linux x64 artifact
         uses: actions/download-artifact@v4
         with:
-          name: MyHackingPal-ubuntu-latest
+          name: HackingPal-ubuntu-latest
           path: artifacts/linux/
 
       - name: Stage release assets
@@ -481,20 +481,20 @@ jobs:
             exit 1
           fi
           echo "found: $MAC_DMG"
-          cp "$MAC_DMG" release-assets/MyHackingPal-macos-arm64.dmg
+          cp "$MAC_DMG" release-assets/HackingPal-macos-arm64.dmg
           # Copy the pre-made .app zip. The macOS build job packs it with
           # `ditto -c -k --keepParent` on the macOS runner (where ditto
           # exists and the bundle still has its xattrs intact). Re-packing
           # here on Linux is impossible (ditto is macOS-only) and would
           # produce a Gatekeeper-rejected bundle anyway since upload-artifact
           # has already stripped the xattrs by this point.
-          MAC_ZIP=$(find artifacts/macos -maxdepth 3 -type f -name "MyHackingPal-macos-arm64.zip" | head -1)
+          MAC_ZIP=$(find artifacts/macos -maxdepth 3 -type f -name "HackingPal-macos-arm64.zip" | head -1)
           if [ -z "$MAC_ZIP" ]; then
             echo "::error::macOS .app zip not found — did the macOS build job's ditto step run?"
             find artifacts/macos -maxdepth 3
             exit 1
           fi
-          cp "$MAC_ZIP" release-assets/MyHackingPal-macos-arm64.zip
+          cp "$MAC_ZIP" release-assets/HackingPal-macos-arm64.zip
           # latest-mac.yml drives electron-updater on Mac.
           MAC_YML=$(find artifacts/macos -maxdepth 3 -type f -name "latest-mac.yml" | head -1)
           if [ -n "$MAC_YML" ]; then cp "$MAC_YML" release-assets/; fi
@@ -509,7 +509,7 @@ jobs:
             echo "::notice::no Windows installer this run — releasing Mac + Linux only"
           else
             echo "found: $WIN_EXE"
-            cp "$WIN_EXE" release-assets/MyHackingPal-windows-x64.exe
+            cp "$WIN_EXE" release-assets/HackingPal-windows-x64.exe
             # latest.yml drives electron-updater on Windows; the .blockmap
             # enables differential updates so users only re-download the
             # changed bytes between versions.
@@ -517,13 +517,13 @@ jobs:
             if [ -n "$WIN_YML" ]; then cp "$WIN_YML" release-assets/; fi
             WIN_BLOCKMAP=$(find artifacts/windows -maxdepth 2 -type f -name "*Setup*.exe.blockmap" | head -1)
             if [ -n "$WIN_BLOCKMAP" ]; then
-              cp "$WIN_BLOCKMAP" release-assets/MyHackingPal-windows-x64.exe.blockmap
+              cp "$WIN_BLOCKMAP" release-assets/HackingPal-windows-x64.exe.blockmap
             fi
           fi
           echo "::endgroup::"
 
           echo "::group::Linux — AppImage (x86_64) + updater metadata"
-          # The arm64 AppImage lives in MyHackingPal-ubuntu-24.04-arm and is
+          # The arm64 AppImage lives in HackingPal-ubuntu-24.04-arm and is
           # deliberately not attached to releases yet — release notes only
           # promise x86_64.
           LINUX_APPIMAGE=$(find artifacts/linux -maxdepth 2 -type f -name "*.AppImage" | head -1)
@@ -533,7 +533,7 @@ jobs:
             exit 1
           fi
           echo "found: $LINUX_APPIMAGE"
-          cp "$LINUX_APPIMAGE" release-assets/MyHackingPal-linux-x86_64.AppImage
+          cp "$LINUX_APPIMAGE" release-assets/HackingPal-linux-x86_64.AppImage
           LINUX_YML=$(find artifacts/linux -maxdepth 2 -type f -name "latest-linux.yml" | head -1)
           if [ -n "$LINUX_YML" ]; then cp "$LINUX_YML" release-assets/; fi
           echo "::endgroup::"

@@ -21,7 +21,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"], dependencies=[Depends(require_local_auth)])
 
-KEYCHAIN_SERVICE = "MyHackingPal"
+KEYCHAIN_SERVICE = "HackingPal"
+# Old service name kept as a read-only fallback so keys stored before the
+# MyHackingPal → HackingPal rebrand are still discoverable. On first read
+# we copy the value forward to the new service. Safe to remove in a later
+# release once early testers have re-launched the app at least once.
+_LEGACY_KEYCHAIN_SERVICE = "MyHackingPal"
 KEYCHAIN_ACCOUNT = "anthropic_api_key"
 
 # Additional named keys for external services (subdomain enum sources etc.).
@@ -40,11 +45,11 @@ NAMED_KEYS = {
 }
 
 
-def keychain_get_named(account: str) -> str | None:
+def _keychain_read(account: str, service: str) -> str | None:
     try:
         r = subprocess.run(
             ["security", "find-generic-password",
-             "-a", account, "-s", KEYCHAIN_SERVICE, "-w"],
+             "-a", account, "-s", service, "-w"],
             capture_output=True, text=True, timeout=5,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -52,6 +57,20 @@ def keychain_get_named(account: str) -> str | None:
     if r.returncode != 0:
         return None
     return r.stdout.strip() or None
+
+
+def keychain_get_named(account: str) -> str | None:
+    v = _keychain_read(account, KEYCHAIN_SERVICE)
+    if v is not None:
+        return v
+    legacy = _keychain_read(account, _LEGACY_KEYCHAIN_SERVICE)
+    if legacy is None:
+        return None
+    try:
+        keychain_set_named(account, legacy)
+    except Exception:
+        logger.exception("keychain forward-copy failed for %s", account)
+    return legacy
 
 
 def keychain_set_named(account: str, value: str) -> None:

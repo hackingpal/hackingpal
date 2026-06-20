@@ -143,7 +143,7 @@ export default function EngagementDashboard({ onNavigate }: Props) {
           </header>
           <div className="mb-6 max-w-2xl rounded-lg overflow-hidden border border-divider bg-bg-card/70 backdrop-blur-sm">
             <Goldeneye
-              text_default=">;) MYHACKINGPAL"
+              text_default=">;) HACKINGPAL"
               text_reveal="READY WHEN YOU ARE."
               pattern=">;) "
               fontSize="clamp(28px, 5vw, 56px)"
@@ -158,7 +158,7 @@ export default function EngagementDashboard({ onNavigate }: Props) {
               No active engagement
             </h3>
             <p className="text-[12px] text-ink-muted leading-relaxed mb-4">
-              MyHackingPal is an <b>engagement-first</b> workspace: scope, scans,
+              HackingPal is an <b>engagement-first</b> workspace: scope, scans,
               findings, and the final report all live inside a single engagement.
               Activate one to see its dashboard here.
             </p>

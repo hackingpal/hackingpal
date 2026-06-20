@@ -19,9 +19,9 @@
 <h1>Metasploitable Lab</h1>
 <p class="warn">⚠ This host is deliberately vulnerable. Do not expose it to any network you don't fully control.</p>
 
-<p>This page is part of the MyHackingPal training lab. Each link below
+<p>This page is part of the HackingPal training lab. Each link below
 is a separate vulnerable form intended for practice with the corresponding
-MyHackingPal tool page.</p>
+HackingPal tool page.</p>
 
 <h2>Practice targets</h2>
 <ul>

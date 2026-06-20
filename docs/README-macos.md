@@ -1,4 +1,4 @@
-# MyHackingPal on macOS
+# HackingPal on macOS
 
 This is the macOS-specific install + gotchas guide. For the tool catalogue,
 configuration, safety model, and dev loop, see the [root README](../README.md).
@@ -10,8 +10,8 @@ configuration, safety model, and dev loop, see the [root README](../README.md).
 
 ## Install
 
-Download `MyHackingPal-macos-arm64.dmg` from [Releases](https://github.com/myhackingpal/myhackingpal/releases),
-double-click to mount, and drag `MyHackingPal.app` to `/Applications`.
+Download `HackingPal-macos-arm64.dmg` from [Releases](https://github.com/hackingpal/hackingpal/releases),
+double-click to mount, and drag `HackingPal.app` to `/Applications`.
 A `.zip` of the bare `.app` is also published in the same release for
 tooling that can't mount DMGs.
 
@@ -20,7 +20,7 @@ tooling that can't mount DMGs.
 cd frontend
 npm run dist:mac     # produces both the .app bundle and a .dmg
 # (npm run dist:dir is the faster local-only path — .app only, no DMG)
-cp -R dist-electron/mac-arm64/MyHackingPal.app /Applications/
+cp -R dist-electron/mac-arm64/HackingPal.app /Applications/
 ```
 
 ---
@@ -32,7 +32,7 @@ refuse to open it. Either:
 
 ```sh
 # Strip the quarantine attribute:
-xattr -dr com.apple.quarantine /Applications/MyHackingPal.app
+xattr -dr com.apple.quarantine /Applications/HackingPal.app
 ```
 
 Or right-click → **Open** → confirm in the Gatekeeper dialog (one-time).
@@ -57,10 +57,10 @@ sudo rm /etc/sudoers.d/network-tools-tcpdump /etc/sudoers.d/network-tools-nmap
 ## API key storage
 
 Anthropic + paid-API keys live in the **macOS Keychain** under service
-`MyHackingPal`. Nothing is written to disk.
+`HackingPal`. Nothing is written to disk.
 
 ```sh
-security find-generic-password -s MyHackingPal -a anthropic_api_key
+security find-generic-password -s HackingPal -a anthropic_api_key
 ```
 
 ---
@@ -83,7 +83,7 @@ The app uses `electron-updater` against GitHub Releases. On Mac, because
 the bundle is unsigned, the updater **detects** new releases (you'll see
 log lines like `update available: 0.2.0`) but can't replace the running
 app — macOS rejects the unsigned bundle swap. Re-download the DMG from
-the [Releases page](https://github.com/myhackingpal/myhackingpal/releases/latest)
+the [Releases page](https://github.com/hackingpal/hackingpal/releases/latest)
 to upgrade. See [SIGNING.md](SIGNING.md) for the path to actual signed
 auto-updates.
 

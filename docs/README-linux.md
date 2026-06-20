@@ -1,4 +1,4 @@
-# MyHackingPal on Linux
+# HackingPal on Linux
 
 This is the Linux-specific install + gotchas guide. For the tool catalogue,
 configuration, safety model, and dev loop, see the [root README](../README.md).
@@ -14,18 +14,18 @@ configuration, safety model, and dev loop, see the [root README](../README.md).
 
 *(Coming soon — once CI publishes an AppImage / `.deb`.)*
 
-Planned downloads from [Releases](https://github.com/myhackingpal/myhackingpal/releases):
+Planned downloads from [Releases](https://github.com/hackingpal/hackingpal/releases):
 
-- `MyHackingPal-linux-x86_64.AppImage` — portable, no install
-- `MyHackingPal-linux-amd64.deb` — Debian / Ubuntu
+- `HackingPal-linux-x86_64.AppImage` — portable, no install
+- `HackingPal-linux-amd64.deb` — Debian / Ubuntu
 
 ```sh
 # AppImage:
-chmod +x MyHackingPal-linux-x86_64.AppImage
-./MyHackingPal-linux-x86_64.AppImage
+chmod +x HackingPal-linux-x86_64.AppImage
+./HackingPal-linux-x86_64.AppImage
 
 # .deb:
-sudo dpkg -i MyHackingPal-linux-amd64.deb
+sudo dpkg -i HackingPal-linux-amd64.deb
 ```
 
 Until then, use [Docker](../README.md#option-2--docker) or build from source
@@ -55,7 +55,7 @@ KWallet) via the Python `keyring` package and `libsecret`.
 
 ```sh
 # Inspect via secret-tool:
-secret-tool search service MyHackingPal
+secret-tool search service HackingPal
 ```
 
 If you're running headless (no D-Bus session), `keyring` falls back to an

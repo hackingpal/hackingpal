@@ -4,7 +4,7 @@
 //
 // Visual model: a vertical list of numbered steps with a connecting line,
 // matching the "Step-by-step progress" reference but recoloured to the
-// MyHackingPal dark + violet theme. Performative-UI provides the eyebrow
+// HackingPal dark + violet theme. Performative-UI provides the eyebrow
 // pill, animated percentage, and the busy spinner. When every step flips
 // to done, dopamine fires a confetti effect from the card centre.
 //

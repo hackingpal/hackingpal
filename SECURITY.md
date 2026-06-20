@@ -8,7 +8,7 @@ first. A response is typically sent within 72 hours.
 
 ## Product safety model
 
-MyHackingPal is an **AI-assisted security testing workspace for authorized
+HackingPal is an **AI-assisted security testing workspace for authorized
 engagements**. The product safety model assumes:
 
 - The operator has authorization to test the targets they enter
@@ -48,7 +48,7 @@ v1.0 is **macOS + Linux + Docker first**. Native Windows support is experimental
 
 ## Local API Security
 
-MyHackingPal is a desktop app: the Electron renderer talks to a Python FastAPI
+HackingPal is a desktop app: the Electron renderer talks to a Python FastAPI
 backend over loopback. The backend is **not** designed to be reachable over a
 network — it executes shell commands, installs sudoers entries, and toggles a
 WireGuard tunnel on behalf of the local user. Exposing it would be remote code
@@ -82,7 +82,7 @@ The following invariants are enforced in code:
   `127.0.0.1:8765/terminal/exec`, not to defend against the box being
   compromised.
 - The Docker / Linux container deployment (`Dockerfile.linux`,
-  `docker-compose.yml`). If you run MyHackingPal as a network service, you are
+  `docker-compose.yml`). If you run HackingPal as a network service, you are
   intentionally lifting the loopback restriction and accept that responsibility.
   At minimum: bind to a private VPN/Tailscale interface, put it behind an
   authenticating reverse proxy, and treat the token as a shared secret. Docker/server mode should display a clear warning banner and should not be promoted as internet-exposable until proper authentication is mandatory.

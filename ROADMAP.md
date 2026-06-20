@@ -5,7 +5,7 @@ README has a short summary; this document has the rationale.
 
 ## The pivot
 
-MyHackingPal is pivoting from a **cybersecurity tool dashboard** to an
+HackingPal is pivoting from a **cybersecurity tool dashboard** to an
 **AI-assisted security testing workspace for authorized engagements**.
 
 The old framing:

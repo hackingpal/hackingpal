@@ -28,7 +28,7 @@ PORT     STATE SERVICE VERSION
 |_  Product: OWASP Juice Shop
 ]]
 
-author = "MyHackingPal"
+author = "HackingPal"
 license = "Same as Nmap--See https://nmap.org/book/man-legal.html"
 categories = {"discovery", "version", "safe"}
 

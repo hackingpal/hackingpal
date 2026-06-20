@@ -1,7 +1,7 @@
 # vulhub-net — a small vulnerable LAN.
 #
 # 3 deliberately insecure hosts on bridge 10.20.0.0/24, plus a "scanner"
-# sidecar on the same bridge. The sidecar is how the MyHackingPal backend
+# sidecar on the same bridge. The sidecar is how the HackingPal backend
 # reaches the internal IPs from macOS, where Docker Desktop doesn't expose
 # the bridge to the host. POST /labs/vulhub-net/sidecar/exec runs nmap /
 # smbclient / curl / dig inside this container.

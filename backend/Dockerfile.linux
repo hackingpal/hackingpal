@@ -2,8 +2,8 @@
 # matches the AppImage/deb target. PyInstaller can't cross-compile from macOS;
 # this is the workaround.
 #
-# Build:    docker build -t myhackingpal-linux-bundler -f Dockerfile.linux .
-# Run:      docker run --rm -v "$PWD:/src" -w /src myhackingpal-linux-bundler \
+# Build:    docker build -t hackingpal-linux-bundler -f Dockerfile.linux .
+# Run:      docker run --rm -v "$PWD:/src" -w /src hackingpal-linux-bundler \
 #               pyinstaller network-tools-backend.spec --noconfirm
 # Output:   ./dist/network-tools-backend  (Linux ELF, x86_64)
 

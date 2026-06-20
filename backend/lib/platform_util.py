@@ -24,7 +24,25 @@ IS_LINUX   = sys.platform.startswith("linux")
 IS_WINDOWS = sys.platform == "win32"
 
 
-def app_data_dir(app_name: str = "MyHackingPal") -> Path:
+_LEGACY_APP_NAME = "MyHackingPal"
+
+
+def _resolve_app_base(app_name: str) -> Path:
+    if IS_DARWIN:
+        return Path.home() / "Library" / "Application Support" / app_name
+    if IS_WINDOWS:
+        roaming = os.environ.get("APPDATA")
+        return Path(roaming) / app_name if roaming else Path.home() / "AppData" / "Roaming" / app_name
+    # Linux — keep historical ~/.config/<app>/ if it already exists so
+    # existing engagement DBs aren't orphaned. Otherwise use XDG_DATA_HOME.
+    cfg_legacy = Path.home() / ".config" / app_name
+    if cfg_legacy.exists():
+        return cfg_legacy
+    xdg = os.environ.get("XDG_DATA_HOME")
+    return Path(xdg) / app_name if xdg else Path.home() / ".local" / "share" / app_name
+
+
+def app_data_dir(app_name: str = "HackingPal") -> Path:
     """Return (and create) the per-user data directory for this app.
 
     macOS:   ~/Library/Application Support/<app>/
@@ -32,21 +50,17 @@ def app_data_dir(app_name: str = "MyHackingPal") -> Path:
     Linux:   $XDG_DATA_HOME/<app>/  or  ~/.local/share/<app>/  with
              ~/.config/<app>/ as a fallback if the dev workflow already
              populated it (legacy compat — kept for engagements.db).
+
+    Pre-rebrand fallback: if the new <app> directory does not exist but the
+    legacy MyHackingPal directory does, return the legacy path so existing
+    engagement DBs and settings remain reachable. Safe to remove in a later
+    release once early testers have migrated.
     """
-    if IS_DARWIN:
-        base = Path.home() / "Library" / "Application Support" / app_name
-    elif IS_WINDOWS:
-        roaming = os.environ.get("APPDATA")
-        base = Path(roaming) / app_name if roaming else Path.home() / "AppData" / "Roaming" / app_name
-    else:
-        # Linux — keep historical ~/.config/<app>/ if it already exists so
-        # existing engagement DBs aren't orphaned. Otherwise use XDG_DATA_HOME.
-        legacy = Path.home() / ".config" / app_name
+    base = _resolve_app_base(app_name)
+    if not base.exists() and app_name != _LEGACY_APP_NAME:
+        legacy = _resolve_app_base(_LEGACY_APP_NAME)
         if legacy.exists():
-            base = legacy
-        else:
-            xdg = os.environ.get("XDG_DATA_HOME")
-            base = Path(xdg) / app_name if xdg else Path.home() / ".local" / "share" / app_name
+            return legacy
     base.mkdir(parents=True, exist_ok=True)
     return base
 

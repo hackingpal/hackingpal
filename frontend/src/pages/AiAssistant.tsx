@@ -276,7 +276,7 @@ export default function AiAssistant({ activePage }: Props) {
           <div>
             <div className="text-ink-primary font-bold text-[13px] mb-1">Anthropic API key</div>
             <div className="text-ink-dim text-[11px] mb-2">
-              Stored in the macOS Keychain under <code className="text-amber">MyHackingPal</code>.
+              Stored in the macOS Keychain under <code className="text-amber">HackingPal</code>.
               Never written to disk.
             </div>
             <div className="text-[11px] mb-2">
@@ -339,7 +339,7 @@ export default function AiAssistant({ activePage }: Props) {
           {messages.length === 0 && (
             <div className="text-ink-dim text-[13px] leading-relaxed max-w-2xl">
               <p>
-                Hi — I'm wired into MyHackingPal. I can see your recent tool results
+                Hi — I'm wired into HackingPal. I can see your recent tool results
                 (currently <span className="text-accent">{eventCount}</span> entries in
                 this session) and explain what they mean. Try:
               </p>

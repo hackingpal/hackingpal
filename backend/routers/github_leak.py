@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/github-leak", tags=["github-leak"],
                    dependencies=[Depends(require_local_auth)])
 
-UA = "MyHackingPal/0.1 gh-leak"
+UA = "HackingPal/0.1 gh-leak"
 GH_BASE = "https://api.github.com"
 
 # Each entry: (label, query-template). `{t}` is the target.

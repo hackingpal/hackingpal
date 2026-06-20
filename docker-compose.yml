@@ -6,8 +6,8 @@ services:
       # serves it from /app/frontend_dist).
       context: .
       dockerfile: backend/Dockerfile
-    image: myhackingpal/backend:latest
-    container_name: myhackingpal-backend
+    image: hackingpal/backend:latest
+    container_name: hackingpal-backend
     restart: unless-stopped
     # The image bundles both the API (all paths under /<router>/) and the
     # browser UI (served at /). Browse http://<host>:8765/ to use the UI;
@@ -28,16 +28,16 @@ services:
       # See SECURITY.md "Threat Model" — Docker deploys deliberately lift
       # the restriction, so the auth token becomes the only gate on
       # privileged endpoints (tcpdump/nmap install, vpn, terminal/exec).
-      - MYHACKINGPAL_ALLOW_PUBLIC_HOST=1
+      - HACKINGPAL_ALLOW_PUBLIC_HOST=1
       # Optional: enables the chat assistant when running on Linux (no Keychain).
       # On macOS, the desktop app uses the Keychain instead; ignore this.
       # - ANTHROPIC_API_KEY=sk-ant-…
     volumes:
-      - myhackingpal-data:/app/data
+      - hackingpal-data:/app/data
     # For LAN scanning from the host's network (Linux only — Docker Desktop
     # on macOS/Windows runs Linux in a VM so host mode behaves differently),
     # comment out `ports:` above and uncomment:
     # network_mode: host
 
 volumes:
-  myhackingpal-data:
+  hackingpal-data:

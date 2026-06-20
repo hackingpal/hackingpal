@@ -1,6 +1,6 @@
 # v1.0 Checklist
 
-v1.0 is ready when MyHackingPal behaves like a controlled security testing workspace, not just a tool launcher.
+v1.0 is ready when HackingPal behaves like a controlled security testing workspace, not just a tool launcher.
 
 ## Platform
 

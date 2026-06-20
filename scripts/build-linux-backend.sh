@@ -8,7 +8,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_DIR="$REPO_ROOT/backend"
-IMAGE_TAG="myhackingpal-linux-bundler"
+IMAGE_TAG="hackingpal-linux-bundler"
 
 if ! docker info > /dev/null 2>&1; then
     echo "error: docker daemon not running. Open Docker Desktop and retry." >&2

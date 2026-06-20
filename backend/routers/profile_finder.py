@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/profile-finder", tags=["profile-finder"],
                    dependencies=[Depends(require_local_auth)])
 
-UA = "MyHackingPal/0.1 profile-finder"
+UA = "HackingPal/0.1 profile-finder"
 
 # Per-source dork templates. {c} = company name, {d} = domain (optional).
 SOURCES: list[dict[str, Any]] = [

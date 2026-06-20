@@ -1,4 +1,4 @@
-# Scanner sidecar — joins the vulhub-net bridge so the MyHackingPal backend
+# Scanner sidecar — joins the vulhub-net bridge so the HackingPal backend
 # can reach internal IPs from macOS, where Docker Desktop hides the bridge.
 #
 # Image is intentionally small: just the tools that show up in the sidecar

@@ -5,7 +5,7 @@ once before changing anything substantial.
 
 ## What this project is
 
-**MyHackingPal is pivoting from a "tool dashboard" to an
+**HackingPal is pivoting from a "tool dashboard" to an
 "AI-assisted security testing workspace for authorized engagements".**
 
 If you take only one thing from this file: **the engagement is the
@@ -55,7 +55,7 @@ network_tools/
 Backend listens on **127.0.0.1:8765** by default (override with
 `NT_BACKEND_PORT`). The startup guard in `backend/main.py` refuses to
 start if `NT_BACKEND_HOST` or `HOST` is wildcarded — opt out with
-`MYHACKINGPAL_ALLOW_PUBLIC_HOST=1` for Docker deployments only.
+`HACKINGPAL_ALLOW_PUBLIC_HOST=1` for Docker deployments only.
 
 ## Conventions
 
@@ -118,7 +118,7 @@ start if `NT_BACKEND_HOST` or `HOST` is wildcarded — opt out with
 
 - The internal sidecar binary is still named `network-tools-backend`
   (unchanged for build-pipeline simplicity). Only the user-facing
-  branding is **MyHackingPal**. Bundle id: `com.myhackingpal.app`.
+  branding is **HackingPal**. Bundle id: `com.hackingpal.app`.
 
 ## The pivot — what it means for you when coding here
 
@@ -201,7 +201,7 @@ engagement / scope / audit code, write tests alongside it.
 
 ## Mobile app (`mobile/`)
 
-Flutter project. Package `dev.adamsjack.myhackingpal`.
+Flutter project. Package `dev.adamsjack.hackingpal`.
 `compileSdk=36`, `minSdk=24`.
 
 Connects to backend via `http://<tailscale-ip>:8765`. `ApiService`

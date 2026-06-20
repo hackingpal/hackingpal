@@ -1,4 +1,4 @@
-# Contributing to MyHackingPal
+# Contributing to HackingPal
 
 Thanks for your interest. This file collects the conventions, setup,
 and per-area notes contributors need before submitting a PR.

@@ -34,7 +34,11 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 BUILTIN_DIR = Path(__file__).resolve().parent.parent / "presets"
-USER_DIR = Path.home() / ".myhackingpal" / "user_presets"
+_USER_DIR_NEW = Path.home() / ".hackingpal" / "user_presets"
+_USER_DIR_LEGACY = Path.home() / ".myhackingpal" / "user_presets"
+# Pre-rebrand fallback: keep reading legacy presets if the new dir doesn't
+# exist yet. Safe to remove in a later release.
+USER_DIR = _USER_DIR_LEGACY if (_USER_DIR_LEGACY.exists() and not _USER_DIR_NEW.exists()) else _USER_DIR_NEW
 
 EmitFn = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -2874,7 +2878,7 @@ async def _adapter_security_headers(target: str, options: dict[str, Any],
     url = _normalize_url(target, options)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+            r = await c.get(url, headers={"User-Agent": "HackingPal/0.3"})
     except Exception as e:
         await emit({"type": "step_progress", "step": "security_headers",
                     "msg": f"security_headers: {type(e).__name__}"})
@@ -2903,7 +2907,7 @@ async def _adapter_cookie_analysis(target: str, options: dict[str, Any],
     url = _normalize_url(target, options)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+            r = await c.get(url, headers={"User-Agent": "HackingPal/0.3"})
     except Exception as e:
         await emit({"type": "step_progress", "step": "cookie_analysis",
                     "msg": f"cookies: {type(e).__name__}"})
@@ -2952,7 +2956,7 @@ async def _adapter_cors(target: str, options: dict[str, Any],
                 try:
                     r = await c.get(url, headers={
                         "Origin": origin,
-                        "User-Agent": "MyHackingPal/0.3",
+                        "User-Agent": "HackingPal/0.3",
                     })
                 except Exception:
                     continue
@@ -2989,7 +2993,7 @@ async def _adapter_open_redirect(target: str, options: dict[str, Any],
                 test_url = base + ("&" if "?" in base else "?") + f"{p}={bait}"
                 try:
                     r = await c.get(test_url, headers={
-                        "User-Agent": "MyHackingPal/0.3",
+                        "User-Agent": "HackingPal/0.3",
                     })
                 except Exception:
                     continue
@@ -3013,7 +3017,7 @@ async def _adapter_waf_detection(target: str, options: dict[str, Any],
     waf_present = False
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as c:
-            r = await c.get(url, headers={"User-Agent": "MyHackingPal/0.3"})
+            r = await c.get(url, headers={"User-Agent": "HackingPal/0.3"})
     except Exception as e:
         await emit({"type": "step_progress", "step": "waf_detection",
                     "msg": f"waf: {type(e).__name__}"})
@@ -3128,7 +3132,7 @@ async def _adapter_webmail_discovery(target: str, options: dict[str, Any],
             for p in paths[:16]:
                 try:
                     r = await c.get(base.rstrip("/") + p,
-                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                                    headers={"User-Agent": "HackingPal/0.3"})
                 except Exception:
                     continue
                 if 200 <= r.status_code < 300:
@@ -3168,7 +3172,7 @@ async def _adapter_js_analysis(target: str, options: dict[str, Any],
             for u in js_urls[:20]:
                 try:
                     r = await c.get(str(u),
-                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                                    headers={"User-Agent": "HackingPal/0.3"})
                     body = r.text[:200_000]
                 except Exception:
                     continue
@@ -3618,7 +3622,7 @@ async def _adapter_k8s_api_enum(target: str, options: dict[str, Any],
                 "rbac_permissions": [], "cluster_admin_possible": False,
                 "skipped": True}
     headers = {"Authorization": f"Bearer {token}",
-               "User-Agent": "MyHackingPal/0.3"}
+               "User-Agent": "HackingPal/0.3"}
     namespaces: list[str] = []
     pods: list[str] = []
     secrets: list[str] = []
@@ -3679,7 +3683,7 @@ async def _adapter_secret_dump(target: str, options: dict[str, Any],
         return {"secrets": [], "credentials": [], "api_keys": [],
                 "tls_certs": [], "skipped": True}
     headers = {"Authorization": f"Bearer {token}",
-               "User-Agent": "MyHackingPal/0.3"}
+               "User-Agent": "HackingPal/0.3"}
     creds: list[str] = []
     api_keys: list[str] = []
     tls: list[str] = []
@@ -3748,7 +3752,7 @@ async def _adapter_xxe(target: str, options: dict[str, Any],
                 try:
                     r = await c.post(url, content=payload,
                                      headers={"Content-Type": "application/xml",
-                                              "User-Agent": "MyHackingPal/0.3"})
+                                              "User-Agent": "HackingPal/0.3"})
                     body = r.text[:8000]
                 except Exception:
                     continue
@@ -3794,7 +3798,7 @@ async def _adapter_ssti(target: str, options: dict[str, Any],
                 probe_url = f"{url}{sep}q={payload}"
                 try:
                     r = await c.get(probe_url,
-                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                                    headers={"User-Agent": "HackingPal/0.3"})
                 except Exception:
                     continue
                 if expected in r.text:
@@ -3838,7 +3842,7 @@ async def _adapter_oauth_check(target: str, options: dict[str, Any],
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as c:
             r = await c.get(well_known,
-                            headers={"User-Agent": "MyHackingPal/0.3"})
+                            headers={"User-Agent": "HackingPal/0.3"})
             if 200 <= r.status_code < 300:
                 try:
                     cfg = r.json()
@@ -3849,7 +3853,7 @@ async def _adapter_oauth_check(target: str, options: dict[str, Any],
                         probe = (f"{auth_ep}?response_type=token&"
                                  f"client_id=test&redirect_uri=https://evil.com/")
                         rp = await c.get(probe, headers={
-                            "User-Agent": "MyHackingPal/0.3"})
+                            "User-Agent": "HackingPal/0.3"})
                         if rp.status_code in (302, 303, 307):
                             loc = rp.headers.get("location", "")
                             if "evil.com" in loc:
@@ -4073,7 +4077,7 @@ async def _adapter_gateway_analysis(target: str, options: dict[str, Any],
                 try:
                     r = await c.get(f"http{'s' if port==443 else ''}://"
                                     f"{gateway}:{port}/",
-                                    headers={"User-Agent": "MyHackingPal/0.3"})
+                                    headers={"User-Agent": "HackingPal/0.3"})
                 except Exception:
                     continue
                 if 200 <= r.status_code < 500:
@@ -4164,7 +4168,7 @@ async def run_preset(
         return
     target = (target or "").strip()
     target_type = preset.get("target_type", "domain")
-    # `target_type: local` bundles run against the host MyHackingPal is on
+    # `target_type: local` bundles run against the host HackingPal is on
     # (posture audits, persistence enumeration). Target is irrelevant.
     if target_type != "local" and not target:
         await emit({"type": "error", "detail": "target is required"})

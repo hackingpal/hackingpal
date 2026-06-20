@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/osint", tags=["email-harvest"],
                    dependencies=[Depends(require_local_auth)])
 
-UA = "MyHackingPal/0.1 email-harvest"
+UA = "HackingPal/0.1 email-harvest"
 TIMEOUT = 12.0
 _MAX_EMAILS = 500
 _SCRAPE_PATHS = ("", "/contact", "/contact-us", "/about", "/about-us",

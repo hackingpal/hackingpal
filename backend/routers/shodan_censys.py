@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/shodan-censys", tags=["shodan-censys"],
                    dependencies=[Depends(require_local_auth)])
 
-UA = "MyHackingPal/0.1 shodan-censys"
+UA = "HackingPal/0.1 shodan-censys"
 
 
 @router.get("/status")

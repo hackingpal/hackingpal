@@ -16,10 +16,10 @@ const BACKEND_PORT = parseInt(process.env.NT_BACKEND_PORT || "8765", 10);
 
 // In dev mode the OS dock + menu bar would otherwise read the Electron binary
 // name ("Electron"). Setting it before app initialisation makes macOS / Linux
-// show "MyHackingPal" everywhere it would normally show the launcher name.
+// show "HackingPal" everywhere it would normally show the launcher name.
 // In packaged builds this is already correct via Info.plist's CFBundleName,
 // but setting it twice is harmless and keeps both paths consistent.
-app.setName("MyHackingPal");
+app.setName("HackingPal");
 
 // Same story for the dock icon — `electron .` would otherwise show the
 // Electron lozenge. Use the bundled PNG (works cross-platform; .icns isn't
@@ -33,9 +33,9 @@ if (isDev && process.platform === "darwin" && app.dock) {
 }
 
 app.setAboutPanelOptions({
-  applicationName: "MyHackingPal",
+  applicationName: "HackingPal",
   applicationVersion: app.getVersion(),
-  copyright: "© MyHackingPal contributors",
+  copyright: "© HackingPal contributors",
 });
 
 let backendProc = null;
@@ -205,7 +205,7 @@ async function createWindow() {
       : {};
 
   const win = new BrowserWindow({
-    title: "MyHackingPal",
+    title: "HackingPal",
     width:  1100,
     height: 760,
     // Min sizes intentionally low so macOS half-screen tile (~720px wide on a
@@ -223,9 +223,9 @@ async function createWindow() {
   });
 
   // Linux + Windows: the OS title bar shows the document title, not the app
-  // name. Pin it so window switchers / taskbar entries read "MyHackingPal".
+  // name. Pin it so window switchers / taskbar entries read "HackingPal".
   win.on("page-title-updated", (e) => e.preventDefault());
-  win.setTitle("MyHackingPal");
+  win.setTitle("HackingPal");
 
   // Hand any window.open(http(s)://...) call off to the OS default browser
   // instead of spawning a chromeless Electron BrowserWindow. The Labs "Open ↗"

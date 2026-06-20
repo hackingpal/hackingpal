@@ -485,6 +485,10 @@ def _has_keyring_entry(provider_key: str) -> bool:
     except Exception:
         return False
     try:
+        if keyring.get_password("HackingPal", provider_key):
+            return True
+        # Pre-rebrand fallback. Mirrors the read-fallback in
+        # backend/routers/settings.py:keychain_get_named.
         return bool(keyring.get_password("MyHackingPal", provider_key))
     except Exception:
         return False

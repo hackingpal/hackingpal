@@ -1,6 +1,6 @@
 # Code signing — current state + what would change it
 
-MyHackingPal currently ships **unsigned** binaries on macOS and Windows.
+HackingPal currently ships **unsigned** binaries on macOS and Windows.
 This file is the honest accounting of what that means, why the project
 isn't signed, and what would have to happen to fix it.
 
@@ -17,11 +17,11 @@ isn't signed, and what would have to happen to fix it.
 
 ### macOS
 
-- First-launch shows "MyHackingPal cannot be opened because the developer
-  cannot be verified" or "MyHackingPal is damaged and can't be opened".
+- First-launch shows "HackingPal cannot be opened because the developer
+  cannot be verified" or "HackingPal is damaged and can't be opened".
 - Workaround for the user: right-click the `.app` → **Open** → confirm
   the Gatekeeper dialog (once). Or strip the quarantine attribute:
-  `xattr -dr com.apple.quarantine /Applications/MyHackingPal.app`.
+  `xattr -dr com.apple.quarantine /Applications/HackingPal.app`.
 - electron-updater **detects** new releases but **cannot apply them** —
   macOS refuses to replace an unsigned app via the standard updater
   flow. Users have to re-download the DMG.
@@ -42,7 +42,7 @@ isn't signed, and what would have to happen to fix it.
 
 - AppImage / `.deb` / `.rpm` don't require a publisher signature to run.
   Some distros' "Software" GUIs may warn about unsigned `.deb` but it
-  installs fine via `apt install ./MyHackingPal-*.deb`.
+  installs fine via `apt install ./HackingPal-*.deb`.
 
 ---
 

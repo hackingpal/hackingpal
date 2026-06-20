@@ -159,7 +159,7 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
             letterSpacing: "-0.01em",
           }}
         >
-          MyHackingPal
+          HackingPal
         </h1>
         <p
           className="mt-1 text-[10px]"
@@ -234,7 +234,7 @@ export default function Sidebar({ active, onSelect, platform }: Props) {
               window.open-handoff (electron/main.cjs intercepts http(s)
               targets and shells out to the OS default browser). */}
           <a
-            href="https://github.com/myhackingpal/myhackingpal/issues/new"
+            href="https://github.com/hackingpal/hackingpal/issues/new"
             target="_blank"
             rel="noreferrer"
             title="Report a bug on GitHub"

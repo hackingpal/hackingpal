@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "dev.adamsjack.myhackingpal"
+    namespace = "dev.adamsjack.hackingpal"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -21,7 +21,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "dev.adamsjack.myhackingpal"
+        applicationId = "dev.adamsjack.hackingpal"
         minSdk = 24
         targetSdk = 36
         versionCode = flutter.versionCode

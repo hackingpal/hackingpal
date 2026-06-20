@@ -1,6 +1,6 @@
-# myhackingpal
+# hackingpal
 
-MyHackingPal mobile companion (Android)
+HackingPal mobile companion (Android)
 
 ## Getting Started
 

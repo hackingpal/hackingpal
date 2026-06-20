@@ -63,7 +63,7 @@ export default function Settings({ onJumpTo }: Props) {
         </h2>
         <p className="mt-1 text-[11px] text-ink-dim max-w-2xl">
           API keys, system info, appearance. Keys live in the OS keychain —
-          MyHackingPal never writes them to disk.
+          HackingPal never writes them to disk.
         </p>
       </header>
 

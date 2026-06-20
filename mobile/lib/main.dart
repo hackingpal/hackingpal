@@ -30,7 +30,7 @@ class _MyAppState extends State<MyApp> {
   @override
   Widget build(BuildContext c) {
     return MaterialApp(
-      title: 'MyHackingPal',
+      title: 'HackingPal',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xFF6750A4),
@@ -171,7 +171,7 @@ class _ShellState extends State<Shell> {
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Text(
-                  'MyHackingPal',
+                  'HackingPal',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
               ),

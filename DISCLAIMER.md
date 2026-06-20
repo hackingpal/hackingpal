@@ -1,6 +1,6 @@
 # Disclaimer — authorized testing only
 
-MyHackingPal is a security testing workspace. It bundles tools — port
+HackingPal is a security testing workspace. It bundles tools — port
 scanners, vulnerability probes, web-application attack modules,
 credential testers, network capture, cloud and Active Directory
 enumeration — that are useful in legitimate security work and that
@@ -39,5 +39,5 @@ By installing, building, or running this software you agree that:
 If you are not sure whether you have authorization to test a system,
 **you do not have authorization**. Stop and get it in writing first.
 
-For responsible-disclosure procedure against MyHackingPal itself, see
+For responsible-disclosure procedure against HackingPal itself, see
 [SECURITY.md](SECURITY.md).

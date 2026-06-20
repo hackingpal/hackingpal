@@ -1,4 +1,4 @@
-# Runtime deps for the PyInstaller-bundled MyHackingPal sidecar.
+# Runtime deps for the PyInstaller-bundled HackingPal sidecar.
 # Kept in sync with what's actually imported by routers/ + lib/ + main.py.
 #
 # pyproject.toml still drives `pip install -e .` for the dev backend; this
