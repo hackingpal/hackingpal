@@ -100,6 +100,8 @@ export default function Ssrf() {
         findings={findings}
         extraColumns={[{ key: "hit", label: "HIT" }]}
         doneText={doneText}
+        promoteTool="ssrf"
+        promoteTarget={req.url}
       />
     </div>
   );

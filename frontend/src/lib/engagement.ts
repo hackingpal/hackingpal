@@ -25,17 +25,37 @@ export type Engagement = {
   updated_at: string;
 };
 
+// Canonical Findings Tracker statuses + the legacy set so older DBs keep
+// loading. New writes from the tracker emit only the canonical values.
+export type FindingStatus =
+  | "open" | "confirmed" | "false_positive" | "remediated"
+  | "triaged" | "fixed" | "wont_fix";
+
+export const FINDING_STATUSES: FindingStatus[] = [
+  "open", "confirmed", "false_positive", "remediated",
+];
+
+export type FindingSeverity = "info" | "low" | "medium" | "high" | "critical";
+
+export const FINDING_SEVERITIES: FindingSeverity[] = [
+  "critical", "high", "medium", "low", "info",
+];
+
 export type Finding = {
   id: string;
   engagement_id: string;
   ts: string;
+  updated_at: string;
   title: string;
-  severity: "info" | "low" | "medium" | "high" | "critical";
+  severity: FindingSeverity;
   cvss: number | null;
+  cvss_vector: string | null;
+  tool: string;
+  target: string;
   description: string;
   evidence: string;
   linked_result_id: string | null;
-  status: "open" | "triaged" | "fixed" | "wont_fix";
+  status: FindingStatus;
 };
 
 export type ScanResult = {
@@ -156,10 +176,70 @@ export async function deleteEngagement(id: string): Promise<void> {
 }
 
 export async function listFindings(eid: string): Promise<Finding[]> {
+  // Prefer the standalone /findings tracker endpoint so list shape and
+  // statuses stay consistent with promote-flow writes. Falls back to the
+  // per-engagement nested endpoint if the tracker isn't registered yet.
+  try {
+    const r = await authFetch(`/findings?engagement_id=${encodeURIComponent(eid)}`);
+    if (r.ok) {
+      const body = (await r.json()) as { findings: Finding[] };
+      return body.findings;
+    }
+  } catch {
+    /* fall through */
+  }
   const r = await authFetch(`/engagements/${eid}/findings`);
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const body = (await r.json()) as { findings: Finding[] };
   return body.findings;
+}
+
+// ── Findings Tracker (standalone /findings endpoint) ────────────────────────
+//
+// Every write here is audited server-side. Promote-from-result flows on
+// tool pages should call promoteToFinding(...) rather than the per-engagement
+// createFinding(...) so the tracker stays the single ingress for new
+// evidence.
+
+export type PromoteFindingInput = {
+  engagement_id: string;
+  title: string;
+  severity: FindingSeverity;
+  description?: string;
+  tool?: string;
+  target?: string;
+  evidence?: string;
+  cvss?: number | null;
+  cvss_vector?: string | null;
+  linked_result_id?: string | null;
+  status?: FindingStatus;
+};
+
+export async function promoteToFinding(input: PromoteFindingInput): Promise<Finding> {
+  const r = await authFetch(`/findings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function patchTrackedFinding(
+  fid: string, patch: Partial<Finding>,
+): Promise<Finding> {
+  const r = await authFetch(`/findings/${fid}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
+
+export async function deleteTrackedFinding(fid: string): Promise<void> {
+  const r = await authFetch(`/findings/${fid}`, { method: "DELETE" });
+  if (!r.ok) throw new Error(await parseError(r));
 }
 
 export async function createFinding(eid: string, payload: {

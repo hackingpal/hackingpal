@@ -4,6 +4,8 @@ import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import type { FindingSeverity } from "../lib/engagement";
 
 const PROTO_TIER: Record<string, "legacy" | "modern"> = {
   "SSLv3":   "legacy",
@@ -179,6 +181,22 @@ export default function TlsAudit() {
                       <SeverityBadge severity={normalizeSeverity(f.severity)} />
                       <span className="text-ink-primary flex-1">{f.label}</span>
                       <span className="text-ink-muted">{f.detail}</span>
+                      <PromoteToFindingButton
+                        variant="compact"
+                        seed={{
+                          tool: "tls-auditor",
+                          target: `${report.host}:${report.port}`,
+                          title: `TLS · ${f.label}`,
+                          severity: tlsFindingSeverity(f.severity),
+                          description: f.detail,
+                          evidence:
+                            `Host:   ${report.host}:${report.port} (${report.ip})\n` +
+                            `Cert:   ${report.cert.subject || "?"}\n` +
+                            `Issuer: ${report.cert.issuer || "?"}\n` +
+                            (report.cert.not_after ? `Expiry: ${report.cert.not_after}\n` : "") +
+                            `\n[${f.severity.toUpperCase()}] ${f.label}\n${f.detail}`,
+                        }}
+                      />
                       <CopyButton text={`[${f.severity}] ${f.label} — ${f.detail}`} />
                     </li>
                   ))}
@@ -308,4 +326,13 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
       <span className="text-ink-primary break-all">{v}</span>
     </div>
   );
+}
+
+function tlsFindingSeverity(s: "info" | "warn" | "high"): FindingSeverity {
+  // Backend emits info/warn/high; promote modal expects the full 5-tier set.
+  // "high" maps to a tracker-worthy `high`; "warn" → medium so it shows up in
+  // the executive summary; "info" stays informational.
+  if (s === "high") return "high";
+  if (s === "warn") return "medium";
+  return "info";
 }

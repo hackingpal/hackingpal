@@ -70,13 +70,19 @@ SCHEMA = [
       id                TEXT PRIMARY KEY,
       engagement_id     TEXT NOT NULL REFERENCES engagements(id) ON DELETE CASCADE,
       ts                TEXT NOT NULL,
+      updated_at        TEXT NOT NULL DEFAULT '',
       title             TEXT NOT NULL,
       severity          TEXT NOT NULL,  -- info|low|medium|high|critical
       cvss              REAL,
+      cvss_vector       TEXT,           -- nullable CVSS v3.1 vector string
+      tool              TEXT NOT NULL DEFAULT '',   -- which tool produced it
+      target            TEXT NOT NULL DEFAULT '',
       description       TEXT NOT NULL DEFAULT '',
       evidence          TEXT NOT NULL DEFAULT '',
       linked_result_id  TEXT REFERENCES scan_results(id) ON DELETE SET NULL,
-      status            TEXT NOT NULL DEFAULT 'open'  -- open|triaged|fixed|wont_fix
+      status            TEXT NOT NULL DEFAULT 'open'
+      -- status: open|confirmed|false_positive|remediated (canonical)
+      -- legacy statuses still accepted: triaged|fixed|wont_fix
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_results_engagement ON scan_results(engagement_id, ts DESC)",
@@ -136,6 +142,21 @@ _conn_lock = threading.Lock()
 _write_lock = threading.Lock()
 
 
+def _migrate_findings(conn: sqlite3.Connection) -> None:
+    """Add columns to `findings` for older DBs that predate the tracker."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(findings)").fetchall()}
+    if not cols:
+        return  # table will be created by SCHEMA below
+    if "tool" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN tool TEXT NOT NULL DEFAULT ''")
+    if "target" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN target TEXT NOT NULL DEFAULT ''")
+    if "cvss_vector" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN cvss_vector TEXT")
+    if "updated_at" not in cols:
+        conn.execute("ALTER TABLE findings ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+
+
 def _connect() -> sqlite3.Connection:
     global _conn
     if _conn is not None:
@@ -153,6 +174,7 @@ def _connect() -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         for stmt in SCHEMA:
             conn.execute(stmt)
+        _migrate_findings(conn)
         conn.commit()
         _conn = conn
         return conn
@@ -299,23 +321,36 @@ def get_result(rid: str) -> dict[str, Any] | None:
 
 SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 
+# Canonical statuses (open|confirmed|false_positive|remediated) plus the
+# legacy set that predates the Findings Tracker. Both are accepted writes
+# so older engagements keep loading; the new UI emits only the canonical set.
+VALID_STATUSES = {
+    "open", "confirmed", "false_positive", "remediated",
+    "triaged", "fixed", "wont_fix",
+}
+
 
 def create_finding(
     engagement_id: str, title: str, severity: str,
     description: str = "", evidence: str = "",
     cvss: float | None = None, linked_result_id: str | None = None,
+    tool: str = "", target: str = "", cvss_vector: str | None = None,
+    status: str = "open",
 ) -> dict[str, Any]:
     if severity not in SEVERITY_ORDER:
         raise ValueError(f"unknown severity {severity!r}")
+    if status not in VALID_STATUSES:
+        raise ValueError(f"unknown status {status!r}")
     fid = str(uuid.uuid4())
     ts = _now()
     with cursor() as c:
         c.execute(
-            "INSERT INTO findings (id, engagement_id, ts, title, severity, "
-            "cvss, description, evidence, linked_result_id, status) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')",
-            (fid, engagement_id, ts, title, severity, cvss,
-             description, evidence, linked_result_id),
+            "INSERT INTO findings (id, engagement_id, ts, updated_at, title, severity, "
+            "cvss, cvss_vector, tool, target, description, evidence, "
+            "linked_result_id, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (fid, engagement_id, ts, ts, title, severity, cvss, cvss_vector,
+             tool, target, description, evidence, linked_result_id, status),
         )
         c.execute(
             "UPDATE engagements SET updated_at = ? WHERE id = ?",
@@ -342,19 +377,26 @@ def list_findings(engagement_id: str) -> list[dict[str, Any]]:
 def update_finding(fid: str, patch: dict[str, Any]) -> dict[str, Any] | None:
     fields: list[str] = []
     values: list[Any] = []
-    for key in ("title", "severity", "description", "evidence", "status"):
+    for key in ("title", "severity", "description", "evidence", "status",
+                "tool", "target"):
         if key in patch:
             if key == "severity" and patch[key] not in SEVERITY_ORDER:
                 raise ValueError(f"unknown severity {patch[key]!r}")
-            if key == "status" and patch[key] not in {"open", "triaged", "fixed", "wont_fix"}:
+            if key == "status" and patch[key] not in VALID_STATUSES:
                 raise ValueError(f"unknown status {patch[key]!r}")
             fields.append(f"{key} = ?")
             values.append(patch[key])
     if "cvss" in patch:
         fields.append("cvss = ?")
         values.append(patch["cvss"])
+    if "cvss_vector" in patch:
+        fields.append("cvss_vector = ?")
+        values.append(patch["cvss_vector"])
     if not fields:
         return get_finding(fid)
+    # Always bump updated_at on a real mutation.
+    fields.append("updated_at = ?")
+    values.append(_now())
     values.append(fid)
     with cursor() as c:
         c.execute(f"UPDATE findings SET {', '.join(fields)} WHERE id = ?", values)

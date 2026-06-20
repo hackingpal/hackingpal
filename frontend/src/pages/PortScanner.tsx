@@ -7,6 +7,7 @@ import { useLabIntent } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import { playNamed, getToolEffect } from "../lib/dopamine";
 import EffectPicker from "../components/EffectPicker";
 
@@ -363,6 +364,7 @@ export default function PortScanner() {
               stopped={stopped}
               done={done}
               total={total}
+              target={meta?.target ?? target}
             />
           </>
         )}
@@ -389,7 +391,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function ResultsTable({
-  rows, scanning, elapsed, stopped, done, total,
+  rows, scanning, elapsed, stopped, done, total, target,
 }: {
   rows: OpenRow[];
   scanning: boolean;
@@ -397,10 +399,11 @@ function ResultsTable({
   stopped: boolean;
   done: number;
   total: number;
+  target: string;
 }) {
   return (
     <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
-      <div className="grid grid-cols-[70px_60px_140px_1fr_60px] gap-3 px-3 py-1.5
+      <div className="grid grid-cols-[70px_60px_140px_1fr_120px] gap-3 px-3 py-1.5
                       bg-bg-panel border-b border-divider text-[10px]
                       uppercase tracking-[0.2em] text-ink-dim">
         <span>Port</span>
@@ -415,7 +418,7 @@ function ResultsTable({
             key={r.port}
             style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
             className={
-              "group grid grid-cols-[70px_60px_140px_1fr_60px] gap-3 px-3 py-1 mhp-result-in " +
+              "group grid grid-cols-[70px_60px_140px_1fr_120px] gap-3 px-3 py-1 mhp-result-in " +
               (i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")
             }
           >
@@ -423,7 +426,20 @@ function ResultsTable({
             <span className="text-phos">open</span>
             <span className="text-ink-muted">{r.service || "—"}</span>
             <span className="text-ink-primary truncate">{r.banner || "—"}</span>
-            <span className="flex justify-end">
+            <span className="flex justify-end items-center gap-1">
+              <PromoteToFindingButton
+                variant="compact"
+                seed={{
+                  tool: "port-scanner",
+                  target: `${target}:${r.port}`,
+                  title: `Open ${r.service || "TCP"} on ${target}:${r.port}`,
+                  severity: severityForPort(r.port, r.service),
+                  evidence:
+                    `${r.port}/tcp  open  ${r.service || "?"}\n` +
+                    (r.banner ? `banner: ${r.banner}\n` : "") +
+                    `target: ${target}`,
+                }}
+              />
               <CopyButton text={`${r.port}/${r.service}\t${r.banner}`} />
             </span>
           </div>
@@ -443,6 +459,24 @@ function ResultsTable({
       />
     </section>
   );
+}
+
+// Severity heuristic for the Promote-to-Finding modal. Lifted from the
+// network-audit RISK_DB tiers — admin/database/legacy services get a
+// higher default than HTTP, since "ssh exposed" is more triage-worthy
+// than "80 open". The user can always change it before saving.
+function severityForPort(port: number, service: string): "info" | "low" | "medium" | "high" | "critical" {
+  const svc = (service || "").toLowerCase();
+  // Admin/database surfaces.
+  if (port === 3389 || svc.includes("rdp")) return "high";
+  if (port === 1433 || port === 3306 || port === 5432 || port === 6379
+      || port === 9200 || port === 27017) return "high";
+  // SMB / NetBIOS / Telnet / FTP.
+  if (port === 445 || port === 139 || port === 23 || port === 21) return "high";
+  if (port === 22 || svc.includes("ssh")) return "medium";
+  // Web surfaces — informational by default.
+  if (port === 80 || port === 443 || svc.startsWith("http")) return "info";
+  return "low";
 }
 
 function csvEscape(v: string): string {

@@ -1,23 +1,27 @@
-import { useEffect, useState } from "react";
+// Findings — the evidence layer of an engagement.
+//
+// Promote-to-Finding actions on tool pages POST into this list. This page
+// is the read/edit/triage surface: filter by severity + status, sort
+// critical-first, click into the detail panel to edit severity, status,
+// description, or notes; delete to remove. Every mutation is audited
+// server-side via the standalone /findings router.
+
+import { useEffect, useMemo, useState } from "react";
 import {
-  createFinding,
-  deleteFinding,
+  deleteTrackedFinding,
+  FINDING_SEVERITIES,
+  FINDING_STATUSES,
   listFindings,
-  listResults,
-  updateFinding,
+  patchTrackedFinding,
   useActiveEngagementId,
   type Finding,
-  type ScanResult,
+  type FindingSeverity,
+  type FindingStatus,
 } from "../lib/engagement";
-import { authFetch, BACKEND_URL, parseError } from "../api";
 
-type Severity = Finding["severity"];
-type Status = Finding["status"];
+type Props = { onJumpTo?: (id: string) => void };
 
-const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "info"];
-const STATUSES: Status[] = ["open", "triaged", "fixed", "wont_fix"];
-
-const SEV_BG: Record<Severity, string> = {
+const SEV_BG: Record<FindingSeverity, string> = {
   critical: "bg-danger/20 border-danger/40 text-danger",
   high:     "bg-amber/20 border-amber/40 text-amber",
   medium:   "bg-amber/10 border-amber/30 text-amber",
@@ -25,14 +29,24 @@ const SEV_BG: Record<Severity, string> = {
   info:     "bg-ink-dim/10 border-divider text-ink-muted",
 };
 
-export default function Findings() {
+const SEV_RANK: Record<FindingSeverity, number> = {
+  critical: 0, high: 1, medium: 2, low: 3, info: 4,
+};
+
+function statusLabel(s: FindingStatus): string {
+  return s.replace(/_/g, " ");
+}
+
+export default function Findings({ onJumpTo }: Props) {
   const activeId = useActiveEngagementId();
   const [findings, setFindings] = useState<Finding[]>([]);
-  const [results, setResults] = useState<ScanResult[]>([]);
-  const [filterSev, setFilterSev] = useState<Set<Severity>>(new Set(SEVERITIES));
-  const [filterStat, setFilterStat] = useState<Set<Status>>(new Set(["open", "triaged"]));
-  const [showNew, setShowNew] = useState(false);
-  const [editing, setEditing] = useState<Finding | null>(null);
+  const [filterSev, setFilterSev] = useState<Set<FindingSeverity>>(
+    new Set(FINDING_SEVERITIES),
+  );
+  const [filterStat, setFilterStat] = useState<Set<FindingStatus>>(
+    new Set(FINDING_STATUSES),
+  );
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,9 +54,7 @@ export default function Findings() {
     if (!activeId) return;
     setLoading(true); setError("");
     try {
-      const [f, r] = await Promise.all([listFindings(activeId), listResults(activeId, 200)]);
-      setFindings(f);
-      setResults(r);
+      setFindings(await listFindings(activeId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -52,274 +64,258 @@ export default function Findings() {
 
   useEffect(() => { void refresh(); }, [activeId]);
 
+  const selected = useMemo(
+    () => findings.find((f) => f.id === selectedId) ?? null,
+    [findings, selectedId],
+  );
+
+  const filtered = useMemo(() => {
+    const list = findings.filter(
+      (f) => filterSev.has(f.severity) && filterStat.has(f.status),
+    );
+    list.sort((a, b) => {
+      const sd = SEV_RANK[a.severity] - SEV_RANK[b.severity];
+      if (sd !== 0) return sd;
+      return a.ts < b.ts ? 1 : a.ts > b.ts ? -1 : 0;
+    });
+    return list;
+  }, [findings, filterSev, filterStat]);
+
+  const counts = useMemo(() => {
+    const acc: Record<FindingSeverity, number> = {
+      critical: 0, high: 0, medium: 0, low: 0, info: 0,
+    };
+    for (const f of findings) acc[f.severity] += 1;
+    return acc;
+  }, [findings]);
+
   if (!activeId) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-ink-dim p-6 text-center">
-        <p className="text-[13px] mb-2">No active engagement.</p>
-        <p className="text-[11px]">Pick one from the engagement pill in the top bar to see its findings.</p>
+      <div className="h-full flex flex-col">
+        <header className="border-b border-divider px-6 pt-4 pb-3">
+          <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">
+            EVIDENCE LAYER
+          </div>
+          <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">
+            Findings
+          </h2>
+        </header>
+        <div className="flex-1 flex flex-col items-center justify-center text-ink-muted p-6 text-center">
+          <p className="text-[13px] mb-2 text-ink-primary font-bold">
+            No active engagement.
+          </p>
+          <p className="text-[12px] max-w-md">
+            Findings always belong to an engagement. Select or create one from
+            the engagement pill in the top bar, then promote a result from
+            any tool page.
+          </p>
+          {onJumpTo && (
+            <button onClick={() => onJumpTo("engagements")}
+                    className="mt-4 px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold">
+              Open Engagements
+            </button>
+          )}
+        </div>
       </div>
     );
   }
 
-  function toggleSev(s: Severity) {
-    setFilterSev((prev) => {
-      const next = new Set(prev);
-      if (next.has(s)) next.delete(s); else next.add(s);
-      return next;
-    });
-  }
-  function toggleStat(s: Status) {
-    setFilterStat((prev) => {
-      const next = new Set(prev);
-      if (next.has(s)) next.delete(s); else next.add(s);
-      return next;
-    });
-  }
-
-  async function quickStatus(f: Finding, status: Status) {
-    await updateFinding(activeId!, f.id, { status });
-    void refresh();
-  }
-
-  async function remove(f: Finding) {
-    if (!confirm(`Delete finding "${f.title}"?`)) return;
-    await deleteFinding(activeId!, f.id);
-    void refresh();
-  }
-
-  const filtered = findings
-    .filter((f) => filterSev.has(f.severity) && filterStat.has(f.status))
-    .sort((a, b) => {
-      const order = { critical: 0, high: 1, medium: 2, low: 3, info: 4 } as const;
-      return order[a.severity] - order[b.severity];
-    });
-
   return (
-    <div className="h-full p-4 overflow-y-auto">
-      <header className="flex items-center mb-3 gap-3">
-        <h2 className="text-[15px] font-bold text-ink-primary tracking-wide">FINDINGS</h2>
-        <span className="text-[11px] text-ink-dim">
-          {filtered.length} of {findings.length}
-        </span>
-        <span className="flex-1" />
-        <button onClick={() => setShowNew(true)}
-                className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold">
-          + New finding
-        </button>
+    <div className="h-full flex flex-col">
+      <header className="border-b border-divider px-6 pt-4 pb-3">
+        <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">
+          EVIDENCE LAYER
+        </div>
+        <div className="mt-0.5 flex items-baseline gap-3 flex-wrap">
+          <h2 className="text-base font-bold tracking-wide text-ink-primary">
+            Findings
+          </h2>
+          <CountsHeader counts={counts} />
+          <span className="flex-1" />
+          <span className="text-[11px] text-ink-dim">
+            {filtered.length} of {findings.length}
+          </span>
+        </div>
+
+        <div className="mt-3 flex items-center gap-4 text-[11px]">
+          <div className="flex items-center gap-1.5">
+            <span className="text-ink-muted tracking-wider">SEV:</span>
+            {FINDING_SEVERITIES.map((s) => (
+              <button key={s}
+                      onClick={() => toggle(setFilterSev, s)}
+                      className={
+                        "px-1.5 py-0.5 rounded border uppercase tracking-wider " +
+                        (filterSev.has(s)
+                          ? SEV_BG[s]
+                          : "border-divider text-ink-dim opacity-50")
+                      }>
+                {s}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-ink-muted tracking-wider">STATUS:</span>
+            {FINDING_STATUSES.map((s) => (
+              <button key={s}
+                      onClick={() => toggle(setFilterStat, s)}
+                      className={
+                        "px-1.5 py-0.5 rounded border uppercase tracking-wider " +
+                        (filterStat.has(s)
+                          ? "border-divider text-ink-primary bg-bg-nav-active"
+                          : "border-divider text-ink-dim opacity-50")
+                      }>
+                {statusLabel(s)}
+              </button>
+            ))}
+          </div>
+        </div>
       </header>
 
-      {/* Filters */}
-      <div className="flex items-center gap-4 mb-4 text-[11px]">
-        <div className="flex items-center gap-1.5">
-          <span className="text-ink-muted tracking-wider">SEV:</span>
-          {SEVERITIES.map((s) => (
-            <button key={s} onClick={() => toggleSev(s)}
-                    className={
-                      "px-1.5 py-0.5 rounded border uppercase tracking-wider " +
-                      (filterSev.has(s)
-                        ? SEV_BG[s]
-                        : "border-divider text-ink-dim opacity-50")
-                    }>
-              {s}
+      <div className="flex-1 overflow-hidden flex">
+        <div className="w-1/2 overflow-y-auto border-r border-divider p-3 space-y-2">
+          {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
+          {loading && <div className="text-[12px] text-ink-dim">Loading…</div>}
+          {!loading && filtered.length === 0 && (
+            <EmptyState hasAny={findings.length > 0} />
+          )}
+          {filtered.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setSelectedId(f.id)}
+              className={
+                "w-full text-left border rounded p-2 transition " +
+                (selectedId === f.id
+                  ? "border-accent bg-bg-nav-active"
+                  : "border-divider hover:border-accent/40")
+              }
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className={"text-[10px] uppercase tracking-wider border rounded px-1.5 " + SEV_BG[f.severity]}>
+                  {f.severity}
+                </span>
+                <span className="text-[13px] font-bold text-ink-primary truncate flex-1">
+                  {f.title}
+                </span>
+                <span className="text-[10px] uppercase tracking-wider text-ink-dim">
+                  {statusLabel(f.status)}
+                </span>
+              </div>
+              <div className="text-[10px] text-ink-dim font-mono truncate">
+                {f.tool && <span className="text-accent">{f.tool}</span>}
+                {f.tool && f.target && <span> · </span>}
+                {f.target && <span>{f.target}</span>}
+                {(f.tool || f.target) && <span> · </span>}
+                <span>{new Date(f.ts).toLocaleString()}</span>
+              </div>
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-ink-muted tracking-wider">STATUS:</span>
-          {STATUSES.map((s) => (
-            <button key={s} onClick={() => toggleStat(s)}
-                    className={
-                      "px-1.5 py-0.5 rounded border uppercase tracking-wider " +
-                      (filterStat.has(s)
-                        ? "border-divider text-ink-primary bg-bg-nav-active"
-                        : "border-divider text-ink-dim opacity-50")
-                    }>
-              {s.replace("_", " ")}
-            </button>
-          ))}
-        </div>
-      </div>
 
-      {error && <div className="text-[12px] text-danger mb-2">⚠ {error}</div>}
-      {loading && <div className="text-[12px] text-ink-dim">Loading…</div>}
-
-      {!loading && filtered.length === 0 && (
-        <div className="text-[12px] text-ink-dim italic">
-          {findings.length === 0
-            ? "No findings yet. Add one manually, or promote any scan result via the AI chat."
-            : "No findings match the current filters."}
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {filtered.map((f) => (
-          <div key={f.id} className="border border-divider rounded p-3">
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className={"text-[10px] uppercase tracking-wider border rounded px-1.5 " + SEV_BG[f.severity]}>
-                    {f.severity}
-                  </span>
-                  <h3 className="text-[13px] font-bold text-ink-primary truncate">
-                    {f.title}
-                  </h3>
-                  {f.cvss != null && (
-                    <span className="text-[10px] text-ink-muted">CVSS {f.cvss}</span>
-                  )}
-                </div>
-                <div className="text-[10px] text-ink-dim mb-1">
-                  {f.status} · {new Date(f.ts).toLocaleString()}
-                </div>
-                {f.description && (
-                  <div className="text-[12px] text-ink-primary whitespace-pre-wrap mb-1">
-                    {f.description}
-                  </div>
-                )}
-                {f.evidence && (
-                  <pre className="text-[11px] text-ink-muted whitespace-pre-wrap
-                                  bg-bg-panel border border-divider rounded p-2 mt-1
-                                  max-h-32 overflow-y-auto">
-                    {f.evidence}
-                  </pre>
-                )}
-              </div>
-              <div className="flex flex-col gap-1 shrink-0 text-[11px]">
-                <select value={f.status}
-                        onChange={(e) => quickStatus(f, e.target.value as Status)}
-                        className="bg-bg-base border border-divider rounded px-1.5 py-0.5
-                                   text-[11px] focus:outline-none focus:border-accent">
-                  {STATUSES.map((s) => <option key={s} value={s}>{s.replace("_", " ")}</option>)}
-                </select>
-                <button onClick={() => setEditing(f)}
-                        className="px-2 py-0.5 rounded border border-divider text-ink-primary">
-                  Edit
-                </button>
-                <button onClick={() => remove(f)}
-                        className="px-2 py-0.5 rounded border border-danger text-danger">
-                  Delete
-                </button>
-              </div>
+        <div className="flex-1 overflow-y-auto">
+          {selected ? (
+            <DetailPanel finding={selected}
+                         onChange={(updated) => {
+                           setFindings((list) => list.map((f) => f.id === updated.id ? updated : f));
+                         }}
+                         onDelete={async () => {
+                           await deleteTrackedFinding(selected.id);
+                           setSelectedId(null);
+                           void refresh();
+                         }} />
+          ) : (
+            <div className="h-full flex items-center justify-center text-ink-dim text-[12px] italic p-4">
+              Select a finding to view its evidence and triage state.
             </div>
-          </div>
-        ))}
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {(showNew || editing) && (
-        <FindingEditor
-          eid={activeId}
-          initial={editing}
-          results={results}
-          onClose={() => { setShowNew(false); setEditing(null); }}
-          onSaved={() => { setShowNew(false); setEditing(null); void refresh(); }}
-        />
+function toggle<T>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, value: T) {
+  setter((prev) => {
+    const next = new Set(prev);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    return next;
+  });
+}
+
+function CountsHeader({ counts }: { counts: Record<FindingSeverity, number> }) {
+  const order: FindingSeverity[] = ["critical", "high", "medium", "low", "info"];
+  const visible = order.filter((s) => counts[s] > 0);
+  if (visible.length === 0) return null;
+  return (
+    <span className="text-[11px] text-ink-muted font-mono">
+      {visible.map((s, i) => (
+        <span key={s}>
+          {i > 0 && <span className="text-ink-dim"> · </span>}
+          <span className={
+            s === "critical" ? "text-danger" :
+            s === "high"     ? "text-amber" :
+            s === "medium"   ? "text-amber/80" :
+            s === "low"      ? "text-accent" :
+                               "text-ink-muted"
+          }>
+            {counts[s]} {s}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function EmptyState({ hasAny }: { hasAny: boolean }) {
+  return (
+    <div className="text-[12px] text-ink-muted italic p-3">
+      {hasAny ? (
+        "No findings match the current filters."
+      ) : (
+        <>
+          No findings yet. Run a scan and use the{" "}
+          <span className="not-italic text-accent">⬆ Promote</span>{" "}
+          action on any result row (Port Scanner, Nmap, TLS Auditor,
+          web-exploit tools) to track it here.
+        </>
       )}
     </div>
   );
 }
 
-// ── Editor modal ────────────────────────────────────────────────────────────
+// ── Detail panel ───────────────────────────────────────────────────────────
 
-function FindingEditor({
-  eid, initial, results, onClose, onSaved,
+function DetailPanel({
+  finding, onChange, onDelete,
 }: {
-  eid: string;
-  initial: Finding | null;
-  results: ScanResult[];
-  onClose: () => void;
-  onSaved: () => void;
+  finding: Finding;
+  onChange: (f: Finding) => void;
+  onDelete: () => Promise<void>;
 }) {
-  const [title, setTitle] = useState(initial?.title ?? "");
-  const [severity, setSeverity] = useState<Severity>(initial?.severity ?? "medium");
-  const [cvss, setCvss] = useState<string>(initial?.cvss != null ? String(initial.cvss) : "");
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [evidence, setEvidence] = useState(initial?.evidence ?? "");
-  const [linkedId, setLinkedId] = useState(initial?.linked_result_id ?? "");
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(finding.title);
+  const [severity, setSeverity] = useState<FindingSeverity>(finding.severity);
+  const [status, setStatus] = useState<FindingStatus>(finding.status);
+  const [description, setDescription] = useState(finding.description);
+  const [evidence, setEvidence] = useState(finding.evidence);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // Screenshot attachments (only meaningful for existing findings — uploads are
-  // keyed by finding id, and a new finding doesn't have one yet)
-  const [screenshots, setScreenshots] = useState<{ id: string; mime: string; filename: string; size_bytes: number }[]>([]);
-  const [uploading, setUploading] = useState(false);
+  useEffect(() => {
+    setTitle(finding.title);
+    setSeverity(finding.severity);
+    setStatus(finding.status);
+    setDescription(finding.description);
+    setEvidence(finding.evidence);
+    setEditing(false);
+    setError("");
+  }, [finding.id]);
 
-  async function refreshScreenshots() {
-    if (!initial) return;
-    try {
-      const r = await authFetch(`/engagements/${eid}/findings/${initial.id}/screenshots`);
-      if (r.ok) {
-        const data = await r.json();
-        setScreenshots(data.screenshots || []);
-      }
-    } catch { /* ignore */ }
-  }
-
-  useEffect(() => { void refreshScreenshots(); }, [initial?.id]);
-
-  async function uploadFiles(files: FileList | null) {
-    if (!initial || !files || files.length === 0) return;
-    setUploading(true); setError("");
-    try {
-      for (const file of Array.from(files)) {
-        const fd = new FormData();
-        fd.append("file", file);
-        const r = await authFetch(
-          `/engagements/${eid}/findings/${initial.id}/screenshots`,
-          { method: "POST", body: fd },
-        );
-        if (!r.ok) {
-          throw new Error(await parseError(r));
-        }
-      }
-      await refreshScreenshots();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function deleteShot(sid: string) {
-    await authFetch(`/engagements/${eid}/screenshots/${sid}`, { method: "DELETE" });
-    await refreshScreenshots();
-  }
-
-  function onPaste(e: React.ClipboardEvent) {
-    if (!initial) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.kind === "file") {
-        const f = item.getAsFile();
-        if (f && f.type.startsWith("image/")) files.push(f);
-      }
-    }
-    if (files.length > 0) {
-      e.preventDefault();
-      const dt = new DataTransfer();
-      files.forEach((f) => dt.items.add(f));
-      void uploadFiles(dt.files);
-    }
-  }
-
-  async function save() {
+  async function quickStatus(next: FindingStatus) {
     setSaving(true); setError("");
     try {
-      const cvssNum = cvss.trim() ? parseFloat(cvss) : null;
-      if (initial) {
-        await updateFinding(eid, initial.id, {
-          title, severity, description, evidence,
-          cvss: Number.isFinite(cvssNum as number) ? cvssNum : null,
-        } as Partial<Finding>);
-      } else {
-        await createFinding(eid, {
-          title, severity, description, evidence,
-          cvss: Number.isFinite(cvssNum as number) ? cvssNum : null,
-          linked_result_id: linkedId || null,
-        });
-      }
-      onSaved();
+      const updated = await patchTrackedFinding(finding.id, { status: next });
+      onChange(updated);
+      setStatus(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -327,136 +323,175 @@ function FindingEditor({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 bg-bg-base/70 backdrop-blur-sm flex items-start
-                    justify-center pt-[8vh] px-4"
-         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-         onPaste={onPaste}>
-      <div className="w-full max-w-2xl bg-bg-card border border-divider rounded-lg
-                      shadow-2xl flex flex-col max-h-[85vh]">
-        <div className="flex items-center px-4 py-3 border-b border-divider">
-          <span className="text-accent text-[11px] font-bold tracking-widest">
-            {initial ? "EDIT FINDING" : "NEW FINDING"}
-          </span>
-          <span className="flex-1" />
-          <button onClick={onClose} className="text-ink-muted hover:text-ink-primary px-1">✕</button>
-        </div>
+  async function save() {
+    setSaving(true); setError("");
+    try {
+      const updated = await patchTrackedFinding(finding.id, {
+        title, severity, status, description, evidence,
+      });
+      onChange(updated);
+      setEditing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          <div>
-            <label className="block text-[11px] text-ink-muted tracking-wider mb-1">TITLE</label>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus
-                   placeholder="Reflected XSS on /search via q parameter"
+  async function remove() {
+    if (!confirm(`Delete finding "${finding.title}"?`)) return;
+    await onDelete();
+  }
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <span className={"text-[10px] uppercase tracking-wider border rounded px-1.5 " + SEV_BG[severity]}>
+          {severity}
+        </span>
+        <h3 className="text-[15px] font-bold text-ink-primary flex-1 truncate">
+          {finding.title}
+        </h3>
+        {!editing && (
+          <button onClick={() => setEditing(true)}
+                  className="text-[11px] uppercase tracking-wider border border-divider
+                             rounded px-2 py-0.5 text-ink-muted hover:text-ink-primary">
+            Edit
+          </button>
+        )}
+        <button onClick={() => void remove()}
+                className="text-[11px] uppercase tracking-wider border border-danger
+                           rounded px-2 py-0.5 text-danger">
+          Delete
+        </button>
+      </div>
+
+      <div className="text-[11px] text-ink-dim font-mono">
+        <span className="text-accent">{finding.tool || "(no tool)"}</span>
+        {finding.target && <> · {finding.target}</>}
+        {" · "}
+        created {new Date(finding.ts).toLocaleString()}
+        {finding.updated_at && finding.updated_at !== finding.ts && (
+          <> · updated {new Date(finding.updated_at).toLocaleString()}</>
+        )}
+      </div>
+
+      {/* Status quick-toggle row — always visible, even outside edit mode. */}
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span className="text-ink-muted tracking-wider">STATUS:</span>
+        {FINDING_STATUSES.map((s) => (
+          <button key={s}
+                  disabled={saving || s === status}
+                  onClick={() => void quickStatus(s)}
+                  className={
+                    "px-2 py-0.5 rounded border uppercase tracking-wider " +
+                    (s === status
+                      ? "border-accent text-accent bg-accent/10"
+                      : "border-divider text-ink-muted hover:text-ink-primary disabled:opacity-40")
+                  }>
+            {statusLabel(s)}
+          </button>
+        ))}
+      </div>
+
+      {editing ? (
+        <div className="space-y-3">
+          <Field label="TITLE">
+            <input value={title} onChange={(e) => setTitle(e.target.value)}
                    className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
                               text-[13px] focus:outline-none focus:border-accent" />
-          </div>
-
+          </Field>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] text-ink-muted tracking-wider mb-1">SEVERITY</label>
-              <select value={severity} onChange={(e) => setSeverity(e.target.value as Severity)}
+            <Field label="SEVERITY">
+              <select value={severity}
+                      onChange={(e) => setSeverity(e.target.value as FindingSeverity)}
                       className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
                                  text-[12px] focus:outline-none focus:border-accent">
-                {SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
+                {FINDING_SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-            </div>
-            <div>
-              <label className="block text-[11px] text-ink-muted tracking-wider mb-1">
-                CVSS (optional, 0–10)
-              </label>
-              <input type="number" min={0} max={10} step={0.1}
-                     value={cvss} onChange={(e) => setCvss(e.target.value)}
-                     className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
-                                text-[12px] focus:outline-none focus:border-accent" />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] text-ink-muted tracking-wider mb-1">DESCRIPTION</label>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
-                      rows={4}
-                      placeholder="What is the issue? Impact? Remediation?"
-                      className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
-                                 text-[12px] focus:outline-none focus:border-accent" />
-          </div>
-
-          <div>
-            <label className="block text-[11px] text-ink-muted tracking-wider mb-1">EVIDENCE</label>
-            <textarea value={evidence} onChange={(e) => setEvidence(e.target.value)}
-                      rows={5}
-                      placeholder="Reproduction steps, request/response snippets, output snippet…"
-                      className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
-                                 text-[12px] font-mono focus:outline-none focus:border-accent" />
-          </div>
-
-          {!initial && (
-            <div>
-              <label className="block text-[11px] text-ink-muted tracking-wider mb-1">
-                LINK TO A SCAN RESULT (optional)
-              </label>
-              <select value={linkedId} onChange={(e) => setLinkedId(e.target.value)}
+            </Field>
+            <Field label="STATUS">
+              <select value={status}
+                      onChange={(e) => setStatus(e.target.value as FindingStatus)}
                       className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
                                  text-[12px] focus:outline-none focus:border-accent">
-                <option value="">— none —</option>
-                {results.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    [{r.tool}] {r.target || r.summary.slice(0, 60)} · {new Date(r.ts).toLocaleTimeString()}
-                  </option>
+                {FINDING_STATUSES.map((s) => (
+                  <option key={s} value={s}>{statusLabel(s)}</option>
                 ))}
               </select>
-            </div>
-          )}
-
-          {initial && (
-            <div>
-              <label className="block text-[11px] text-ink-muted tracking-wider mb-1">
-                SCREENSHOTS · paste or drop images to attach
-              </label>
-              <input type="file" accept="image/*" multiple
-                     onChange={(e) => uploadFiles(e.target.files)}
-                     disabled={uploading}
-                     className="block w-full text-[11px] text-ink-muted
-                                file:mr-3 file:py-1 file:px-2 file:border file:border-divider
-                                file:bg-bg-base file:text-accent file:rounded
-                                file:cursor-pointer" />
-              {screenshots.length > 0 && (
-                <div className="grid grid-cols-3 gap-2 mt-2">
-                  {screenshots.map((s) => (
-                    <div key={s.id} className="relative border border-divider rounded overflow-hidden">
-                      <img src={`${BACKEND_URL}/engagements/${eid}/screenshots/${s.id}`}
-                           alt={s.filename}
-                           className="w-full h-24 object-cover" />
-                      <div className="absolute inset-x-0 bottom-0 bg-bg-base/90 px-1 py-0.5
-                                      flex items-center text-[10px]">
-                        <span className="truncate flex-1 text-ink-muted">{s.filename}</span>
-                        <button onClick={() => deleteShot(s.id)}
-                                className="text-danger hover:underline ml-1">×</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <p className="text-[10px] text-ink-dim mt-1">
-                Embedded inline in the engagement's HTML report.
-              </p>
-            </div>
-          )}
+            </Field>
+          </div>
+          <Field label="DESCRIPTION / NOTES">
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                      rows={4}
+                      className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
+                                 text-[12px] focus:outline-none focus:border-accent" />
+          </Field>
+          <Field label="EVIDENCE">
+            <textarea value={evidence} onChange={(e) => setEvidence(e.target.value)}
+                      rows={8}
+                      className="w-full bg-bg-base border border-divider rounded px-2 py-1.5
+                                 text-[11px] font-mono focus:outline-none focus:border-accent" />
+          </Field>
 
           {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
-        </div>
 
-        <div className="border-t border-divider px-4 py-3 flex gap-2 justify-end">
-          <button onClick={onClose}
-                  className="px-3 py-1.5 rounded border border-divider text-ink-muted text-[12px]">
-            Cancel
-          </button>
-          <button onClick={save} disabled={saving || !title.trim()}
-                  className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
-                             disabled:opacity-40 disabled:cursor-not-allowed">
-            {saving ? "Saving…" : initial ? "Save" : "Create"}
-          </button>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => {
+                      setEditing(false);
+                      setTitle(finding.title);
+                      setSeverity(finding.severity);
+                      setStatus(finding.status);
+                      setDescription(finding.description);
+                      setEvidence(finding.evidence);
+                    }}
+                    className="px-3 py-1.5 rounded border border-divider text-ink-muted text-[12px]">
+              Cancel
+            </button>
+            <button onClick={save} disabled={saving || !title.trim()}
+                    className="px-3 py-1.5 rounded bg-accent text-white text-[12px] font-bold
+                               disabled:opacity-40 disabled:cursor-not-allowed">
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {description && (
+            <section>
+              <div className="text-[10px] uppercase tracking-wider text-ink-muted mb-1">
+                DESCRIPTION
+              </div>
+              <div className="text-[12px] whitespace-pre-wrap text-ink-primary">
+                {description}
+              </div>
+            </section>
+          )}
+          {evidence && (
+            <section>
+              <div className="text-[10px] uppercase tracking-wider text-ink-muted mb-1">
+                EVIDENCE
+              </div>
+              <pre className="text-[11px] font-mono whitespace-pre-wrap bg-bg-base
+                              border border-divider rounded p-2 max-h-96 overflow-y-auto">
+                {evidence}
+              </pre>
+            </section>
+          )}
+          {error && <div className="text-[12px] text-danger">⚠ {error}</div>}
+        </>
+      )}
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-[10px] uppercase tracking-widest text-ink-muted block mb-1">
+        {label}
+      </span>
+      {children}
+    </label>
   );
 }

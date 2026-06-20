@@ -157,6 +157,65 @@ async def test_engagements(client):
     assert "engagements" in r.json()
 
 
+@pytest.mark.asyncio
+async def test_findings_happy_path(client):
+    # /findings is the evidence layer: it must accept an engagement_id,
+    # list cleanly when empty, create a promoted finding, and surface it
+    # back via the standalone endpoint and the per-engagement list.
+    create = await client.post(
+        "/engagements", headers=AUTH,
+        json={"name": "smoke", "scope": [], "exclusions": [], "notes": ""},
+    )
+    assert create.status_code == 200, create.text
+    eid = create.json()["id"]
+
+    listed = await client.get(f"/findings?engagement_id={eid}", headers=AUTH)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body == {"count": 0, "findings": []}
+
+    posted = await client.post(
+        "/findings", headers=AUTH,
+        json={
+            "engagement_id": eid,
+            "title": "Open SSH on 22",
+            "severity": "medium",
+            "tool": "port-scanner",
+            "target": "127.0.0.1",
+            "evidence": "22/tcp open ssh OpenSSH 9.6",
+            "description": "Default SSH banner exposed.",
+        },
+    )
+    assert posted.status_code == 200, posted.text
+    fid = posted.json()["id"]
+    assert posted.json()["status"] == "open"
+    assert posted.json()["tool"] == "port-scanner"
+
+    # Single-finding read goes through the standalone endpoint.
+    single = await client.get(f"/findings/{fid}", headers=AUTH)
+    assert single.status_code == 200
+    assert single.json()["title"] == "Open SSH on 22"
+
+    # Patching status to a canonical value bumps updated_at and is audited.
+    patched = await client.patch(
+        f"/findings/{fid}", headers=AUTH,
+        json={"status": "confirmed"},
+    )
+    assert patched.status_code == 200
+    assert patched.json()["status"] == "confirmed"
+
+    # Audit log records the create + patch as finding-* actions.
+    audit = await client.get(
+        f"/audit-log?engagement_id={eid}&tool=finding-create", headers=AUTH,
+    )
+    assert audit.status_code == 200
+    assert audit.json()["count"] >= 1
+
+    deleted = await client.delete(f"/findings/{fid}", headers=AUTH)
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+
 # ── WebSocket handshake smoke tests ─────────────────────────────────────────
 #
 # Each canonical streaming router gets one probe that confirms the upgrade

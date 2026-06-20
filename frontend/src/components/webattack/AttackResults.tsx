@@ -10,6 +10,8 @@ import SeverityBadge, { type Severity } from "../SeverityBadge";
 import CopyButton from "../CopyButton";
 import StatsBar from "../StatsBar";
 import EmptyState from "../EmptyState";
+import PromoteToFindingButton from "../PromoteToFindingButton";
+import type { FindingSeverity } from "../../lib/engagement";
 
 export type Attempt = {
   payload: string;
@@ -47,9 +49,15 @@ type Props = {
   findings: Finding[];
   extraColumns?: { key: string; label: string }[];  // attempts table extra columns
   doneText?: string;
+  /** Tool slug used when promoting a finding (e.g. "xss", "sqli"). */
+  promoteTool?: string;
+  /** Target shown on the promoted finding — usually the request URL. */
+  promoteTarget?: string;
 };
 
-export default function AttackResults({ attempts, findings, extraColumns = [], doneText }: Props) {
+export default function AttackResults({
+  attempts, findings, extraColumns = [], doneText, promoteTool, promoteTarget,
+}: Props) {
   const [showAttempts, setShowAttempts] = useState(true);
 
   const sevCounts = findings.reduce(
@@ -105,7 +113,26 @@ export default function AttackResults({ attempts, findings, extraColumns = [], d
                   {f.extra && Object.entries(f.extra).map(([k, v]) =>
                     v ? <span key={k} className="text-ink-dim">{k}={String(v)}</span> : null
                   )}
-                  <CopyButton text={copyText} className="ml-auto" />
+                  <span className="ml-auto flex items-center gap-1">
+                    {promoteTool && (
+                      <PromoteToFindingButton
+                        variant="compact"
+                        seed={{
+                          tool: promoteTool,
+                          target: promoteTarget ?? "",
+                          title: webExploitTitle(promoteTool, f),
+                          severity: trackerSeverity(f.severity, !!f.confirmed),
+                          description: f.confirmed ? "Confirmed via active probe." : "",
+                          evidence:
+                            `Payload: ${f.payload}\n` +
+                            (promoteTarget ? `Target:  ${promoteTarget}\n` : "") +
+                            (f.confirmed ? "Confirmed: yes\n" : "") +
+                            (f.evidence ? `\n${f.evidence}` : ""),
+                        }}
+                      />
+                    )}
+                    <CopyButton text={copyText} />
+                  </span>
                 </div>
                 <div className="text-[12px] font-mono text-ink-primary mb-1 break-all">
                   payload: <span className="text-amber">{f.payload}</span>
@@ -174,4 +201,28 @@ export default function AttackResults({ attempts, findings, extraColumns = [], d
 
     </div>
   );
+}
+
+// "high" + confirmed is what the WEB EXPLOIT pages emit on a verified hit
+// (XSS payload reflected in executable context, SQLi error/timing match,
+// CMDi sleep observed, …). Map to the tracker's 5-tier scale.
+function trackerSeverity(s: "info" | "warn" | "high", confirmed: boolean): FindingSeverity {
+  if (s === "high") return confirmed ? "critical" : "high";
+  if (s === "warn") return "medium";
+  return "info";
+}
+
+function webExploitTitle(tool: string, f: Finding): string {
+  const labels: Record<string, string> = {
+    xss:     "Reflected XSS",
+    sqli:    "SQL Injection",
+    cmdi:    "Command Injection",
+    lfi:     "Local File Inclusion",
+    ssrf:    "SSRF",
+    idor:    "IDOR",
+  };
+  const label = labels[tool] ?? tool.toUpperCase();
+  const suffix = f.confirmed ? " — confirmed" : "";
+  const payloadHint = f.payload ? ` (${f.payload.slice(0, 40)}${f.payload.length > 40 ? "…" : ""})` : "";
+  return `${label}${suffix}${payloadHint}`;
 }

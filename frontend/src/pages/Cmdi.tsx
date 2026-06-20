@@ -122,6 +122,8 @@ export default function Cmdi() {
         findings={findings}
         extraColumns={[{ key: "mode", label: "MODE" }, { key: "label", label: "LABEL" }]}
         doneText={doneText}
+        promoteTool="cmdi"
+        promoteTarget={req.url}
       />
     </div>
   );

@@ -87,6 +87,7 @@ import AiAssistant from "./pages/AiAssistant";
 import Tools from "./pages/Tools";
 import Targets from "./pages/Targets";
 import EngagementWorkspace from "./pages/EngagementWorkspace";
+import Findings from "./pages/Findings";
 import EffectsDebug from "./pages/EffectsDebug";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
@@ -326,7 +327,7 @@ export default function App() {
            active === "workspace"   ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "evidence"    ? <EngagementWorkspace onJumpTo={navigate} /> :
            active === "reports"     ? <EngagementWorkspace onJumpTo={navigate} /> :
-           active === "findings"    ? <EngagementWorkspace onJumpTo={navigate} /> :
+           active === "findings"    ? <Findings onJumpTo={navigate} /> :
            active === "assistant"   ? <AiAssistant activePage={active} /> :
            active === "playbooks"   ? <Playbooks initialTab="browse" onJumpTo={navigate} /> :
            active === "playbook-builder" ? <Playbooks initialTab="build" onJumpTo={navigate} /> :

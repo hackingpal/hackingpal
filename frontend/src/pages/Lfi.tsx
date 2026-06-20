@@ -104,6 +104,8 @@ export default function Lfi() {
         findings={findings}
         extraColumns={[{ key: "hit", label: "HIT" }]}
         doneText={doneText}
+        promoteTool="lfi"
+        promoteTarget={req.url}
       />
     </div>
   );

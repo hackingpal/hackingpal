@@ -8,6 +8,7 @@ import {
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
 import EmptyStateComponent from "../components/EmptyState";
+import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import ToolRequirements from "../components/ToolRequirements";
 import SetupWizard, { type SetupStep } from "../components/SetupWizard";
 import { shouldAutoOpen } from "../lib/setupState";
@@ -1229,7 +1230,7 @@ function PortsTable({ rows }: { rows: { host: string; p: NmapPortResultExt }[] }
   if (rows.length === 0) return <div className="text-ink-dim text-xs font-mono">No ports.</div>;
   return (
     <section className="border border-divider rounded-md overflow-hidden bg-bg-card">
-      <div className="grid grid-cols-[1fr_60px_50px_60px_140px_1fr] gap-3 px-3 py-1.5
+      <div className="grid grid-cols-[1fr_60px_50px_60px_140px_1fr_70px] gap-3 px-3 py-1.5
                       bg-bg-panel border-b border-divider text-[10px]
                       uppercase tracking-[0.2em] text-ink-dim">
         <span>Host</span>
@@ -1238,11 +1239,22 @@ function PortsTable({ rows }: { rows: { host: string; p: NmapPortResultExt }[] }
         <span>State</span>
         <span>Service</span>
         <span>Version</span>
+        <span></span>
       </div>
       <div className="font-mono text-xs">
-        {rows.map((r, i) => (
+        {rows.map((r, i) => {
+          const versionStr = [r.p.product, r.p.version, r.p.extra_info]
+            .filter(Boolean).join(" ");
+          const evidence =
+            `Host:    ${r.host}\n` +
+            `Port:    ${r.p.proto}/${r.p.port}\n` +
+            `State:   ${r.p.state}${r.p.reason ? ` (${r.p.reason})` : ""}\n` +
+            `Service: ${r.p.service || "?"}\n` +
+            (versionStr ? `Version: ${versionStr}\n` : "") +
+            (r.p.cpe?.length ? `CPE:     ${r.p.cpe.join(", ")}\n` : "");
+          return (
           <div key={r.host + r.p.proto + r.p.port + i}
-               className={"grid grid-cols-[1fr_60px_50px_60px_140px_1fr] gap-3 px-3 py-1 " +
+               className={"group grid grid-cols-[1fr_60px_50px_60px_140px_1fr_70px] gap-3 px-3 py-1 " +
                           (i % 2 === 0 ? "bg-bg-card" : "bg-bg-row-alt")}>
             <span className="text-ink-muted truncate">{r.host}</span>
             <span className="text-ink-primary tabular-nums">{r.p.port}</span>
@@ -1252,14 +1264,44 @@ function PortsTable({ rows }: { rows: { host: string; p: NmapPortResultExt }[] }
                            : "text-ink-dim"}>{r.p.state}</span>
             <span className="text-ink-muted">{r.p.service || "—"}</span>
             <span className="text-ink-primary truncate"
-                  title={[r.p.product, r.p.version, r.p.extra_info].filter(Boolean).join(" ")}>
-              {[r.p.product, r.p.version, r.p.extra_info].filter(Boolean).join(" ") || "—"}
+                  title={versionStr}>
+              {versionStr || "—"}
+            </span>
+            <span className="flex justify-end">
+              {r.p.state === "open" && (
+                <PromoteToFindingButton
+                  variant="compact"
+                  seed={{
+                    tool: "nmap",
+                    target: `${r.host}:${r.p.port}/${r.p.proto}`,
+                    title: `Open ${r.p.service || r.p.proto.toUpperCase()} on ${r.host}:${r.p.port}` +
+                           (versionStr ? ` (${versionStr})` : ""),
+                    severity: nmapSeverity(r.p.port, r.p.service, versionStr),
+                    evidence,
+                  }}
+                />
+              )}
             </span>
           </div>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
+}
+
+function nmapSeverity(port: number, service: string, version: string): "info" | "low" | "medium" | "high" | "critical" {
+  const svc = (service || "").toLowerCase();
+  const ver = (version || "").toLowerCase();
+  // Anything still advertising a known-old OpenSSH/Apache/IIS hints triage.
+  if (ver.includes("openssh_4.") || ver.includes("openssh_5.")) return "high";
+  if (port === 3389) return "high";
+  if (port === 1433 || port === 3306 || port === 5432
+      || port === 6379 || port === 9200 || port === 27017) return "high";
+  if (port === 445 || port === 139 || port === 23 || port === 21) return "high";
+  if (port === 22 || svc.includes("ssh")) return "medium";
+  if (port === 80 || port === 443 || svc.startsWith("http")) return "info";
+  return "low";
 }
 
 function ScriptsView({ report }: { report: NmapReport | null }) {

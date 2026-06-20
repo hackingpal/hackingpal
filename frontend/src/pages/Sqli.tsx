@@ -127,6 +127,8 @@ export default function Sqli() {
         findings={findings}
         extraColumns={[{ key: "method", label: "METHOD" }]}
         doneText={doneText}
+        promoteTool="sqli"
+        promoteTarget={req.url}
       />
     </div>
   );

@@ -95,6 +95,8 @@ export default function Xss() {
         findings={findings}
         extraColumns={[{ key: "reflected", label: "REFL" }, { key: "context", label: "CTX" }]}
         doneText={doneText}
+        promoteTool="xss"
+        promoteTarget={req.url}
       />
     </div>
   );
