@@ -36,8 +36,6 @@ export const TOP_NAV: NavItem[] = [
   { id: "tools",            label: "Tools"            },
   { id: "workspace",        label: "Workspace"        },
   { id: "report",           label: "Report"           },
-  { id: "effects-debug",    label: "Effects Debug"    },
-  { id: "glyphs",           label: "Glyphs"           },
   { id: "settings",         label: "Settings"         },
 ];
 

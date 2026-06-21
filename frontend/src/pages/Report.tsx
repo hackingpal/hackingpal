@@ -16,6 +16,7 @@ import {
   type FindingSeverity,
 } from "../lib/engagement";
 import type { Evidence, EvidenceType } from "../lib/engagement";
+import Glyph from "../components/Glyph";
 
 type Props = { onJumpTo?: (id: string) => void };
 
@@ -97,9 +98,12 @@ export default function Report({ onJumpTo }: Props) {
           <div className="text-[10px] uppercase tracking-[0.25em] text-ink-dim">
             REPORT EXPORT
           </div>
-          <h2 className="mt-0.5 text-base font-bold tracking-wide text-ink-primary">
-            Report
-          </h2>
+          <div className="mt-0.5 flex items-center gap-2">
+            <Glyph name="report" size={18} className="text-ink-primary" />
+            <h2 className="text-base font-bold tracking-wide text-ink-primary">
+              Report
+            </h2>
+          </div>
         </header>
         <div className="flex-1 flex flex-col items-center justify-center text-ink-muted p-6 text-center">
           <p className="text-[13px] mb-2 text-ink-primary font-bold">
@@ -128,6 +132,9 @@ export default function Report({ onJumpTo }: Props) {
           REPORT EXPORT
         </div>
         <div className="mt-0.5 flex items-baseline gap-3 flex-wrap">
+          <span className="self-center">
+            <Glyph name="report" size={18} className="text-ink-primary" />
+          </span>
           <h2 className="text-base font-bold tracking-wide text-ink-primary">
             {preview ? preview.header.engagement_name : "Report"}
           </h2>

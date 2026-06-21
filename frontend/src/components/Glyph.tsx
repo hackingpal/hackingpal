@@ -38,7 +38,7 @@ export type GlyphName =
   // system
   | "linux-posture" | "macos-posture" | "windows-posture" | "network-audit"
   | "ids" | "tls-auditor" | "email-security" | "firewall-rules"
-  | "systemd-units" | "processes" | "tcpdump" | "ai-assistant";
+  | "systemd-units" | "processes" | "tcpdump" | "ai-assistant" | "report";
 
 const GROUP_BY_NAME: Record<GlyphName, GlyphGroup> = {
   ping: "recon", "wifi-scan": "recon", "local-discovery": "recon",
@@ -66,6 +66,7 @@ const GROUP_BY_NAME: Record<GlyphName, GlyphGroup> = {
   "tls-auditor": "system", "email-security": "system",
   "firewall-rules": "system", "systemd-units": "system",
   processes: "system", tcpdump: "system", "ai-assistant": "system",
+  report: "system",
 };
 
 // Tailwind class used as the default tint when the caller doesn't override
@@ -465,6 +466,19 @@ const GLYPHS: Record<GlyphName, ReactNode> = {
   "ai-assistant": <>
     <path d="M11 4c.8 3.6 1.6 4.4 5.2 5.2-3.6.8-4.4 1.6-5.2 5.2-.8-3.6-1.6-4.4-5.2-5.2C9.4 8.4 10.2 7.6 11 4z" />
     <path d="M17.5 14.5c.3 1.4.6 1.7 2 2-1.4.3-1.7.6-2 2-.3-1.4-.6-1.7-2-2 1.4-.3 1.7-.6 2-2z" />
+  </>,
+  // Engagement report — page with a small severity-count bar chart inside.
+  // Two short text lines up top stand in for the exec summary; the three
+  // ascending bars carry the "findings by severity" idea without crowding
+  // the 24-grid.
+  report: <>
+    <rect x={4} y={4.5} width={16} height={15} rx={1.5} />
+    <line x1={7} y1={8} x2={14} y2={8} />
+    <line x1={7} y1={10.5} x2={12} y2={10.5} />
+    <line x1={7} y1={16} x2={17} y2={16} />
+    <line x1={8.5} y1={16} x2={8.5} y2={13.5} />
+    <line x1={11.5} y1={16} x2={11.5} y2={12} />
+    <line x1={14.5} y1={16} x2={14.5} y2={10.5} />
   </>,
 };
 

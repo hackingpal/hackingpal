@@ -102,6 +102,7 @@ const SECTIONS: Section[] = [
       { name: "processes",       label: "Processes" },
       { name: "tcpdump",         label: "TCPDump" },
       { name: "ai-assistant",    label: "AI Assistant" },
+      { name: "report",          label: "Report" },
     ],
   },
 ];

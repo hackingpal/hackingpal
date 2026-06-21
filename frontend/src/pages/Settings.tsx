@@ -76,8 +76,42 @@ export default function Settings({ onJumpTo }: Props) {
         <ModeSection onJumpTo={onJumpTo} />
         <AppearanceSection />
         <EffectsSection />
+        <DeveloperSection onJumpTo={onJumpTo} />
       </div>
     </div>
+  );
+}
+
+// ── Developer ──────────────────────────────────────────────────────────────
+// Reachable surfaces that used to live in the top-level sidebar but don't
+// need to be there day-to-day — kept addressable here so the routes still
+// work via deep-linking and so a developer can browse them when needed.
+
+function DeveloperSection({ onJumpTo }: { onJumpTo: (id: string) => void }) {
+  return (
+    <Section title="Developer"
+             hint="Internal tools that don't belong on the main sidebar.">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
+        <button onClick={() => onJumpTo("glyphs")}
+                className="text-left px-3 py-2 rounded border border-divider
+                           hover:border-accent/40 hover:bg-bg-nav-hover">
+          <div className="text-ink-primary font-bold">Glyphs</div>
+          <div className="text-[11px] text-ink-dim mt-0.5">
+            Browse the Operator Glyph Set — every glyph at display + ship size,
+            light + dark, grouped by category.
+          </div>
+        </button>
+        <button onClick={() => onJumpTo("effects-debug")}
+                className="text-left px-3 py-2 rounded border border-divider
+                           hover:border-accent/40 hover:bg-bg-nav-hover">
+          <div className="text-ink-primary font-bold">Effects Debug</div>
+          <div className="text-[11px] text-ink-dim mt-0.5">
+            Preview the dopamine sound + visual effects layer at the
+            settings you've picked.
+          </div>
+        </button>
+      </div>
+    </Section>
   );
 }
 
