@@ -1,5 +1,7 @@
 import { useMemo } from "react";
 
+import Glyph from "./Glyph";
+
 export type NavId =
   | "home" | "targets" | "tools" | "evidence" | "reports" | "report" | "assistant"
   | "workspace" | "playbook-builder"
@@ -20,7 +22,7 @@ export type NavId =
   | "hash" | "cvss"
   | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
-  | "wifi" | "term" | "brew" | "settings" | "effects-debug" | "glyphs";
+  | "wifi" | "term" | "brew" | "settings";
 
 import { topNav, type Platform } from "../lib/nav";
 
@@ -106,13 +108,12 @@ function NavIcon({ id, className = "" }: { id: string; className?: string }) {
           <path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4.9a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.5a7 7 0 0 0-2 1.2l-2.4-.9-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-.9a7 7 0 0 0 2 1.2L10 21h4l.5-2.5a7 7 0 0 0 2-1.2l2.4.9 2-3.4-2-1.6c0-.4.1-.8.1-1.2Z" />
         </svg>
       );
-    case "effects-debug":
-      return (
-        <svg {...common}>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 8v4l3 2" />
-        </svg>
-      );
+    case "report":
+      // Reuse the canonical Report glyph from the design system so the
+      // sidebar mark matches the one rendered on the Report page itself.
+      // `className="shrink-0"` skips Glyph's group-tint and lets the
+      // surrounding button's `color` cascade via currentColor.
+      return <Glyph name="report" size={14} className="shrink-0" />;
     default:
       return (
         <svg {...common}>

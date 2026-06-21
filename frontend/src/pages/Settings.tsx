@@ -18,7 +18,7 @@
 //     confirmation flows for; out of v1 settings scope).
 
 import { useCallback, useEffect, useState } from "react";
-import { Button, StatusDot } from "performative-ui";
+import { Button, EyebrowPill, StatusDot, WibblingSpinner } from "performative-ui";
 import {
   api,
   auditPromptEdit,
@@ -42,8 +42,10 @@ import {
   setSettings as setDopamineSettings,
   resetSettings as resetDopamineSettings,
   playNamed,
-  type DopamineSettings, type DopamineMood,
+  pulse, celebrateBig, inkConfirm, radarSweep, failStamp,
+  type DopamineSettings, type DopamineMood, type EffectName,
 } from "../lib/dopamine";
+import Glyph, { type GlyphName, type GlyphGroup } from "../components/Glyph";
 
 type Health = { status: string; version: string; pid: string };
 
@@ -76,42 +78,386 @@ export default function Settings({ onJumpTo }: Props) {
         <ModeSection onJumpTo={onJumpTo} />
         <AppearanceSection />
         <EffectsSection />
-        <DeveloperSection onJumpTo={onJumpTo} />
+        <DeveloperSection />
       </div>
     </div>
   );
 }
 
 // ── Developer ──────────────────────────────────────────────────────────────
-// Reachable surfaces that used to live in the top-level sidebar but don't
-// need to be there day-to-day — kept addressable here so the routes still
-// work via deep-linking and so a developer can browse them when needed.
+// Glyphs + EffectsDebug used to be separate sidebar pages. They moved
+// here as collapsible disclosures — the only entry point was Settings
+// anyway, and keeping them out of the top nav reflects the workflow-first
+// pivot in CLAUDE.md.
 
-function DeveloperSection({ onJumpTo }: { onJumpTo: (id: string) => void }) {
+function DeveloperSection() {
   return (
     <Section title="Developer"
-             hint="Internal tools that don't belong on the main sidebar.">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
-        <button onClick={() => onJumpTo("glyphs")}
-                className="text-left px-3 py-2 rounded border border-divider
-                           hover:border-accent/40 hover:bg-bg-nav-hover">
-          <div className="text-ink-primary font-bold">Glyphs</div>
-          <div className="text-[11px] text-ink-dim mt-0.5">
-            Browse the Operator Glyph Set — every glyph at display + ship size,
-            light + dark, grouped by category.
-          </div>
-        </button>
-        <button onClick={() => onJumpTo("effects-debug")}
-                className="text-left px-3 py-2 rounded border border-divider
-                           hover:border-accent/40 hover:bg-bg-nav-hover">
-          <div className="text-ink-primary font-bold">Effects Debug</div>
-          <div className="text-[11px] text-ink-dim mt-0.5">
-            Preview the dopamine sound + visual effects layer at the
-            settings you've picked.
-          </div>
-        </button>
+             hint="Design-system reference + effects layer debug. Open the panels you need.">
+      <div className="space-y-2">
+        <Disclosure
+          summary="Glyphs"
+          hint="Operator Glyph Set — every glyph at display + ship size, light + dark."
+        >
+          <GlyphsBody />
+        </Disclosure>
+        <Disclosure
+          summary="Effects Debug"
+          hint="Fire every Dopamine effect anchored to its tile so visual glitches are easy to isolate."
+        >
+          <EffectsDebugBody />
+        </Disclosure>
       </div>
     </Section>
+  );
+}
+
+// `<details>` with a styled summary chevron. Keeps both heavy debug
+// panels collapsed by default so they don't dominate the Settings scroll.
+function Disclosure({ summary, hint, children }: {
+  summary: string; hint: string; children: React.ReactNode;
+}) {
+  return (
+    <details className="group rounded border border-divider bg-bg-base
+                        open:bg-bg-card transition">
+      <summary className="cursor-pointer list-none px-3 py-2 flex items-center
+                          gap-2 hover:bg-bg-nav-hover rounded">
+        <span className="text-ink-dim text-[10px] transition
+                         group-open:rotate-90 inline-block w-3">▶</span>
+        <span className="text-ink-primary font-bold text-[12px]">{summary}</span>
+        <span className="text-[11px] text-ink-dim truncate">{hint}</span>
+      </summary>
+      <div className="px-3 pb-3 pt-1 border-t border-divider/60">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+// ── Glyphs body (inlined from former pages/Glyphs.tsx) ─────────────────────
+
+type GlyphSection = {
+  group: GlyphGroup;
+  title: string;
+  subtitle: string;
+  lightColor: string;
+  darkColor: string;
+  items: { name: GlyphName; label: string }[];
+};
+
+const GLYPH_SECTIONS: GlyphSection[] = [
+  {
+    group: "recon",
+    title: "Recon & Intel",
+    subtitle: "Passive discovery, enumeration, OSINT",
+    lightColor: "#2c7a52",
+    darkColor:  "#4fd089",
+    items: [
+      { name: "ping",             label: "Ping" },
+      { name: "wifi-scan",        label: "WiFi Scan" },
+      { name: "local-discovery",  label: "Local Discovery" },
+      { name: "dns-recon",        label: "DNS Recon" },
+      { name: "whois",            label: "WHOIS" },
+      { name: "subdomain-enum",   label: "Subdomain Enum" },
+      { name: "http-probe",       label: "HTTP Probe" },
+      { name: "shodan",           label: "Shodan / Censys" },
+      { name: "dorking",          label: "Google Dorking" },
+      { name: "dorks-gen",        label: "Dorks Generator" },
+      { name: "ct-logs",          label: "CT Logs" },
+      { name: "wayback",          label: "Wayback URLs" },
+      { name: "cms-detect",       label: "CMS Detect" },
+      { name: "github-leak",      label: "GitHub Leak" },
+      { name: "profile-finder",   label: "Profile Finder" },
+      { name: "people-enum",      label: "People Enum" },
+      { name: "email-harvest",    label: "Email Harvest" },
+      { name: "reverse-ip",       label: "Reverse IP" },
+      { name: "ip-checker",       label: "IP Checker" },
+      { name: "aws-recon",        label: "AWS Recon" },
+      { name: "fingerprint",      label: "Fingerprint" },
+      { name: "url-scan",         label: "URL Scan" },
+      { name: "port-scanner",     label: "Port Scanner" },
+      { name: "nmap",             label: "Nmap" },
+      { name: "lan-scan",         label: "LAN Scan" },
+      { name: "s3-scanner",       label: "S3 Scanner" },
+      { name: "ldap-enum",        label: "LDAP Enum" },
+      { name: "smb-enum",         label: "SMB Enum" },
+      { name: "bluetooth",        label: "Bluetooth Recon" },
+      { name: "wifi-integrity",   label: "WiFi Integrity" },
+      { name: "graphql",          label: "GraphQL" },
+      { name: "stego",            label: "Steganography" },
+    ],
+  },
+  {
+    group: "offense",
+    title: "Offense & Exploitation",
+    subtitle: "Active attack, payloads, credential abuse",
+    lightColor: "#b8513a",
+    darkColor:  "#e88467",
+    items: [
+      { name: "c2-beacon",          label: "C2 Beacon" },
+      { name: "kerberos-roast",     label: "Kerberos Roast" },
+      { name: "attack-results",     label: "Attack Results" },
+      { name: "wpa-capture",        label: "WPA Capture" },
+      { name: "persistence",        label: "Persistence" },
+      { name: "hash-cracker",       label: "Hash Cracker" },
+      { name: "reverse-shell",      label: "Reverse Shell" },
+      { name: "exploits",           label: "Exploits" },
+      { name: "ad-spray",           label: "AD Spray" },
+      { name: "lateral-movement",   label: "Lateral Movement" },
+      { name: "evil-twin",          label: "Evil Twin" },
+      { name: "breach-lookup",      label: "Breach Lookup" },
+      { name: "subdomain-takeover", label: "Subdomain Takeover" },
+      { name: "stego-embed",        label: "Stego Embed" },
+    ],
+  },
+  {
+    group: "system",
+    title: "Posture & System",
+    subtitle: "Defense, hardening, host & service state",
+    lightColor: "#33373e",
+    darkColor:  "#dfe3e8",
+    items: [
+      { name: "linux-posture",   label: "Linux Posture" },
+      { name: "macos-posture",   label: "macOS Posture" },
+      { name: "windows-posture", label: "Windows Posture" },
+      { name: "network-audit",   label: "Network Audit" },
+      { name: "ids",             label: "IDS" },
+      { name: "tls-auditor",     label: "TLS Auditor" },
+      { name: "email-security",  label: "Email Security" },
+      { name: "firewall-rules",  label: "Firewall Rules" },
+      { name: "systemd-units",   label: "Systemd Units" },
+      { name: "processes",       label: "Processes" },
+      { name: "tcpdump",         label: "TCPDump" },
+      { name: "ai-assistant",    label: "AI Assistant" },
+      { name: "report",          label: "Report" },
+    ],
+  },
+];
+
+function GlyphsBody() {
+  const total = GLYPH_SECTIONS.reduce((n, s) => n + s.items.length, 0);
+  return (
+    <div className="pt-2">
+      <div className="flex flex-wrap items-center gap-4 text-[11px] font-mono
+                      text-ink-muted mb-4">
+        <GlyphLegendDot color="#2c7a52" label="recon & intel" />
+        <GlyphLegendDot color="#b8513a" label="offense & exploit" />
+        <GlyphLegendDot color="#33373e" label="posture & system" />
+        <span className="flex-1" />
+        <span className="text-ink-dim">
+          24-grid · 1.6 stroke · round caps · {total} glyphs
+        </span>
+      </div>
+      <div className="space-y-6">
+        {GLYPH_SECTIONS.map((sec) => <GlyphSectionBlock key={sec.group} section={sec} />)}
+      </div>
+    </div>
+  );
+}
+
+function GlyphSectionBlock({ section }: { section: GlyphSection }) {
+  return (
+    <section className="border-t border-divider pt-4">
+      <div className="flex items-baseline gap-3 mb-3">
+        <span className="w-2 h-2 rounded-full"
+              style={{ background: section.lightColor }} />
+        <h3 className="text-[13px] font-semibold text-ink-primary">{section.title}</h3>
+        <span className="text-[11px] text-ink-muted">{section.subtitle}</span>
+        <span className="flex-1" />
+        <span className="text-[10px] font-mono text-ink-dim">
+          {String(section.items.length).padStart(2, "0")} glyphs
+        </span>
+      </div>
+      <div className="grid gap-3"
+           style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+        {section.items.map((it) => (
+          <div key={it.name} className="flex flex-col gap-1.5">
+            <div className="flex gap-1.5">
+              <div className="flex-1 flex items-center justify-center gap-3 h-[78px]
+                              rounded-md border"
+                   style={{ background: "#f7f5ef", borderColor: "#eae7dd",
+                            color: section.lightColor }}>
+                <Glyph name={it.name} size={30} />
+                <Glyph name={it.name} size={18} />
+              </div>
+              <div className="flex-1 flex items-center justify-center gap-3 h-[78px]
+                              rounded-md border"
+                   style={{ background: "#16181b", borderColor: "#16181b",
+                            color: section.darkColor }}>
+                <Glyph name={it.name} size={30} />
+                <Glyph name={it.name} size={18} />
+              </div>
+            </div>
+            <div className="text-center font-mono text-[11px] text-ink-muted tracking-wide">
+              {it.label}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function GlyphLegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span className="inline-block w-2.5 h-2.5 rounded-full"
+            style={{ background: color }} />
+      <span>{label}</span>
+    </span>
+  );
+}
+
+// ── Effects Debug body (inlined from former pages/EffectsDebug.tsx) ────────
+
+type EffectsDebugRow = {
+  id: string;
+  label: string;
+  blurb: string;
+  fire: (el: HTMLElement) => Promise<void>;
+};
+
+const EFFECTS_DEBUG_BUILTINS: EffectName[] = [
+  "solarbloom", "inkstroke", "comic", "fail", "ripple",
+  "confetti", "heartburst", "lightning",
+];
+
+const EFFECTS_DEBUG_NOTE: Record<EffectName, string> = {
+  solarbloom: "bloom + check anchored at origin",
+  inkstroke:  "ink stroke anchored at origin",
+  comic:      "comic word anchored at origin",
+  fail:       "✗ stamp anchored at origin",
+  ripple:     "concentric waves from origin",
+  confetti:   "panel burst from origin",
+  heartburst: "panel burst from origin",
+  lightning:  "strike from origin",
+};
+
+function EffectsDebugBody() {
+  const [debugOn, setDebugOn] = useState<boolean>(
+    () => (typeof window !== "undefined"
+      && window.localStorage.getItem("mhp:dopamine-debug") === "1"),
+  );
+  const [lastFired, setLastFired] = useState<string | null>(null);
+  const [errored, setErrored] = useState<Set<string>>(new Set());
+  const [success, setSuccess] = useState<Set<string>>(new Set());
+  const [inflight, setInflight] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("mhp:dopamine-debug", debugOn ? "1" : "0");
+    } catch { /* ignore */ }
+  }, [debugOn]);
+
+  async function safeFire(id: string, btn: HTMLElement, fn: () => Promise<void>) {
+    setInflight(id);
+    setLastFired(id);
+    const onErr = (e: ErrorEvent | PromiseRejectionEvent) => {
+      // eslint-disable-next-line no-console
+      console.warn("[effects-debug]", id, "window error:", e);
+    };
+    window.addEventListener("error", onErr as EventListener);
+    window.addEventListener("unhandledrejection", onErr as EventListener);
+    try {
+      await fn();
+      setSuccess((s) => new Set(s).add(id));
+      setErrored((s) => { const n = new Set(s); n.delete(id); return n; });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn("[effects-debug]", id, "rejected:", e);
+      setErrored((s) => new Set(s).add(id));
+    } finally {
+      window.removeEventListener("error", onErr as EventListener);
+      window.removeEventListener("unhandledrejection", onErr as EventListener);
+      setTimeout(() => setInflight((cur) => cur === id ? null : cur), 250);
+    }
+    void btn;
+  }
+
+  const rows: EffectsDebugRow[] = [
+    ...EFFECTS_DEBUG_BUILTINS.map<EffectsDebugRow>((name) => ({
+      id: `play:${name}`,
+      label: name,
+      blurb: EFFECTS_DEBUG_NOTE[name],
+      fire: (el) => playNamed(name, el),
+    })),
+    { id: "helper:pulse",        label: "pulse() — celebrate",
+      blurb: "m.celebrate(…) with current settings",
+      fire: (el) => pulse(el) },
+    { id: "helper:celebrateBig", label: "celebrateBig() — milestone",
+      blurb: "celebrate boosted by 1.5×",
+      fire: (el) => celebrateBig(el) },
+    { id: "helper:inkConfirm",   label: "inkConfirm() — checkbox",
+      blurb: "m.celebrateInk(…)",
+      fire: (el) => inkConfirm(el) },
+    { id: "helper:radarSweep",   label: "radarSweep() — scan start",
+      blurb: 'm.play("ripple", …)',
+      fire: (el) => radarSweep(el) },
+    { id: "helper:failStamp",    label: "failStamp() — error",
+      blurb: "m.fail(…)",
+      fire: (el) => failStamp(el) },
+  ];
+
+  return (
+    <div className="pt-2">
+      <div className="flex items-center gap-4 text-[11px] mb-3">
+        <EyebrowPill icon={false} className="mhp-eyebrow">DEBUG</EyebrowPill>
+        <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" checked={debugOn}
+                 onChange={(e) => setDebugOn(e.target.checked)}
+                 className="accent-accent" />
+          <span className="text-ink-primary">Console debug (mhp:dopamine-debug)</span>
+        </label>
+        <span className="text-ink-dim">·</span>
+        <span className="text-ink-muted">
+          Last fired: <span className="font-mono text-ink-primary">{lastFired ?? "—"}</span>
+        </span>
+        {inflight && (
+          <span className="ml-auto text-ink-muted inline-flex items-center gap-2">
+            <WibblingSpinner />
+          </span>
+        )}
+      </div>
+
+      <p className="text-[11px] text-ink-muted mb-3 max-w-2xl">
+        Click any tile to fire that effect anchored to the tile's center. Tiles
+        turn green on success, red on a thrown error — a quiet visual glitch
+        (black-screen) won't show up here, watch the page itself.
+      </p>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+        {rows.map((r) => {
+          const ok = success.has(r.id);
+          const bad = errored.has(r.id);
+          return (
+            <button key={r.id}
+                    onClick={(e) => safeFire(r.id, e.currentTarget,
+                                             () => r.fire(e.currentTarget))}
+                    disabled={inflight === r.id}
+                    className={
+                      "text-left rounded-md border px-3 py-2.5 transition " +
+                      (bad ? "border-danger/60 bg-danger/10 "
+                        : ok ? "border-phos/60 bg-phos/10 "
+                        : "border-divider hover:border-ink-muted bg-bg-card ")
+                    }>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-ink-primary text-[12px] font-bold font-mono">
+                  {r.label}
+                </span>
+                <span className="text-[10px] uppercase tracking-wider">
+                  {bad ? <span className="text-danger">err</span>
+                    : ok ? <span className="text-phos">ok</span>
+                    : <span className="text-ink-dim">idle</span>}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px] text-ink-muted font-mono truncate">
+                {r.blurb}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
