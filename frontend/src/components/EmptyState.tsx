@@ -1,6 +1,7 @@
 // Default "no results yet" state for every tool page.
 // Click an example target to drop it into the page's input.
 import type { ReactNode } from "react";
+import Glyph, { glyphForEmoji } from "./Glyph";
 
 type Props = {
   icon: ReactNode;            // emoji or small inline node
@@ -12,6 +13,19 @@ type Props = {
   hint?: ReactNode;
 };
 
+// Opportunistic upgrade: if the legacy `icon="📡"` style emoji has a mapped
+// glyph, render the glyph instead. Pages don't need to change — they keep
+// passing emoji strings — but the user-visible mark is the geometric glyph.
+function renderIcon(icon: ReactNode): ReactNode {
+  if (typeof icon === "string") {
+    const g = glyphForEmoji(icon);
+    if (g) {
+      return <Glyph name={g} size={44} />;
+    }
+  }
+  return icon;
+}
+
 export default function EmptyState({
   icon,
   title,
@@ -21,6 +35,8 @@ export default function EmptyState({
   className = "",
   hint,
 }: Props) {
+  const rendered = renderIcon(icon);
+  const isGlyph = typeof icon === "string" && glyphForEmoji(icon) !== null;
   return (
     <div
       className={"flex items-center justify-center " + className}
@@ -30,14 +46,18 @@ export default function EmptyState({
         <div
           aria-hidden
           style={{
-            fontSize: 48,
+            // The glyph carries its own colour via the group tint; the legacy
+            // emoji is rendered at 48px in muted ink as before.
+            fontSize: isGlyph ? undefined : 48,
             lineHeight: 1,
-            color: "var(--text-muted)",
+            color: isGlyph ? undefined : "var(--text-muted)",
             marginBottom: 16,
             userSelect: "none",
+            display: isGlyph ? "flex" : undefined,
+            justifyContent: isGlyph ? "center" : undefined,
           }}
         >
-          {icon}
+          {rendered}
         </div>
         <div
           style={{

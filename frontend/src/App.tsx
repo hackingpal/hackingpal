@@ -90,6 +90,7 @@ import EngagementWorkspace from "./pages/EngagementWorkspace";
 import Findings from "./pages/Findings";
 import Report from "./pages/Report";
 import EffectsDebug from "./pages/EffectsDebug";
+import Glyphs from "./pages/Glyphs";
 import CommandPalette from "./components/CommandPalette";
 import ToolCatalog from "./components/ToolCatalog";
 import ActiveTargetPicker from "./components/ActiveTargetPicker";
@@ -410,6 +411,7 @@ export default function App() {
            active === "dorksgen"    ? <DorksGen /> :
            active === "audit-log"   ? <Audit /> :
            active === "effects-debug" ? <EffectsDebug /> :
+           active === "glyphs"      ? <Glyphs /> :
            active === "settings"    ? <Settings onJumpTo={navigate} /> :
            isPlannedId(active)      ? <PlannedToolPage
                                           id={active}

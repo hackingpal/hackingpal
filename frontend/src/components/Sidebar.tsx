@@ -20,7 +20,7 @@ export type NavId =
   | "hash" | "cvss"
   | "ids" | "audit-log" | "persistence" | "processes" | "stego" | "macos" | "linuxposture" | "windowsposture"
   | "systemd" | "firewallrules" | "usersaudit"
-  | "wifi" | "term" | "brew" | "settings" | "effects-debug";
+  | "wifi" | "term" | "brew" | "settings" | "effects-debug" | "glyphs";
 
 import { topNav, type Platform } from "../lib/nav";
 
