@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
+import RunPlaybookModal from "../components/RunPlaybookModal";
 
 type SuggestedStep = {
   label: string;
@@ -354,6 +355,7 @@ export default function Labs({ onJumpTo }: Props) {
             onStop={() => doAction(lab.id, "stop")}
             onOpen={() => openInBrowser(lab.primary_url)}
             onJumpStep={jumpToStep}
+            onJumpTo={onJumpTo}
             flash={flash}
           />
         ))}
@@ -417,7 +419,7 @@ export default function Labs({ onJumpTo }: Props) {
 // ── Lab card ───────────────────────────────────────────────────────────────
 function LabCard({
   lab, status, busy, dockerRunning, onBuild, onStart, onStop, onOpen, onJumpStep,
-  flash,
+  onJumpTo, flash,
 }: {
   lab: LabSummary;
   status: LabStatus | undefined;
@@ -428,6 +430,7 @@ function LabCard({
   onStop: () => void;
   onOpen: () => void;
   onJumpStep: (step: SuggestedStep) => void;
+  onJumpTo: (id: string) => void;
   flash: (msg: string) => void;
 }) {
   const built     = status?.image_exists ?? false;
@@ -448,6 +451,9 @@ function LabCard({
   const [sidecarOut, setSidecarOut]       = useState<SidecarResult | null>(null);
   const [sidecarBusy, setSidecarBusy]     = useState<boolean>(false);
   const sidecarRef = useRef<HTMLDivElement | null>(null);
+
+  // Run-Playbook modal — only meaningful while the lab is live and has a URL.
+  const [playbookOpen, setPlaybookOpen] = useState<boolean>(false);
 
   // Build-log <details> open/close. Auto-opens whenever a new build starts or
   // errors, but a user-triggered toggle wins until the next state transition —
@@ -547,6 +553,13 @@ function LabCard({
           )}
           {live && (
             <>
+              {hasWebPort && (
+                <button onClick={() => setPlaybookOpen(true)}
+                        className={btnSecondary()}
+                        title="Run a multi-step playbook against this lab">
+                  ▶ Run Playbook
+                </button>
+              )}
               {hasWebPort && (
                 <button onClick={onOpen} className={btnSecondary()}>Open ↗</button>
               )}
@@ -686,6 +699,16 @@ function LabCard({
             </div>
           )}
         </div>
+      )}
+
+      {playbookOpen && (
+        <RunPlaybookModal
+          labId={lab.id}
+          labName={lab.name}
+          labUrl={lab.primary_url}
+          onClose={() => setPlaybookOpen(false)}
+          onJumpTo={onJumpTo}
+        />
       )}
     </section>
   );
