@@ -27,6 +27,7 @@ import {
   type FindingStatus,
 } from "../lib/engagement";
 import CvssCalculator, { type CvssResult } from "../components/CvssCalculator";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Props = { onJumpTo?: (id: string) => void };
 
@@ -922,12 +923,10 @@ function EvidenceItem({
             {displayContent}
           </div>
         ) : item.type === "screenshot_ref" ? (
-          <a href={item.content}
-             target="_blank"
-             rel="noreferrer"
+          <SafeAnchor href={item.content}
              className="text-[12px] font-mono text-accent hover:underline break-all">
             {item.content}
-          </a>
+          </SafeAnchor>
         ) : (
           <pre className="text-[11px] font-mono whitespace-pre-wrap bg-bg-base
                           border border-divider rounded p-2 max-h-96 overflow-y-auto">

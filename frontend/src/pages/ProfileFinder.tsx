@@ -3,6 +3,7 @@ import { authFetch, parseError } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Dork = {
   source: string; label: string; query: string; url: string;
@@ -185,10 +186,10 @@ export default function ProfileFinder() {
                           <td className="px-3 py-1 text-ink-muted">{p.title}</td>
                           <td className="px-3 py-1 text-ink-dim uppercase text-[10px]">{p.source}</td>
                           <td className="px-3 py-1 flex items-center gap-2">
-                            <a href={p.url} target="_blank" rel="noreferrer"
+                            <SafeAnchor href={p.url}
                                className="text-accent hover:underline text-[11px] truncate inline-block max-w-[200px]">
                               {p.url}
-                            </a>
+                            </SafeAnchor>
                             <CopyButton text={`${p.name} — ${p.title} (${p.source}): ${p.url}`} />
                           </td>
                         </tr>
@@ -243,10 +244,10 @@ export default function ProfileFinder() {
               {result.dorks.map((d, i) => (
                 <div key={i} className="flex items-center gap-2 text-[11px]">
                   <span className="text-ink-dim uppercase text-[10px] w-32 shrink-0">{d.source}</span>
-                  <a href={d.url} target="_blank" rel="noreferrer"
+                  <SafeAnchor href={d.url}
                      className="text-accent hover:underline font-mono truncate flex-1">
                     {d.query}
-                  </a>
+                  </SafeAnchor>
                   {d.item_count != null && <span className="text-ink-dim text-[10px]">{d.item_count} results</span>}
                   {d.error && <span className="text-danger text-[10px]">{d.error}</span>}
                 </div>

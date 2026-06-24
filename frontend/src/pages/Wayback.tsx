@@ -3,6 +3,7 @@ import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Buckets = {
   domain: string;
@@ -155,10 +156,10 @@ function UrlList({ urls, accent = "accent" }: { urls: string[]; accent?: string 
           style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
           className="mhp-result-in group flex items-center gap-2 px-2 py-1"
         >
-          <a href={u} target="_blank" rel="noreferrer"
+          <SafeAnchor href={u}
              className={`flex-1 text-[11px] font-mono text-ink-primary hover:text-${accent} truncate`}>
             {u}
-          </a>
+          </SafeAnchor>
           <CopyButton text={u} />
         </div>
       ))}

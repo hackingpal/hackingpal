@@ -5,7 +5,7 @@
 // Prod: this process spawns the PyInstaller-bundled Python sidecar, waits
 //       for /health, then opens the window. Kills the sidecar on quit.
 
-const { app, BrowserWindow, shell } = require("electron");
+const { app, BrowserWindow, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const http = require("http");
@@ -219,6 +219,11 @@ async function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
+      // OS-level sandbox the renderer. Preload only reads `process.platform`
+      // (sandbox-safe — see preload.cjs). Without this a renderer compromise
+      // (XSS, dependency CVE) inherits the main process's ability to spawn
+      // child processes and read arbitrary files.
+      sandbox: true,
     },
   });
 
@@ -279,7 +284,40 @@ if (!gotLock) {
       win.focus();
     }
   });
-  app.whenReady().then(createWindow);
+  app.whenReady().then(() => {
+    installContentSecurityPolicy();
+    createWindow();
+  });
+}
+
+// Inject a strict CSP on every response served to the renderer. Locks
+// allowed-fetch origins to the local sidecar + the renderer's own bundle,
+// blocks object/embed entirely, blocks framing entirely, and disallows
+// inline scripts. The renderer ships compiled bundles (no eval, no inline
+// <script>) so 'self' is enough; 'unsafe-inline' on styles is required for
+// Vite's HMR-style style injection in dev and Tailwind's atomic classes in
+// prod (Tailwind output is plain CSS but utility CSS frameworks regularly
+// re-inject; keep it loose only on styles, not scripts).
+function installContentSecurityPolicy() {
+  const csp = [
+    "default-src 'self'",
+    // The Electron renderer's only network peer is the local sidecar. The
+    // dev server origin (http://localhost:5173) is also allowed for HMR.
+    "connect-src 'self' http://127.0.0.1:8765 ws://127.0.0.1:8765 http://localhost:5173 ws://localhost:5173",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const headers = { ...details.responseHeaders };
+    headers["Content-Security-Policy"] = [csp];
+    callback({ responseHeaders: headers });
+  });
 }
 
 app.on("before-quit", killBackend);

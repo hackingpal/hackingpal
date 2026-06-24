@@ -3,13 +3,14 @@ import {
   createEngagement,
   deleteEngagement,
   listEngagements,
-  reportUrl,
+  requestReportLink,
   setActiveEngagementId,
   updateEngagement,
   useActiveEngagementId,
   type Engagement,
 } from "../lib/engagement";
 import { authFetch, parseError } from "../api";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 export default function Engagements() {
   const [engagements, setEngagements] = useState<Engagement[]>([]);
@@ -137,14 +138,30 @@ export default function Engagements() {
                         className="px-2 py-0.5 rounded border border-divider text-ink-primary">
                   Edit
                 </button>
-                <a href={reportUrl(e.id, "html")} target="_blank" rel="noreferrer"
+                <button type="button"
+                   onClick={async () => {
+                     try {
+                       const url = await requestReportLink(e.id, "html");
+                       window.open(url, "_blank", "noopener,noreferrer");
+                     } catch (err) {
+                       setError(err instanceof Error ? err.message : String(err));
+                     }
+                   }}
                    className="px-2 py-0.5 rounded border border-divider text-ink-primary text-center">
                   Report (HTML)
-                </a>
-                <a href={reportUrl(e.id, "md")}
+                </button>
+                <button type="button"
+                   onClick={async () => {
+                     try {
+                       const url = await requestReportLink(e.id, "md");
+                       window.open(url, "_blank", "noopener,noreferrer");
+                     } catch (err) {
+                       setError(err instanceof Error ? err.message : String(err));
+                     }
+                   }}
                    className="px-2 py-0.5 rounded border border-divider text-ink-muted text-center">
                   Report (MD)
-                </a>
+                </button>
                 <button onClick={() => setExporting(e)}
                         className="px-2 py-0.5 rounded border border-divider text-ink-primary">
                   Export → GitHub
@@ -314,8 +331,8 @@ function GithubExportModal({
               </div>
               {result.created.slice(0, 5).map((c) => (
                 <div key={c.finding_id} className="text-[11px]">
-                  <a href={c.url} target="_blank" rel="noreferrer"
-                     className="text-accent hover:underline">#{c.issue_number}</a>
+                  <SafeAnchor href={c.url}
+                     className="text-accent hover:underline">#{c.issue_number}</SafeAnchor>
                   <span className="text-ink-dim ml-2">→ {c.url}</span>
                 </div>
               ))}

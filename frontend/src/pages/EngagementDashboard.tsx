@@ -13,7 +13,7 @@ import {
   listEngagements,
   listFindings,
   listResults,
-  reportUrl,
+  requestReportLink,
   useActiveEngagementId,
   type Engagement,
   type Finding,
@@ -236,14 +236,26 @@ export default function EngagementDashboard({ onNavigate }: Props) {
                         className="px-2 py-0.5 rounded border border-divider text-ink-primary">
                   Edit
                 </button>
-                <a href={reportUrl(engagement.id, "html")} target="_blank" rel="noreferrer"
+                <button type="button"
+                   onClick={async () => {
+                     try {
+                       const url = await requestReportLink(engagement.id, "html");
+                       window.open(url, "_blank", "noopener,noreferrer");
+                     } catch { /* silent — dashboard tile, no error surface */ }
+                   }}
                    className="px-2 py-0.5 rounded border border-divider text-ink-primary text-center">
                   Report (HTML)
-                </a>
-                <a href={reportUrl(engagement.id, "md")}
+                </button>
+                <button type="button"
+                   onClick={async () => {
+                     try {
+                       const url = await requestReportLink(engagement.id, "md");
+                       window.open(url, "_blank", "noopener,noreferrer");
+                     } catch { /* silent */ }
+                   }}
                    className="px-2 py-0.5 rounded border border-divider text-ink-muted text-center">
                   Report (MD)
-                </a>
+                </button>
               </div>
             </div>
           </section>

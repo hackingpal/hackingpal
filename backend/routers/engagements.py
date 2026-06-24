@@ -17,17 +17,20 @@ from typing import Any, Literal
 
 import anthropic
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from lib import engagements
-from lib.auth import require_local_auth
+from lib import audit_log, engagements
+from lib.auth import mint_report_nonce
 from .settings import keychain_get, keychain_get_named
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/engagements", tags=["engagements"],
-                   dependencies=[Depends(require_local_auth)])
+# Auth + nonce gate is applied at the app level (_REPORT_GATE in main.py)
+# instead of here. That lets POST /report-link mint a nonce that GET
+# /report?nonce=… can consume — without the stricter router-level
+# require_local_auth blocking the nonce path.
+router = APIRouter(prefix="/engagements", tags=["engagements"])
 
 
 def _md_code_fence(content: str) -> tuple[str, str]:
@@ -56,6 +59,21 @@ class EngagementCreate(BaseModel):
     scope: list[str] = Field(default_factory=list)
     exclusions: list[str] = Field(default_factory=list)
     notes: str = ""
+
+
+_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_filename(raw: str, default: str = "file") -> str:
+    """Strip everything outside [A-Za-z0-9._-] and cap at 120 chars.
+
+    Prevents Content-Disposition header quote-breakout (raw
+    `x"; filename="evil.exe` was previously echoed verbatim into the
+    `filename="..."` slot, letting a malicious upload spoof the saved
+    name or smuggle a second header parameter).
+    """
+    s = _FILENAME_SAFE_RE.sub("_", raw or "").strip("._-")
+    return (s[:120] or default)
 
 
 class EngagementPatch(BaseModel):
@@ -87,7 +105,7 @@ class FindingPatch(BaseModel):
     severity: Literal["info", "low", "medium", "high", "critical"] | None = None
     description: str | None = None
     evidence: str | None = None
-    cvss: float | None = None
+    cvss: float | None = Field(None, ge=0, le=10)
     status: Literal["open", "triaged", "fixed", "wont_fix"] | None = None
 
 
@@ -100,8 +118,11 @@ def list_all(include_archived: bool = False) -> dict[str, Any]:
 
 @router.post("")
 def create(body: EngagementCreate) -> dict[str, Any]:
-    return engagements.create_engagement(body.name, body.scope,
-                                         body.exclusions, body.notes)
+    aid = audit_log.start(tool="engagement-create", target=body.name, argv=[body.name])
+    e = engagements.create_engagement(body.name, body.scope,
+                                      body.exclusions, body.notes)
+    audit_log.complete(aid, summary=f"created {e['id']}")
+    return e
 
 
 @router.get("/{eid}")
@@ -116,17 +137,25 @@ def get_one(eid: str) -> dict[str, Any]:
 def patch_one(eid: str, body: EngagementPatch) -> dict[str, Any]:
     if engagements.get_engagement(eid) is None:
         raise HTTPException(404, "engagement not found")
-    e = engagements.update_engagement(
-        eid, body.model_dump(exclude_none=True),
+    patch = body.model_dump(exclude_none=True)
+    aid = audit_log.start(
+        tool="engagement-patch", target=eid,
+        argv=sorted(patch.keys()), engagement_id=eid,
     )
+    e = engagements.update_engagement(eid, patch)
+    audit_log.complete(aid, summary=",".join(sorted(patch.keys())))
     return e  # type: ignore[return-value]
 
 
 @router.delete("/{eid}")
 def delete_one(eid: str) -> dict[str, bool]:
+    aid = audit_log.start(tool="engagement-delete", target=eid, argv=[eid],
+                          engagement_id=eid)
     ok = engagements.delete_engagement(eid)
     if not ok:
+        audit_log.error(aid, "engagement not found")
         raise HTTPException(404, "engagement not found")
+    audit_log.complete(aid, summary="deleted")
     return {"deleted": True}
 
 
@@ -136,8 +165,12 @@ def delete_one(eid: str) -> dict[str, bool]:
 def post_result(eid: str, body: ResultPost) -> dict[str, Any]:
     if engagements.get_engagement(eid) is None:
         raise HTTPException(404, "engagement not found")
-    return engagements.record_result(eid, body.tool, body.target,
-                                     body.summary, body.raw)
+    aid = audit_log.start(tool=f"result-{body.tool}", target=body.target,
+                          argv=[body.tool, body.target], engagement_id=eid)
+    r = engagements.record_result(eid, body.tool, body.target,
+                                  body.summary, body.raw)
+    audit_log.complete(aid, summary=body.summary[:200])
+    return r
 
 
 @router.get("/{eid}/results")
@@ -161,14 +194,21 @@ def get_result(eid: str, rid: str) -> dict[str, Any]:
 def post_finding(eid: str, body: FindingCreate) -> dict[str, Any]:
     if engagements.get_engagement(eid) is None:
         raise HTTPException(404, "engagement not found")
+    aid = audit_log.start(
+        tool="finding-create", target=body.title,
+        argv=[body.severity, body.title], engagement_id=eid,
+    )
     try:
-        return engagements.create_finding(
+        f = engagements.create_finding(
             eid, body.title, body.severity,
             description=body.description, evidence=body.evidence,
             cvss=body.cvss, linked_result_id=body.linked_result_id,
         )
     except ValueError as e:
+        audit_log.error(aid, str(e))
         raise HTTPException(400, str(e))
+    audit_log.complete(aid, summary=f"{body.severity}: {f.get('id', '')}")
+    return f
 
 
 @router.get("/{eid}/findings")
@@ -183,10 +223,18 @@ def patch_finding(eid: str, fid: str, body: FindingPatch) -> dict[str, Any]:
     f = engagements.get_finding(fid)
     if not f or f["engagement_id"] != eid:
         raise HTTPException(404, "finding not found")
+    patch = body.model_dump(exclude_none=True)
+    aid = audit_log.start(
+        tool="finding-patch", target=fid,
+        argv=sorted(patch.keys()), engagement_id=eid,
+    )
     try:
-        return engagements.update_finding(fid, body.model_dump(exclude_none=True))  # type: ignore[return-value]
+        out = engagements.update_finding(fid, patch)
     except ValueError as e:
+        audit_log.error(aid, str(e))
         raise HTTPException(400, str(e))
+    audit_log.complete(aid, summary=",".join(sorted(patch.keys())))
+    return out  # type: ignore[return-value]
 
 
 @router.delete("/{eid}/findings/{fid}")
@@ -194,7 +242,10 @@ def delete_finding(eid: str, fid: str) -> dict[str, bool]:
     f = engagements.get_finding(fid)
     if not f or f["engagement_id"] != eid:
         raise HTTPException(404, "finding not found")
+    aid = audit_log.start(tool="finding-delete", target=fid, argv=[fid],
+                          engagement_id=eid)
     engagements.delete_finding(fid)
+    audit_log.complete(aid, summary="deleted")
     return {"deleted": True}
 
 
@@ -217,7 +268,14 @@ async def upload_screenshot(eid: str, fid: str, file: UploadFile = File(...)) ->
         raise HTTPException(400, "empty file")
     if len(data) > MAX_SCREENSHOT_BYTES:
         raise HTTPException(413, f"file too large (max {MAX_SCREENSHOT_BYTES // 1024 // 1024} MB)")
-    return engagements.add_screenshot(fid, mime, file.filename or "", data)
+    aid = audit_log.start(
+        tool="finding-screenshot-upload", target=fid,
+        argv=[_safe_filename(file.filename or "", default="screenshot"), mime, str(len(data))],
+        engagement_id=eid,
+    )
+    s = engagements.add_screenshot(fid, mime, file.filename or "", data)
+    audit_log.complete(aid, summary=f"id={s.get('id')} bytes={len(data)}")
+    return s
 
 
 @router.get("/{eid}/findings/{fid}/screenshots")
@@ -235,16 +293,23 @@ def get_screenshot(eid: str, sid: str) -> Response:
     if not res:
         raise HTTPException(404, "screenshot not found")
     mime, filename, data = res
+    safe = _safe_filename(filename, default="screenshot")
     return Response(
         content=data, media_type=mime,
-        headers={"Content-Disposition": f'inline; filename="{filename or "screenshot"}"'},
+        headers={"Content-Disposition": f'inline; filename="{safe}"'},
     )
 
 
 @router.delete("/{eid}/screenshots/{sid}")
 def delete_screenshot(eid: str, sid: str) -> dict[str, bool]:
+    aid = audit_log.start(
+        tool="finding-screenshot-delete", target=sid, argv=[sid],
+        engagement_id=eid,
+    )
     if not engagements.delete_screenshot(sid):
+        audit_log.error(aid, "screenshot not found")
         raise HTTPException(404, "screenshot not found")
+    audit_log.complete(aid, summary="deleted")
     return {"deleted": True}
 
 
@@ -268,10 +333,16 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
             "github_token not configured. POST /settings/keys/github_token with "
             'a personal access token (`repo` scope required).')
 
+    aid = audit_log.start(
+        tool="engagement-export-github", target=f"{body.owner}/{body.repo}",
+        argv=[body.owner, body.repo, body.label_prefix or "mhp"],
+        engagement_id=eid,
+    )
     findings = engagements.list_findings(eid)
     if body.severity_filter:
         findings = [f for f in findings if f["severity"] in body.severity_filter]
     if not findings:
+        audit_log.complete(aid, summary="no findings match")
         return {"created": [], "skipped": 0,
                 "message": "no findings match the filter"}
 
@@ -324,11 +395,44 @@ async def export_to_github(eid: str, body: GithubExportBody) -> dict[str, Any]:
                 failed.append({"finding_id": f["id"],
                                "detail": f"{type(e).__name__}: request failed"})
 
+    audit_log.complete(
+        aid,
+        summary=f"created={len(created)} failed={len(failed)} total={len(findings)}",
+    )
     return {"created": created, "failed": failed,
             "total_findings": len(findings)}
 
 
 # ── Report export ───────────────────────────────────────────────────────────
+
+@router.post("/{eid}/report-link")
+def report_link(
+    eid: str,
+    format: Literal["html", "md"] = "html",
+    snapshot_id: str | None = Query(default=None, max_length=64),
+) -> dict[str, str]:
+    """Mint a one-shot, 30-second URL for the system browser to open.
+
+    The URL embeds a path-bound nonce instead of the long-lived bearer
+    token, so it can leak into browser history without compromising the
+    backend. The frontend `requestReportLink()` POSTs here, then calls
+    window.open(url) on the returned link.
+    """
+    e = engagements.get_engagement(eid)
+    if not e:
+        raise HTTPException(404, "engagement not found")
+    if snapshot_id:
+        snap = engagements.get_report_snapshot(snapshot_id)
+        if not snap or snap["engagement_id"] != eid:
+            raise HTTPException(404, "snapshot not found")
+
+    path = f"/engagements/{eid}/report"
+    nonce = mint_report_nonce(path)
+    qs = f"format={format}&nonce={nonce}"
+    if snapshot_id:
+        qs += f"&snapshot_id={snapshot_id}"
+    return {"url": f"{path}?{qs}"}
+
 
 @router.get("/{eid}/report")
 def export_report(
@@ -390,6 +494,10 @@ def generate_report(eid: str) -> dict[str, Any]:
     if not e:
         raise HTTPException(404, "engagement not found")
 
+    aid = audit_log.start(
+        tool="report-snapshot-generate", target=e["name"], argv=[eid],
+        engagement_id=eid,
+    )
     findings = engagements.list_findings(eid)
     stats = engagements.engagement_stats(eid)
     results = engagements.list_results(eid, limit=500)
@@ -404,6 +512,10 @@ def generate_report(eid: str) -> dict[str, Any]:
 
     snap = engagements.create_report_snapshot(
         engagement_id=eid, rollup=rollup, html=html_body, md=md_body,
+    )
+    audit_log.complete(
+        aid,
+        summary=f"snapshot={snap.get('id', '')} findings={len(findings)} summaries={len(summaries)}",
     )
     return {
         **snap,
@@ -425,7 +537,12 @@ def delete_report(eid: str, sid: str) -> dict[str, bool]:
     snap = engagements.get_report_snapshot(sid)
     if not snap or snap["engagement_id"] != eid:
         raise HTTPException(404, "snapshot not found")
+    aid = audit_log.start(
+        tool="report-snapshot-delete", target=sid, argv=[sid],
+        engagement_id=eid,
+    )
     engagements.delete_report_snapshot(sid)
+    audit_log.complete(aid, summary="deleted")
     return {"deleted": True}
 
 

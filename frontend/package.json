@@ -93,8 +93,10 @@
       "category": "public.app-category.utilities",
       "icon": "build/icon.icns",
       "identity": null,
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
       "extraResources": [
         {
           "from": "../backend/dist/network-tools-backend",

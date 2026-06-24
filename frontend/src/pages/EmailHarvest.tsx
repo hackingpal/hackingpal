@@ -3,6 +3,7 @@ import { api } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type EmailRow = { email: string; sources: string[] };
 type Dork = { query: string; url: string };
@@ -121,10 +122,10 @@ export default function EmailHarvest() {
                     style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
                     className="mhp-result-in group flex items-center gap-2"
                   >
-                    <a href={d.url} target="_blank" rel="noreferrer"
+                    <SafeAnchor href={d.url}
                        className="block text-[11px] font-mono text-accent hover:underline flex-1 truncate">
                       {d.query}
-                    </a>
+                    </SafeAnchor>
                     <CopyButton text={d.query} />
                   </div>
                 ))}

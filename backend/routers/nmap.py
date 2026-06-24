@@ -168,6 +168,21 @@ def install_sudoers() -> dict[str, Any]:
     if _detect_install_version(binary) == "v2":
         return {"installed": True, "already": True, "version": "v2"}
 
+    # Refuse to grant NOPASSWD sudo to a user-writable binary path.
+    # On a typical macOS dev box `find_nmap()` returns /opt/homebrew/bin/nmap,
+    # which the current user can overwrite — and `sudo -n nmap` from that
+    # path is then root-RCE the first time the user clicks "Quick scan".
+    if not nmap_runner.nmap_path_is_safe_for_sudo():
+        raise MhpError(
+            f"refusing to install: {binary} is in a user-writable directory. "
+            "Sudoers install requires nmap from a root-owned dir (a distro "
+            "package), not Homebrew/.local. SYN/UDP/OS scans without sudo "
+            "fall back to TCP-connect (non-privileged).",
+            code="PRECONDITION_FAILED",
+            status_code=412,
+            extra={"resolved_path": binary},
+        )
+
     user = getpass.getuser()
     tmp = Path(tempfile.gettempdir()) / "_nt_nmap_sudoers"
     tmp.write_text(_build_sudoers_content(user, binary))

@@ -13,6 +13,7 @@ extra deps, schema is migrated in-place if the file already exists.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -23,6 +24,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from lib.platform_util import app_data_dir
+
+logger = logging.getLogger(__name__)
 
 
 def _db_path() -> Path:
@@ -130,7 +133,13 @@ SCHEMA = [
       mode           TEXT NOT NULL DEFAULT 'lab',  -- lab|engagement
       status         TEXT NOT NULL DEFAULT 'started',
       summary        TEXT NOT NULL DEFAULT '',
-      error          TEXT
+      error          TEXT,
+      -- Hash chain over (id, ts_start, tool, target, argv_json, engagement_id,
+      -- mode, approver). Chained at INSERT so deletion or reordering is
+      -- detectable via verify_chain(). Mutable end-state fields
+      -- (ts_end, status, summary, error) are not chained.
+      prev_hash      TEXT NOT NULL DEFAULT '',
+      row_hash       TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS ix_audit_engagement ON audit_log(engagement_id, ts_start DESC)",
@@ -218,6 +227,56 @@ def _migrate_findings(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE findings ADD COLUMN ai_summary TEXT NOT NULL DEFAULT ''")
 
 
+def _migrate_audit_log(conn: sqlite3.Connection) -> None:
+    """Add hash-chain columns to `audit_log` for older DBs, then backfill.
+
+    Backfill rehashes every row in chronological order so verify_chain() can
+    start clean from the post-migration state. Pre-migration tampering is
+    undetectable (rows could have been altered before the chain existed) —
+    we accept that and ensure any tampering AFTER migration is caught.
+    """
+    import hashlib
+    import json as _json
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(audit_log)").fetchall()}
+    if not cols:
+        return  # table will be created by SCHEMA below
+    added = False
+    if "prev_hash" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''")
+        added = True
+    if "row_hash" not in cols:
+        conn.execute("ALTER TABLE audit_log ADD COLUMN row_hash TEXT NOT NULL DEFAULT ''")
+        added = True
+    # Only backfill on first-run migration (when we just ADDED the columns).
+    # Any subsequent state corruption is detected by verify_chain() and surfaced
+    # via the /audit-log endpoint — we don't silently overwrite a chain that
+    # might already have been tampered with.
+    if not added:
+        return
+    rows = conn.execute(
+        "SELECT id, ts_start, tool, target, argv_json, engagement_id, mode, "
+        "approver FROM audit_log ORDER BY ts_start ASC, id ASC"
+    ).fetchall()
+    if not rows:
+        return
+    prev = ""
+    for r in rows:
+        canonical = _json.dumps(
+            [r[0], r[1], r[2], r[3], r[4], r[5] or "", r[6], r[7]],
+            separators=(",", ":"), ensure_ascii=False,
+        )
+        row_hash = hashlib.sha256((prev + canonical).encode("utf-8")).hexdigest()
+        conn.execute(
+            "UPDATE audit_log SET prev_hash = ?, row_hash = ? WHERE id = ?",
+            (prev, row_hash, r[0]),
+        )
+        prev = row_hash
+    logger.warning(
+        "audit_log: added hash-chain columns and backfilled %d rows", len(rows),
+    )
+
+
 def _connect() -> sqlite3.Connection:
     global _conn
     if _conn is not None:
@@ -236,6 +295,7 @@ def _connect() -> sqlite3.Connection:
         for stmt in SCHEMA:
             conn.execute(stmt)
         _migrate_findings(conn)
+        _migrate_audit_log(conn)
         conn.commit()
         _conn = conn
         return conn

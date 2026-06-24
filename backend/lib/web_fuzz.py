@@ -175,12 +175,18 @@ async def send_one(
 
 async def baseline(
     tmpl: FuzzTemplate, *, timeout: float = 10.0,
-    verify_tls: bool = False, follow_redirects: bool = True,
+    verify_tls: bool = False, follow_redirects: bool = False,
     sentinel: str = "MHPBASELINE0xff",
 ) -> FuzzResponse:
     """Issue a baseline request with a benign sentinel value substituted for
     the marker. Used as the comparison anchor for boolean/length/time-diff
-    detection."""
+    detection.
+
+    `follow_redirects` defaults to False: with redirects on, a malicious
+    target server can return `Location: http://169.254.169.254/...` and
+    httpx will silently fetch it, bypassing the upstream `check_scope()`
+    guard. Callers must opt in explicitly if they need redirect-following.
+    """
     async with _client(timeout, verify_tls, follow_redirects) as client:
         return await send_one(client, tmpl, sentinel)
 
@@ -194,7 +200,7 @@ async def run_payloads(
     rate_per_sec: int = 10,
     timeout: float = 10.0,
     verify_tls: bool = False,
-    follow_redirects: bool = True,
+    follow_redirects: bool = False,
     stop: asyncio.Event | None = None,
 ) -> None:
     """Fire `payloads` concurrently, awaiting `on_result` for each response.

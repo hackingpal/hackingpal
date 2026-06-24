@@ -24,8 +24,10 @@ from __future__ import annotations
 import asyncio
 import getpass
 import logging
+import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import tempfile
@@ -54,11 +56,44 @@ _TCPDUMP_HINT = ("tcpdump wraps the libpcap-based tcpdump binary on macOS/Linux.
 SUDOERS_PATH = "/etc/sudoers.d/network-tools-tcpdump"
 SUDOERS_VERSION = "v2-argv-restricted"
 
-# Resolve once at import. shutil.which() checks PATH; on Linux tcpdump lives
-# in /usr/sbin/ but is often not on a non-root user's PATH — fall back to the
-# canonical path so the sudoers entry and command both match.
+# Resolve once at import. We deliberately PREFER the SIP/root-protected
+# system paths over `shutil.which` because the latter typically returns
+# `/opt/homebrew/bin/tcpdump` on a developer Mac — a directory the current
+# user can write. Giving `NOPASSWD` sudo to a user-writable binary is
+# trivially-bypassable root code execution: swap the binary, run any sudo
+# tcpdump call, get root.
+#
+# Apple ships tcpdump at /usr/sbin/tcpdump (SIP-protected). On Debian/Ubuntu
+# it's /usr/sbin/tcpdump; on Arch sometimes /usr/bin/tcpdump. All three live
+# in dirs owned by root with mode 0755 (no world-write, no user-write).
 import shutil as _shutil
-TCPDUMP = _shutil.which("tcpdump") or "/usr/sbin/tcpdump"
+
+
+def _is_root_owned_dir(directory: str) -> bool:
+    """True iff the directory exists, is owned by root, not world-writable,
+    not group-writable, and not owned by the current non-root user."""
+    try:
+        st = os.stat(directory)
+    except (FileNotFoundError, PermissionError):
+        return False
+    if st.st_uid != 0:
+        return False
+    if st.st_mode & (stat.S_IWOTH | stat.S_IWGRP):
+        return False
+    return True
+
+
+def _resolve_tcpdump() -> str:
+    """Pick a non-user-writable absolute path; fall back to `which` only if
+    no system path qualifies (so error paths still produce a sensible value).
+    """
+    for path in ("/usr/sbin/tcpdump", "/usr/bin/tcpdump"):
+        if os.path.isfile(path) and _is_root_owned_dir(os.path.dirname(path)):
+            return path
+    return _shutil.which("tcpdump") or "/usr/sbin/tcpdump"
+
+
+TCPDUMP = _resolve_tcpdump()
 
 
 # Flag tokens the app never passes to tcpdump. Each lets an attacker who can
@@ -202,6 +237,19 @@ def install_sudoers() -> dict[str, Any]:
     # which overwrites the file atomically via `mv`.
     if _detect_install_version() == "v2":
         return {"installed": True, "already": True, "version": "v2"}
+
+    # Refuse to grant NOPASSWD sudo to a user-writable binary path.
+    # A binary in /opt/homebrew or /usr/local/bin can be swapped by the
+    # current user; combined with the sudoers entry that's a root-RCE.
+    if not _is_root_owned_dir(os.path.dirname(TCPDUMP)):
+        raise MhpError(
+            f"refusing to install: {TCPDUMP} is in a user-writable directory. "
+            "Install Apple's system tcpdump (/usr/sbin/tcpdump) or a distro "
+            "package, not Homebrew.",
+            code="PRECONDITION_FAILED",
+            status_code=412,
+            extra={"resolved_path": TCPDUMP},
+        )
 
     user = getpass.getuser()
     tmp = Path(tempfile.gettempdir()) / "_nt_tcpdump_sudoers"

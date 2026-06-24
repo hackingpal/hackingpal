@@ -9,7 +9,7 @@
 // only stores which one is currently focused.
 
 import { useEffect, useState } from "react";
-import { authFetch, BACKEND_URL, getCachedAuthToken, parseError } from "../api";
+import { authFetch, BACKEND_URL, parseError } from "../api";
 import { getMode } from "./mode";
 
 export type EngagementStatus = "active" | "completed" | "archived";
@@ -396,10 +396,26 @@ export async function fetchSuggestions(): Promise<
   return body.suggestions;
 }
 
-export function reportUrl(eid: string, format: "html" | "md"): string {
-  const token = getCachedAuthToken();
-  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-  return `${BACKEND_URL}/engagements/${eid}/report?format=${format}${tokenParam}`;
+// Report links — short-lived one-shot URLs for the system browser.
+//
+// We used to embed the long-lived per-launch auth token directly in
+// `?token=…` so an `<a target="_blank">` could open the report in the OS
+// browser. That leaked the token into browser history, Referer headers,
+// and DevTools panels — and the same token authorises /terminal/exec.
+//
+// Instead, we POST to backend to mint a 30-second, path-bound, single-use
+// nonce. The renderer then `window.open()`s the returned URL. Even if the
+// nonce lands in browser history it's burned and expired within seconds.
+
+async function _mintLink(path: string): Promise<string> {
+  const r = await authFetch(path, { method: "POST" });
+  if (!r.ok) throw new Error(await parseError(r));
+  const body = (await r.json()) as { url: string };
+  return `${BACKEND_URL}${body.url}`;
+}
+
+export function requestReportLink(eid: string, format: "html" | "md"): Promise<string> {
+  return _mintLink(`/engagements/${eid}/report-link?format=${format}`);
 }
 
 // ── Report snapshots ────────────────────────────────────────────────────────
@@ -412,14 +428,12 @@ export type ReportSnapshotMeta = {
   md_bytes: number;
 };
 
-export function reportSnapshotUrl(
+export function requestSnapshotLink(
   eid: string, sid: string, format: "html" | "md",
-): string {
-  const token = getCachedAuthToken();
-  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-  return (
-    `${BACKEND_URL}/engagements/${eid}/report` +
-    `?format=${format}&snapshot_id=${encodeURIComponent(sid)}${tokenParam}`
+): Promise<string> {
+  return _mintLink(
+    `/engagements/${eid}/report-link` +
+    `?format=${format}&snapshot_id=${encodeURIComponent(sid)}`,
   );
 }
 
@@ -507,10 +521,8 @@ export async function fetchReportPreview(eid: string): Promise<EngagementReport>
   return r.json();
 }
 
-export function reportExportUrl(
+export function requestExportLink(
   eid: string, format: "markdown" | "pdf",
-): string {
-  const token = getCachedAuthToken();
-  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
-  return `${BACKEND_URL}/reports/engagement/${eid}?format=${format}${tokenParam}`;
+): Promise<string> {
+  return _mintLink(`/reports/engagement/${eid}/link?format=${format}`);
 }

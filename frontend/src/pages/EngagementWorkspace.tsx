@@ -16,8 +16,8 @@ import {
   listFindings,
   listReportSnapshots,
   listResults,
-  reportSnapshotUrl,
-  reportUrl,
+  requestReportLink,
+  requestSnapshotLink,
   updateFinding,
   useActiveEngagementId,
   type Engagement,
@@ -768,10 +768,32 @@ function ReportPane({ eid }: { eid: string }) {
     }
   }
 
-  const iframeSrc =
-    previewLive ? reportUrl(eid, "html") :
-    selectedId   ? reportSnapshotUrl(eid, selectedId, "html") :
-    "";
+  // Re-mint a one-shot nonce URL whenever the source of truth changes
+  // (engagement, live-preview toggle, or selected snapshot). Each iframe
+  // src change burns one nonce; staying on the same view just sits with
+  // an already-burned nonce — that's fine because the iframe loaded
+  // before the burn took effect.
+  const [iframeSrc, setIframeSrc] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    async function mint() {
+      try {
+        const url = previewLive
+          ? await requestReportLink(eid, "html")
+          : selectedId
+            ? await requestSnapshotLink(eid, selectedId, "html")
+            : "";
+        if (!cancelled) setIframeSrc(url);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : String(e));
+          setIframeSrc("");
+        }
+      }
+    }
+    mint();
+    return () => { cancelled = true; };
+  }, [eid, previewLive, selectedId]);
 
   return (
     <div className="h-full flex flex-col">
@@ -859,18 +881,32 @@ function ReportPane({ eid }: { eid: string }) {
                     </div>
                   )}
                   <div className="mt-1 flex gap-2 text-[10px]">
-                    <a href={reportSnapshotUrl(eid, s.id, "html")}
-                       onClick={(e) => e.stopPropagation()}
-                       target="_blank" rel="noreferrer"
+                    <button type="button"
+                       onClick={async (e) => {
+                         e.stopPropagation();
+                         try {
+                           const url = await requestSnapshotLink(eid, s.id, "html");
+                           window.open(url, "_blank", "noopener,noreferrer");
+                         } catch (err) {
+                           setError(err instanceof Error ? err.message : String(err));
+                         }
+                       }}
                        className="text-accent hover:underline">
                       HTML
-                    </a>
-                    <a href={reportSnapshotUrl(eid, s.id, "md")}
-                       onClick={(e) => e.stopPropagation()}
-                       target="_blank" rel="noreferrer"
+                    </button>
+                    <button type="button"
+                       onClick={async (e) => {
+                         e.stopPropagation();
+                         try {
+                           const url = await requestSnapshotLink(eid, s.id, "md");
+                           window.open(url, "_blank", "noopener,noreferrer");
+                         } catch (err) {
+                           setError(err instanceof Error ? err.message : String(err));
+                         }
+                       }}
                        className="text-accent hover:underline">
                       Markdown
-                    </a>
+                    </button>
                     <span className="ml-auto text-ink-dim">
                       {Math.round(s.html_bytes / 1024)} KB
                     </span>

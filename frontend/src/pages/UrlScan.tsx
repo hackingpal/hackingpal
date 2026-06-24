@@ -5,6 +5,7 @@ import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
 import SeverityBadge from "../components/SeverityBadge";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Result = {
   id: string; url: string; domain: string; ip: string; country: string;
@@ -91,10 +92,10 @@ export default function UrlScan() {
                     (r.malicious ? "border-danger/60 mhp-critical-pulse" : "border-divider")}
                 >
                   <div className="flex justify-between items-start gap-2 mb-1">
-                    <a href={r.result_url} target="_blank" rel="noreferrer"
+                    <SafeAnchor href={r.result_url}
                        className="text-[12px] font-mono text-accent hover:underline truncate flex-1">
                       {r.url}
-                    </a>
+                    </SafeAnchor>
                     {r.malicious && <SeverityBadge severity="critical" label="MALICIOUS" />}
                     <CopyButton text={copyText} />
                     <PromoteToFindingButton

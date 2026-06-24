@@ -4,6 +4,7 @@ import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
 import ResultGroup from "../components/ResultGroup";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Pattern = { label: string; template: string };
 
@@ -187,14 +188,14 @@ export default function GithubLeak() {
                         className="mhp-result-in group px-3 py-2 mhp-critical-pulse"
                       >
                         <div className="flex items-center gap-2 mb-1">
-                          <a href={it.html_url} target="_blank" rel="noreferrer"
+                          <SafeAnchor href={it.html_url}
                              className="text-[12px] text-accent hover:underline truncate flex-1 font-mono">
                             {it.path}
-                          </a>
-                          <a href={it.repository.html_url} target="_blank" rel="noreferrer"
+                          </SafeAnchor>
+                          <SafeAnchor href={it.repository.html_url}
                              className="text-[10px] text-ink-muted hover:text-ink-primary">
                             {it.repository.full_name}
-                          </a>
+                          </SafeAnchor>
                           {it.repository.stars > 0 && (
                             <span className="text-[10px] text-ink-dim">★{it.repository.stars}</span>
                           )}

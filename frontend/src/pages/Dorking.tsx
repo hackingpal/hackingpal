@@ -3,6 +3,7 @@ import { api, authFetch, parseError } from "../api";
 import EmptyState from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Category = {
   id: string;
@@ -192,12 +193,12 @@ curl -X POST http://127.0.0.1:8765/settings/keys/google_cse_id \\
                   <span className="text-[10px] uppercase text-accent border border-accent/40 rounded px-1.5">
                     {d.category}
                   </span>
-                  <a href={d.url} target="_blank" rel="noreferrer"
+                  <SafeAnchor href={d.url}
                      className="text-[12px] font-mono text-ink-primary hover:text-accent truncate flex-1">
                     {d.query}
-                  </a>
-                  <a href={d.url} target="_blank" rel="noreferrer"
-                     className="text-[10px] text-ink-muted hover:text-accent">↗</a>
+                  </SafeAnchor>
+                  <SafeAnchor href={d.url}
+                     className="text-[10px] text-ink-muted hover:text-accent">↗</SafeAnchor>
                   <CopyButton text={copyText} />
                 </div>
                 {d.error && <div className="text-[11px] text-amber">{d.error}</div>}
@@ -206,8 +207,8 @@ curl -X POST http://127.0.0.1:8765/settings/keys/google_cse_id \\
                     {d.items.map((it, j) => (
                       <div key={j} className="group/inner flex items-start gap-2">
                         <div className="flex-1">
-                          <a href={it.link} target="_blank" rel="noreferrer"
-                             className="text-[12px] text-accent hover:underline">{it.title}</a>
+                          <SafeAnchor href={it.link}
+                             className="text-[12px] text-accent hover:underline">{it.title}</SafeAnchor>
                           <div className="text-[10px] text-ink-dim font-mono truncate">{it.link}</div>
                           {it.snippet && <div className="text-[11px] text-ink-muted">{it.snippet}</div>}
                         </div>

@@ -9,7 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   fetchReportPreview,
-  reportExportUrl,
+  requestExportLink,
   useActiveEngagementId,
   type EngagementReport,
   type EngagementReportFinding,
@@ -17,6 +17,7 @@ import {
 } from "../lib/engagement";
 import type { Evidence, EvidenceType } from "../lib/engagement";
 import Glyph from "../components/Glyph";
+import { SafeAnchor } from "../components/SafeAnchor";
 
 type Props = { onJumpTo?: (id: string) => void };
 
@@ -145,20 +146,34 @@ export default function Report({ onJumpTo }: Props) {
           )}
           <span className="flex-1" />
           <div className="flex items-center gap-2">
-            <a href={reportExportUrl(activeId, "markdown")}
-               download
+            <button type="button"
+               onClick={async () => {
+                 try {
+                   const url = await requestExportLink(activeId, "markdown");
+                   window.open(url, "_blank", "noopener,noreferrer");
+                 } catch (e) {
+                   setError(e instanceof Error ? e.message : String(e));
+                 }
+               }}
                className="px-3 py-1.5 rounded border border-accent text-accent
                           text-[12px] font-bold uppercase tracking-wider
                           hover:bg-accent/10 transition">
               Export Markdown
-            </a>
-            <a href={reportExportUrl(activeId, "pdf")}
-               download
+            </button>
+            <button type="button"
+               onClick={async () => {
+                 try {
+                   const url = await requestExportLink(activeId, "pdf");
+                   window.open(url, "_blank", "noopener,noreferrer");
+                 } catch (e) {
+                   setError(e instanceof Error ? e.message : String(e));
+                 }
+               }}
                className="px-3 py-1.5 rounded border border-accent text-accent
                           text-[12px] font-bold uppercase tracking-wider
                           hover:bg-accent/10 transition">
               Export PDF
-            </a>
+            </button>
           </div>
         </div>
       </header>
@@ -504,12 +519,10 @@ function EvidenceRow({ item }: { item: Evidence }) {
             {item.content}
           </div>
         ) : item.type === "screenshot_ref" ? (
-          <a href={item.content}
-             target="_blank"
-             rel="noreferrer"
+          <SafeAnchor href={item.content}
              className="text-[12px] font-mono text-accent hover:underline break-all">
             {item.content}
-          </a>
+          </SafeAnchor>
         ) : (
           <pre className="text-[11px] font-mono whitespace-pre-wrap bg-bg-base
                           border border-divider rounded p-2 max-h-96 overflow-y-auto">

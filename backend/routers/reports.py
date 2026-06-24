@@ -16,16 +16,19 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Query, Response
 
 from lib import audit_log, engagements, report as report_lib
-from lib.auth import require_local_auth
+from lib.auth import mint_report_nonce
 from lib.errors import ErrorCode, MhpError
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/reports", tags=["reports"],
-                   dependencies=[Depends(require_local_auth)])
+# Auth + nonce gate is applied at the app level (_REPORT_GATE in main.py)
+# so POST /engagement/{eid}/link can mint a path-bound nonce that the
+# subsequent GET /engagement/{eid}?nonce=… consumes — without the
+# stricter router-level require_local_auth blocking the nonce path.
+router = APIRouter(prefix="/reports", tags=["reports"])
 
 
 def _slug(name: str) -> str:
@@ -59,6 +62,21 @@ def preview(eid: str) -> dict[str, Any]:
     )
     audit_log.complete(aid, summary="preview")
     return payload
+
+
+@router.post("/engagement/{eid}/link")
+def export_link(
+    eid: str,
+    format: Literal["markdown", "pdf"] = Query(default="markdown"),
+) -> dict[str, str]:
+    """Mint a one-shot 30s URL for a system-browser report open.
+
+    See engagements.report_link for the why; same shape.
+    """
+    _require_engagement(eid)
+    path = f"/reports/engagement/{eid}"
+    nonce = mint_report_nonce(path)
+    return {"url": f"{path}?format={format}&nonce={nonce}"}
 
 
 @router.get("/engagement/{eid}")

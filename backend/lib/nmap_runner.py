@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
@@ -23,14 +25,52 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-NMAP_BIN_CANDIDATES = ("/opt/homebrew/bin/nmap", "/usr/local/bin/nmap", "/usr/bin/nmap")
+# Order matters: system / SIP-protected paths are preferred over Homebrew.
+# The previous order put /opt/homebrew/bin first; that's a user-writable
+# directory, so a sudoers entry granting NOPASSWD on a Homebrew path is
+# trivial root-RCE (swap the binary). Apple does not ship nmap, so on
+# macOS the only safe option is the absence of a system path — Homebrew
+# is acceptable for *unprivileged* scans, but is_root_owned_dir() acts
+# as a gate at sudoers-install time.
+NMAP_BIN_CANDIDATES = ("/usr/bin/nmap", "/usr/sbin/nmap",
+                       "/opt/homebrew/bin/nmap", "/usr/local/bin/nmap")
+
+
+def _is_root_owned_dir(directory: str) -> bool:
+    """True iff the directory exists, is owned by root, and is not world- or
+    group-writable. Used to decide whether the resolved nmap path is safe
+    to grant NOPASSWD sudo against."""
+    try:
+        st = os.stat(directory)
+    except (FileNotFoundError, PermissionError):
+        return False
+    if st.st_uid != 0:
+        return False
+    if st.st_mode & (stat.S_IWOTH | stat.S_IWGRP):
+        return False
+    return True
 
 
 def find_nmap() -> str | None:
+    """Prefer SIP/root-protected paths; fall back to Homebrew/local/PATH."""
+    for c in NMAP_BIN_CANDIDATES:
+        if Path(c).is_file() and _is_root_owned_dir(os.path.dirname(c)):
+            return c
+    # No root-owned candidate. Allow Homebrew/local/PATH for unprivileged
+    # scans — sudoers install paths must call _is_root_owned_dir() and
+    # refuse if the chosen binary lives in a user-writable directory.
     for c in NMAP_BIN_CANDIDATES:
         if Path(c).is_file():
             return c
     return shutil.which("nmap")
+
+
+def nmap_path_is_safe_for_sudo() -> bool:
+    """Whether find_nmap() returned a binary in a root-owned dir.
+
+    Sudoers install endpoints must check this before dropping NOPASSWD."""
+    p = find_nmap()
+    return bool(p) and _is_root_owned_dir(os.path.dirname(p))
 
 
 def nmap_version(binary: str) -> str:
@@ -418,6 +458,11 @@ def build_argv(opts: NmapOptions, nmap_bin: str, xml_path: str) -> list[str]:
             "-iL",
             "-oN", "-oG", "-oA",
             "--interactive",
+            # Arbitrary file-read vectors via Nmap's own loaders.
+            # `--servicedb /etc/shadow`, `--versiondb /root/.aws/credentials`,
+            # `--data-file /etc/sudoers` will all surface the file in the XML
+            # output. Block them.
+            "--servicedb", "--versiondb", "--data-file",
         )
         for tok in tokens:
             # Match both `--script=val` and `--script` (value as next token).
