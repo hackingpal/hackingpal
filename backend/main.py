@@ -23,7 +23,13 @@ from fastapi.staticfiles import StaticFiles
 
 from lib import errors as mhp_errors
 from lib import logging_setup
-from lib.auth import AUTH_TOKEN, require_localhost
+from lib.auth import (
+    AUTH_TOKEN,
+    require_local_auth,
+    require_local_auth_or_report_nonce,
+    require_local_origin,
+    require_localhost,
+)
 
 from routers import (
     ad_spray, audit, audit_log, aws_recon, azure_recon, basic_check,
@@ -114,94 +120,115 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(ip_checker.router)
-app.include_router(ip_checker.shodan_router)
-app.include_router(dns_recon.router)
-app.include_router(whois.router)
-app.include_router(tls_audit.router)
-app.include_router(fingerprint.router)
-app.include_router(http_probe.router)
-app.include_router(ct_log.router)
-app.include_router(email_security.router)
-app.include_router(takeover.router)
-app.include_router(reverse_ip.router)
-app.include_router(cms.router)
-app.include_router(macos_posture.router)
-app.include_router(linux_posture.router)
-app.include_router(windows_posture.router)
-app.include_router(systemd_units.router)
-app.include_router(firewall_rules.router)
-app.include_router(users_audit.router)
-app.include_router(local_discovery.router)
-app.include_router(jwt_analyzer.router)
-app.include_router(graphql.router)
-app.include_router(hash_cracker.router)
-app.include_router(port_scanner.router)
-app.include_router(nmap.router)
-app.include_router(lan_scan.router)
-app.include_router(audit.router)
-app.include_router(ids.router)
-app.include_router(ping.router)
-app.include_router(tcpdump.router)
-app.include_router(wifi.router)
-app.include_router(terminal.router)
-app.include_router(brew.router)
-app.include_router(labs.router)
-app.include_router(targets.router)
-app.include_router(persistence.router)
-app.include_router(processes.router)
-app.include_router(stego.router)
-app.include_router(reverse_shell.router)
-app.include_router(system_info.router)
-app.include_router(settings.router)
-app.include_router(chat.router)
-app.include_router(engagements.router)
-app.include_router(findings.router)
-app.include_router(cvss.router)
-app.include_router(reports.router)
-app.include_router(summarize.router)
-app.include_router(imds.router)
-app.include_router(s3_scanner.router)
-app.include_router(breach.router)
-app.include_router(dorking.router)
-app.include_router(github_leak.router)
-app.include_router(shodan_censys.router)
-app.include_router(people_enum.router)
-app.include_router(aws_recon.router)
-app.include_router(azure_recon.router)
-app.include_router(gcp_recon.router)
-app.include_router(ldap_enum.router)
-app.include_router(smb_enum.router)
-app.include_router(ad_spray.router)
-app.include_router(kerberos_roast.router)
-app.include_router(wifi_scan.router)
-app.include_router(evil_twin.router)
-app.include_router(bt_recon.router)
-app.include_router(wpa_capture.router)
-app.include_router(c2_beacon.router)
-app.include_router(cred_harvest.router)
-app.include_router(profile_finder.router)
-app.include_router(bloodhound_ingest.router)
-app.include_router(lateral.router)
-app.include_router(subdomain_enum.router)
-app.include_router(xss.router)
-app.include_router(sqli.router)
-app.include_router(cmdi.router)
-app.include_router(lfi.router)
-app.include_router(ssrf.router)
-app.include_router(idor.router)
-app.include_router(presets.router)
-app.include_router(exploits.router)
-app.include_router(wayback.router)
-app.include_router(urlscan.router)
-app.include_router(email_harvest.router)
-app.include_router(dorking.osint_router)
-app.include_router(audit_log.router)
-app.include_router(scope.router)
-app.include_router(triage.router)
-app.include_router(playbook_suggest.router)
-app.include_router(basic_check.router)
-app.include_router(tool_requirements.router)
+# Every router is gated by the same loopback + token + origin trio.
+# `/health`, `/version`, and `/auth/token` are direct on `app` (below) so
+# they don't pick this up — and they have narrower deps appropriate to
+# their roles (none for /health and /version; `require_localhost` for
+# /auth/token so the renderer can fetch the token without already
+# possessing it).
+#
+# Individual routers may stack additional dependencies on their own
+# APIRouter(...) constructors — those compose. Running the gate twice is
+# harmless: secrets.compare_digest is constant-time.
+_PRIVILEGED = [Depends(require_local_auth), Depends(require_local_origin)]
+
+# Report-serving routers accept either the bearer token (for authFetch
+# callers) or a short-lived path-bound nonce (for the system-browser opens
+# triggered by "Open report" buttons). The renderer uses
+# requestReportLink()/window.open(); see frontend/src/lib/engagement.ts.
+_REPORT_GATE = [
+    Depends(require_local_auth_or_report_nonce),
+    Depends(require_local_origin),
+]
+
+app.include_router(ip_checker.router, dependencies=_PRIVILEGED)
+app.include_router(ip_checker.shodan_router, dependencies=_PRIVILEGED)
+app.include_router(dns_recon.router, dependencies=_PRIVILEGED)
+app.include_router(whois.router, dependencies=_PRIVILEGED)
+app.include_router(tls_audit.router, dependencies=_PRIVILEGED)
+app.include_router(fingerprint.router, dependencies=_PRIVILEGED)
+app.include_router(http_probe.router, dependencies=_PRIVILEGED)
+app.include_router(ct_log.router, dependencies=_PRIVILEGED)
+app.include_router(email_security.router, dependencies=_PRIVILEGED)
+app.include_router(takeover.router, dependencies=_PRIVILEGED)
+app.include_router(reverse_ip.router, dependencies=_PRIVILEGED)
+app.include_router(cms.router, dependencies=_PRIVILEGED)
+app.include_router(macos_posture.router, dependencies=_PRIVILEGED)
+app.include_router(linux_posture.router, dependencies=_PRIVILEGED)
+app.include_router(windows_posture.router, dependencies=_PRIVILEGED)
+app.include_router(systemd_units.router, dependencies=_PRIVILEGED)
+app.include_router(firewall_rules.router, dependencies=_PRIVILEGED)
+app.include_router(users_audit.router, dependencies=_PRIVILEGED)
+app.include_router(local_discovery.router, dependencies=_PRIVILEGED)
+app.include_router(jwt_analyzer.router, dependencies=_PRIVILEGED)
+app.include_router(graphql.router, dependencies=_PRIVILEGED)
+app.include_router(hash_cracker.router, dependencies=_PRIVILEGED)
+app.include_router(port_scanner.router, dependencies=_PRIVILEGED)
+app.include_router(nmap.router, dependencies=_PRIVILEGED)
+app.include_router(lan_scan.router, dependencies=_PRIVILEGED)
+app.include_router(audit.router, dependencies=_PRIVILEGED)
+app.include_router(ids.router, dependencies=_PRIVILEGED)
+app.include_router(ping.router, dependencies=_PRIVILEGED)
+app.include_router(tcpdump.router, dependencies=_PRIVILEGED)
+app.include_router(wifi.router, dependencies=_PRIVILEGED)
+app.include_router(terminal.router, dependencies=_PRIVILEGED)
+app.include_router(brew.router, dependencies=_PRIVILEGED)
+app.include_router(labs.router, dependencies=_PRIVILEGED)
+app.include_router(targets.router, dependencies=_PRIVILEGED)
+app.include_router(persistence.router, dependencies=_PRIVILEGED)
+app.include_router(processes.router, dependencies=_PRIVILEGED)
+app.include_router(stego.router, dependencies=_PRIVILEGED)
+app.include_router(reverse_shell.router, dependencies=_PRIVILEGED)
+app.include_router(system_info.router, dependencies=_PRIVILEGED)
+app.include_router(settings.router, dependencies=_PRIVILEGED)
+app.include_router(chat.router, dependencies=_PRIVILEGED)
+app.include_router(engagements.router, dependencies=_REPORT_GATE)
+app.include_router(findings.router, dependencies=_PRIVILEGED)
+app.include_router(cvss.router, dependencies=_PRIVILEGED)
+app.include_router(reports.router, dependencies=_REPORT_GATE)
+app.include_router(summarize.router, dependencies=_PRIVILEGED)
+app.include_router(imds.router, dependencies=_PRIVILEGED)
+app.include_router(s3_scanner.router, dependencies=_PRIVILEGED)
+app.include_router(breach.router, dependencies=_PRIVILEGED)
+app.include_router(dorking.router, dependencies=_PRIVILEGED)
+app.include_router(github_leak.router, dependencies=_PRIVILEGED)
+app.include_router(shodan_censys.router, dependencies=_PRIVILEGED)
+app.include_router(people_enum.router, dependencies=_PRIVILEGED)
+app.include_router(aws_recon.router, dependencies=_PRIVILEGED)
+app.include_router(azure_recon.router, dependencies=_PRIVILEGED)
+app.include_router(gcp_recon.router, dependencies=_PRIVILEGED)
+app.include_router(ldap_enum.router, dependencies=_PRIVILEGED)
+app.include_router(smb_enum.router, dependencies=_PRIVILEGED)
+app.include_router(ad_spray.router, dependencies=_PRIVILEGED)
+app.include_router(kerberos_roast.router, dependencies=_PRIVILEGED)
+app.include_router(wifi_scan.router, dependencies=_PRIVILEGED)
+app.include_router(evil_twin.router, dependencies=_PRIVILEGED)
+app.include_router(bt_recon.router, dependencies=_PRIVILEGED)
+app.include_router(wpa_capture.router, dependencies=_PRIVILEGED)
+app.include_router(c2_beacon.router, dependencies=_PRIVILEGED)
+app.include_router(cred_harvest.router, dependencies=_PRIVILEGED)
+app.include_router(profile_finder.router, dependencies=_PRIVILEGED)
+app.include_router(bloodhound_ingest.router, dependencies=_PRIVILEGED)
+app.include_router(lateral.router, dependencies=_PRIVILEGED)
+app.include_router(subdomain_enum.router, dependencies=_PRIVILEGED)
+app.include_router(xss.router, dependencies=_PRIVILEGED)
+app.include_router(sqli.router, dependencies=_PRIVILEGED)
+app.include_router(cmdi.router, dependencies=_PRIVILEGED)
+app.include_router(lfi.router, dependencies=_PRIVILEGED)
+app.include_router(ssrf.router, dependencies=_PRIVILEGED)
+app.include_router(idor.router, dependencies=_PRIVILEGED)
+app.include_router(presets.router, dependencies=_PRIVILEGED)
+app.include_router(exploits.router, dependencies=_PRIVILEGED)
+app.include_router(wayback.router, dependencies=_PRIVILEGED)
+app.include_router(urlscan.router, dependencies=_PRIVILEGED)
+app.include_router(email_harvest.router, dependencies=_PRIVILEGED)
+app.include_router(dorking.osint_router, dependencies=_PRIVILEGED)
+app.include_router(audit_log.router, dependencies=_PRIVILEGED)
+app.include_router(scope.router, dependencies=_PRIVILEGED)
+app.include_router(triage.router, dependencies=_PRIVILEGED)
+app.include_router(playbook_suggest.router, dependencies=_PRIVILEGED)
+app.include_router(basic_check.router, dependencies=_PRIVILEGED)
+app.include_router(tool_requirements.router, dependencies=_PRIVILEGED)
 
 
 @app.get("/health")
@@ -214,7 +241,10 @@ def version() -> dict[str, str]:
     return {"version": app.version}
 
 
-@app.get("/auth/token", dependencies=[Depends(require_localhost)])
+@app.get(
+    "/auth/token",
+    dependencies=[Depends(require_localhost), Depends(require_local_origin)],
+)
 def auth_token() -> dict[str, str]:
     """Return the per-launch auth token. Loopback-only (no header required).
 
@@ -222,6 +252,9 @@ def auth_token() -> dict[str, str]:
     via X-MHP-Token on every subsequent privileged request. The token is
     regenerated each process start, so anything cached from a previous run
     is automatically invalidated.
+
+    Origin check belt-and-suspenders against a malicious browser tab
+    reaching loopback via DNS rebinding before the renderer mounts.
     """
     return {"token": AUTH_TOKEN}
 

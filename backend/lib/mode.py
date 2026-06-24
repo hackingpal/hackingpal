@@ -1,16 +1,21 @@
 """Lab vs Engagement mode.
 
-The frontend persists the mode flag and sends it on every request:
+Mode is derived from whether the request carries an engagement_id, NOT
+from a caller-controlled header. The legacy `X-MHP-Mode` header and
+`?mode=` query param are ignored — they were trivially spoofable, which
+let any caller send `mode=lab` to short-circuit `scope.check_combined`
+and run off-scope scans against arbitrary targets.
 
-  * HTTP: `X-MHP-Mode: lab|engagement` header (set by `withAuthHeader`
-    in `frontend/src/api.ts`).
-  * WS:   `?mode=lab|engagement` query param (appended by `openWs`).
+The mapping is:
 
-This module exposes a single resolver `get_mode(conn)` that works for
-both `Request` and `WebSocket` — the rule is identical: header first,
-query fallback, default to ``"lab"``. The default is deliberately
-permissive: an unset or unparseable mode shouldn't lock the user out
-of the app; it should drop them into the safer-by-default Lab mode.
+  * engagement_id supplied → mode = "engagement", scope is enforced
+    against that engagement's allow/deny lists
+  * engagement_id absent   → mode = "lab", scope check short-circuits
+
+To run an exploratory off-scope call, the operator must explicitly
+clear their active engagement in the renderer (which makes the
+frontend stop sending `X-MHP-Engagement-Id`). Switching mode by
+flipping a header is no longer possible.
 
 `scope.check_combined` accepts the resolved mode and uses it to decide
 whether to enforce engagement scope or short-circuit. See
@@ -25,26 +30,10 @@ from starlette.requests import HTTPConnection
 Mode = Literal["lab", "engagement"]
 
 
-def get_mode(conn: HTTPConnection) -> Mode:
-    """Resolve the mode for one request/WS.
-
-    Order of precedence:
-      1. ``X-MHP-Mode`` header
-      2. ``?mode=`` query param
-      3. ``"lab"`` (safer default)
-    """
-    raw = (
-        conn.headers.get("X-MHP-Mode")
-        or conn.query_params.get("mode")
-        or ""
-    ).strip().lower()
-    return "engagement" if raw == "engagement" else "lab"
-
-
 def get_engagement_id(conn: HTTPConnection) -> str | None:
     """Resolve the active engagement id for one request/WS.
 
-    Precedence mirrors `get_mode`:
+    Precedence:
       1. ``X-MHP-Engagement-Id`` header
       2. ``?engagement_id=`` query param
       3. ``None``
@@ -59,3 +48,11 @@ def get_engagement_id(conn: HTTPConnection) -> str | None:
         or ""
     ).strip()
     return raw or None
+
+
+def get_mode(conn: HTTPConnection) -> Mode:
+    """Resolve the mode for one request/WS.
+
+    Engagement mode iff an engagement_id is supplied. Lab otherwise.
+    """
+    return "engagement" if get_engagement_id(conn) else "lab"
