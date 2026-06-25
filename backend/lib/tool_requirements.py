@@ -23,6 +23,13 @@ from pydantic import BaseModel
 class BinaryReq(BaseModel):
     name: str
     install_hint: str
+    # Absolute fallback paths probed when the binary isn't on $PATH — e.g.
+    # macOS `airport` lives at a system framework path that `which` won't find.
+    paths: list[str] = []
+    # Restrict the readiness probe to specific platforms. Empty = all.
+    # Lets us declare per-platform alternatives (airport/netsh/iw) without
+    # the cross-platform members showing up as "missing" on the host OS.
+    platforms: list[str] = []
 
 
 class ApiKeyReq(BaseModel):
@@ -55,8 +62,17 @@ class ToolRequirement(BaseModel):
     notes: str | None = None
 
 
-def _b(name: str, hint: str) -> BinaryReq:
-    return BinaryReq(name=name, install_hint=hint)
+def _b(name: str, hint: str, *,
+       paths: list[str] | None = None,
+       platforms: list[str] | None = None) -> BinaryReq:
+    return BinaryReq(name=name, install_hint=hint,
+                     paths=paths or [], platforms=platforms or [])
+
+
+_AIRPORT_PATH = (
+    "/System/Library/PrivateFrameworks/Apple80211.framework"
+    "/Versions/Current/Resources/airport"
+)
 
 
 def _k(provider: str, how_to: str, env_var: str | None = None,
@@ -381,9 +397,14 @@ TOOLS: list[ToolRequirement] = [
         router="routers/wifi_scan.py", endpoints=["/wifi/scan"],
         target_format="none", target_examples=[],
         setup=SetupReq(
-            binaries=[_b("airport", "macOS built-in at /System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"),
-                      _b("netsh", "Windows built-in"),
-                      _b("iw", "apt-get install iw")],
+            binaries=[_b("airport",
+                          f"macOS built-in at {_AIRPORT_PATH}",
+                          paths=[_AIRPORT_PATH],
+                          platforms=["darwin"]),
+                      _b("netsh", "Windows built-in",
+                         platforms=["win32"]),
+                      _b("iw", "apt-get install iw",
+                         platforms=["linux"])],
         ),
         expected_output="Nearby SSIDs with BSSID, channel, signal, security.",
     ),
@@ -462,6 +483,310 @@ TOOLS: list[ToolRequirement] = [
                        platforms=["darwin"]),
         expected_output="Homebrew package list + install/upgrade actions.",
     ),
+    ToolRequirement(
+        id="triage", name="Target Triage", category="UTILITIES",
+        router="routers/triage.py", endpoints=["/triage"],
+        target_format="url-or-host", target_examples=["https://example.com"],
+        setup=SetupReq(
+            api_keys=[_k("Anthropic",
+                         "Settings → Anthropic API key, or install the `claude` CLI on PATH.",
+                         keyring="anthropic_api_key",
+                         env_var="ANTHROPIC_API_KEY")],
+            network_required=True),
+        expected_output="Claude-tailored playbook for the target after a bounded passive probe.",
+    ),
+
+    # ── RECON (additional) ──────────────────────────────────────────────
+    ToolRequirement(
+        id="basic-check", name="Basic Check", category="RECON",
+        router="routers/basic_check.py", endpoints=["/basic_check/run"],
+        target_format="url-or-host", target_examples=["https://example.com"],
+        setup=SetupReq(network_required=True),
+        expected_output="~30s baseline: DNS + TLS + security headers + basic findings.",
+        notes="Designed for someone testing their own app — bounded, passive, single endpoint.",
+    ),
+
+    # ── OSINT (additional) ──────────────────────────────────────────────
+    ToolRequirement(
+        id="dorking", name="Google Dorking", category="OSINT",
+        router="routers/dorking.py",
+        endpoints=["/dorking/categories", "/dorking/status", "/dorking/generate"],
+        target_format="domain", target_examples=["example.com"],
+        setup=SetupReq(
+            api_keys=[_k("Google CSE",
+                         "Optional — without keys, dorks are generated for manual paste.",
+                         keyring="google_cse_api_key")],
+            network_required=True),
+        expected_output="Dork strings; optional CSE execution when keys are configured.",
+    ),
+    ToolRequirement(
+        id="email-harvest", name="Email Harvester", category="OSINT",
+        router="routers/email_harvest.py", endpoints=["/osint/emails/{domain}"],
+        target_format="domain", target_examples=["example.com"],
+        setup=SetupReq(
+            api_keys=[_k("Hunter.io",
+                         "Optional — augments crt.sh + page-scrape with Hunter results.",
+                         keyring="hunter_api_key")],
+            network_required=True),
+        expected_output="Email addresses from CT logs + page scrape + optional Hunter API.",
+    ),
+    ToolRequirement(
+        id="people", name="People Enum", category="OSINT",
+        router="routers/people_enum.py", endpoints=["/people/status", "/people/enum"],
+        target_format="domain", target_examples=["example.com"],
+        setup=SetupReq(
+            api_keys=[_k("Hunter.io",
+                         "Optional — augments duckduckgo + crt.sh + hackertarget.",
+                         keyring="hunter_api_key")],
+            network_required=True),
+        expected_output="People + email aggregator (theHarvester-style).",
+    ),
+    ToolRequirement(
+        id="profile-finder", name="Profile Finder", category="OSINT",
+        router="routers/profile_finder.py", endpoints=["/profile-finder/find"],
+        target_format="company-name", target_examples=["Acme Corp"],
+        setup=SetupReq(
+            api_keys=[_k("Google CSE",
+                         "Optional — without keys, falls back to scraping public search results.",
+                         keyring="google_cse_api_key")],
+            network_required=True),
+        expected_output="Public profile candidates for the target company (LinkedIn-free, ToS-honest).",
+    ),
+    ToolRequirement(
+        id="reverse-ip", name="Reverse IP", category="OSINT",
+        router="routers/reverse_ip.py", endpoints=["/reverse-ip/{target}"],
+        target_format="ip-or-host", target_examples=["1.1.1.1"],
+        setup=SetupReq(network_required=True),
+        expected_output="Other domains sharing the target IP (via HackerTarget free tier).",
+        notes="HackerTarget rate-limits to ~50 queries/day on the free tier.",
+    ),
+    ToolRequirement(
+        id="exploits", name="Exploit Lookup", category="OSINT",
+        router="routers/exploits.py",
+        endpoints=["/exploits/status", "/exploits/search",
+                   "/exploits/{exploit_id}", "/exploits/search-from-scan"],
+        target_format="cve-or-keyword",
+        target_examples=["CVE-2024-12345", "apache 2.4.49"],
+        setup=SetupReq(
+            binaries=[_b("searchsploit",
+                         "Optional — `brew install exploitdb` (Mac) or `apt install exploitdb` (Linux)")],
+            network_required=True),
+        expected_output="Exploit-DB entries; prefers local searchsploit, falls back to web API.",
+        notes="searchsploit is optional but recommended — faster and works offline.",
+    ),
+
+    # ── WEB EXPLOIT (additional) ────────────────────────────────────────
+    ToolRequirement(
+        id="cmdi", name="Command Injection", category="WEB EXPLOIT",
+        router="routers/cmdi.py", endpoints=["/ws/cmdi"],
+        target_format="url-with-FUZZ",
+        target_examples=["https://example.com/run?cmd=FUZZ"],
+        setup=SetupReq(network_required=True),
+        expected_output="Time-based + output-based command-injection vectors.",
+        notes="Active check — engagement mode + authorization required.",
+    ),
+    ToolRequirement(
+        id="lfi", name="LFI / Path Traversal", category="WEB EXPLOIT",
+        router="routers/lfi.py", endpoints=["/ws/lfi"],
+        target_format="url-with-FUZZ",
+        target_examples=["https://example.com/file?p=FUZZ"],
+        setup=SetupReq(network_required=True),
+        expected_output="LFI hits with file-content signatures (e.g. /etc/passwd format).",
+        notes="Active check — engagement mode + authorization required.",
+    ),
+    ToolRequirement(
+        id="ssrf", name="SSRF", category="WEB EXPLOIT",
+        router="routers/ssrf.py", endpoints=["/ws/ssrf"],
+        target_format="url-with-FUZZ",
+        target_examples=["https://example.com/proxy?url=FUZZ"],
+        setup=SetupReq(network_required=True),
+        expected_output="Internal-host reachability + cloud-metadata reflection through the sink.",
+        notes="Active check — engagement mode + authorization required.",
+    ),
+    ToolRequirement(
+        id="idor", name="IDOR", category="WEB EXPLOIT",
+        router="routers/idor.py", endpoints=["/ws/idor"],
+        target_format="url-with-FUZZ",
+        target_examples=["https://example.com/api/orders/FUZZ"],
+        setup=SetupReq(network_required=True),
+        expected_output="Cross-account hits — iterates IDs across owner + attacker auth profiles.",
+        notes="Active check — engagement mode + authorization required.",
+    ),
+    ToolRequirement(
+        id="graphql", name="GraphQL Introspect", category="WEB EXPLOIT",
+        router="routers/graphql.py", endpoints=["/graphql/introspect"],
+        target_format="url", target_examples=["https://example.com/graphql"],
+        setup=SetupReq(network_required=True),
+        expected_output="Schema + types + queries + mutations + sensitive-field flags.",
+        notes="Sends the standard introspection query — requires confirm=true.",
+    ),
+    ToolRequirement(
+        id="takeover", name="Subdomain Takeover", category="WEB EXPLOIT",
+        router="routers/takeover.py",
+        endpoints=["/takeover/check/{fqdn}", "/ws/takeover-scan"],
+        target_format="fqdn", target_examples=["foo.example.com"],
+        setup=SetupReq(network_required=True),
+        expected_output="Dangling CNAMEs pointing at takeover-prone services.",
+    ),
+    ToolRequirement(
+        id="imds", name="IMDS Tester", category="WEB EXPLOIT",
+        router="routers/imds.py", endpoints=["/ws/imds"],
+        target_format="url-with-FUZZ",
+        target_examples=["https://example.com/proxy?url=FUZZ"],
+        setup=SetupReq(network_required=True),
+        expected_output="Per-cloud IMDS endpoint reachability (AWS / Azure / GCP) via SSRF sink.",
+    ),
+
+    # ── ACTIVE DIRECTORY (additional) ───────────────────────────────────
+    ToolRequirement(
+        id="ad-spray", name="AD Password Spray", category="ACTIVE DIRECTORY",
+        router="routers/ad_spray.py", endpoints=["/ws/ad-spray"],
+        target_format="ip-or-host",
+        target_examples=["10.0.0.10", "dc01.corp.local"],
+        setup=SetupReq(network_required=True),
+        expected_output="Successful (user, password) pairs; auto-backs-off at lockout threshold-1.",
+        notes="Active check — confirm authorization. Reads domain lockoutThreshold first.",
+    ),
+    ToolRequirement(
+        id="kerberos", name="Kerberoast / AS-REP", category="ACTIVE DIRECTORY",
+        router="routers/kerberos_roast.py",
+        endpoints=["/kerberoast/run", "/asrep/run"],
+        target_format="ip-or-host", target_examples=["dc01.corp.local"],
+        setup=SetupReq(network_required=True, platforms=["darwin", "linux"]),
+        expected_output="Hashcat-format crackable material (mode 13100 / 18200).",
+        notes="Uses Impacket — bundled in the backend Python deps.",
+    ),
+    ToolRequirement(
+        id="lateral", name="Lateral Movement", category="ACTIVE DIRECTORY",
+        router="routers/lateral.py",
+        endpoints=["/lateral/load", "/lateral/status", "/lateral/clear",
+                   "/lateral/path", "/lateral/techniques"],
+        target_format="bloodhound-zip-or-json",
+        target_examples=["20251101-1330_corp_users.json"],
+        setup=SetupReq(),
+        expected_output="Shortest attack paths from a starting principal to Domain Admins.",
+        notes="In-memory graph parsed from BloodHound JSON; uploads capped at 200 MB.",
+    ),
+
+    # ── WIRELESS (additional) ───────────────────────────────────────────
+    ToolRequirement(
+        id="wifi", name="WiFi Integrity", category="WIRELESS",
+        router="routers/wifi.py", endpoints=["/wifi/report"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(
+            binaries=[_b("airport",
+                          f"macOS built-in at {_AIRPORT_PATH}",
+                          paths=[_AIRPORT_PATH],
+                          platforms=["darwin"]),
+                      _b("iw", "apt-get install iw",
+                         platforms=["linux"])],
+            platforms=["darwin", "linux"]),
+        expected_output="SSID + security tier + gateway MAC + DNS hijack check.",
+    ),
+    ToolRequirement(
+        id="evil-twin", name="Evil Twin", category="WIRELESS",
+        router="routers/evil_twin.py", endpoints=["/ws/evil-twin"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(
+            binaries=[_b("airport",
+                          f"macOS built-in at {_AIRPORT_PATH}",
+                          paths=[_AIRPORT_PATH],
+                          platforms=["darwin"]),
+                      _b("iw", "apt-get install iw",
+                         platforms=["linux"])],
+            platforms=["darwin", "linux"]),
+        expected_output="Duplicate-SSID detections across multiple scans (channel / encryption / BSSID divergence).",
+    ),
+    ToolRequirement(
+        id="bt", name="Bluetooth Recon", category="WIRELESS",
+        router="routers/bt_recon.py", endpoints=["/bt/status", "/bt/devices"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(
+            binaries=[_b("system_profiler", "macOS built-in",
+                         platforms=["darwin"]),
+                      _b("bluetoothctl", "apt-get install bluez",
+                         platforms=["linux"])],
+            platforms=["darwin", "linux"]),
+        expected_output="Paired / connected / recently-seen Bluetooth devices.",
+    ),
+
+    # ── FORENSICS (additional) ──────────────────────────────────────────
+    ToolRequirement(
+        id="cred-harvest", name="Credential Harvest", category="FORENSICS",
+        router="routers/cred_harvest.py", endpoints=["/cred-harvest/scan"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(),
+        expected_output="Plaintext credential exposure across ~/.aws, ~/.ssh, ~/.netrc, .env, etc.",
+        notes="Read-only local audit — every secret stays on this machine and is redacted in the payload.",
+    ),
+    ToolRequirement(
+        id="linux-posture", name="Linux Posture", category="FORENSICS",
+        router="routers/linux_posture.py", endpoints=["/linux/posture"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(platforms=["linux"]),
+        expected_output="SELinux/AppArmor, firewall, systemd hardening, sudoers, kernel mitigations.",
+    ),
+    ToolRequirement(
+        id="windows-posture", name="Windows Posture", category="FORENSICS",
+        router="routers/windows_posture.py", endpoints=["/windows/posture"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(platforms=["win32"]),
+        expected_output="Defender, UAC, BitLocker, SMB, RDP, LSA-protection posture.",
+    ),
+    ToolRequirement(
+        id="users-audit", name="User Audit", category="FORENSICS",
+        router="routers/users_audit.py", endpoints=["/users/audit"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(platforms=["linux"]),
+        expected_output="/etc/passwd + /etc/shadow + sudo membership audit.",
+    ),
+    ToolRequirement(
+        id="firewall-rules", name="Firewall Rules", category="FORENSICS",
+        router="routers/firewall_rules.py", endpoints=["/firewall/rules"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(
+            binaries=[_b("nft", "Linux nftables — preferred",
+                         platforms=["linux"]),
+                      _b("iptables", "Linux iptables — fallback",
+                         platforms=["linux"])],
+            platforms=["linux"]),
+        expected_output="Active nftables / iptables rule set.",
+    ),
+    ToolRequirement(
+        id="systemd", name="Systemd Units", category="FORENSICS",
+        router="routers/systemd_units.py",
+        endpoints=["/systemd/units", "/systemd/unit/{name}",
+                   "/systemd/journal/{name}"],
+        target_format="none", target_examples=[],
+        setup=SetupReq(
+            binaries=[_b("systemctl", "Linux systemd",
+                         platforms=["linux"]),
+                      _b("journalctl", "Linux systemd",
+                         platforms=["linux"])],
+            platforms=["linux"]),
+        expected_output="systemd unit list + per-unit status + recent journal tail.",
+    ),
+
+    # ── RED TEAM ────────────────────────────────────────────────────────
+    ToolRequirement(
+        id="c2-beacon", name="C2 Beacon Simulator", category="RED TEAM",
+        router="routers/c2_beacon.py",
+        endpoints=["/c2/listener", "/c2/listeners", "/c2/listener/{lid}"],
+        target_format="local-port", target_examples=["4444"],
+        setup=SetupReq(network_required=True),
+        expected_output="Local listener + copy-pasteable beacon commands (curl/wget/nc/powershell/bash).",
+        notes="Egress-path testing — anything that reaches the listener is logged.",
+    ),
+    ToolRequirement(
+        id="reverse-shell", name="Reverse Shell", category="RED TEAM",
+        router="routers/reverse_shell.py",
+        endpoints=["/reverse-shell/interfaces", "/reverse-shell/listeners",
+                   "/reverse-shell/sessions", "/reverse-shell/payload-kinds"],
+        target_format="bind-host-port", target_examples=["0.0.0.0:4444"],
+        setup=SetupReq(network_required=True),
+        expected_output="Listener + payload templates + interactive session WS.",
+        notes="For authorized engagements — confirm authorization before binding a listener.",
+    ),
 ]
 # fmt: on
 
@@ -494,9 +819,26 @@ def _has_keyring_entry(provider_key: str) -> bool:
         return False
 
 
+def _binary_present(b: BinaryReq) -> bool:
+    if shutil.which(b.name) is not None:
+        return True
+    for p in b.paths:
+        if os.path.exists(p) and os.access(p, os.X_OK):
+            return True
+    return False
+
+
 def check_readiness(req: ToolRequirement) -> dict[str, Any]:
-    missing_bins = [b.name for b in req.setup.binaries
-                    if shutil.which(b.name) is None]
+    import sys
+    plat = {"darwin": "darwin", "linux": "linux", "win32": "win32"}.get(
+        sys.platform, sys.platform)
+
+    # Skip binaries scoped to a different platform — they're not expected on
+    # this OS and would otherwise always report missing.
+    applicable_bins = [b for b in req.setup.binaries
+                       if not b.platforms or plat in b.platforms]
+    missing_bins = [b.name for b in applicable_bins if not _binary_present(b)]
+
     missing_keys: list[str] = []
     for k in req.setup.api_keys:
         env_ok = bool(k.env_var and os.environ.get(k.env_var))
@@ -506,9 +848,6 @@ def check_readiness(req: ToolRequirement) -> dict[str, Any]:
     sudoers_missing = bool(req.setup.sudoers
                            and req.setup.sudoers_file
                            and not os.path.exists(req.setup.sudoers_file))
-    import sys
-    plat = {"darwin": "darwin", "linux": "linux", "win32": "win32"}.get(
-        sys.platform, sys.platform)
     platform_bad = plat not in req.setup.platforms
 
     return {
