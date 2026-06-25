@@ -99,16 +99,21 @@ def test_scope_denied_with_stale_engagement_id(client):
     assert r.json()["code"] == "TARGET_DENIED"
 
 
-def test_scope_allowed_in_engagement_mode_when_target_in_scope(client, temp_db):
+def test_scope_allowed_in_engagement_mode_when_target_in_scope(
+    client, temp_db, permissive_policy,
+):
     """In-scope target should pass the scope check. External targets still
     trip the target_policy 'warn' layer (RFC1918 / loopback guard), so we
     pass `confirm=true` to acknowledge that and isolate the scope gate.
+    permissive_policy holds the policy layer at the older warn-on-external
+    semantic so the test exercises the scope check rather than tripping the
+    config's deny-external-by-default safety net.
     Downstream call may fail on network — we accept anything *but* 403/409."""
     eng = engagements.create_engagement(
         name="acme", scope=["example.com"], exclusions=[], notes="",
     )
     r = client.get("/ct/search/example.com?confirm=true", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code not in (403, 409), \
         f"expected scope to allow; got {r.status_code}: {r.text[:200]}"
@@ -141,10 +146,15 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
 # ── engagement-present gates on non-target tools ────────────────────────────
 #
 # Routers wired with `scope.enforce_engagement_present` (no concrete network
-# target, but active actions that must attach to an engagement record). The
-# gate must 403 in Engagement mode when no engagement is active; Lab mode
-# (the default header value) lets the request fall through to its real
-# handler.
+# target, but active actions that must attach to an engagement record).
+#
+# Mode is derived from the presence of an engagement_id (see lib/mode.py)
+# since the security tightening — the X-MHP-Mode header is ignored to
+# remove the mode-spoof gap. So the only way to construct
+# "engagement mode without a real engagement" is to send a stale id, which
+# the gate must still reject. This test exercises that path; the gate fires
+# before any platform check in every wired router, so the parametrized cases
+# pass regardless of host OS.
 
 @pytest.mark.parametrize("method,path,body", [
     # Active actions on the first wave (network-target-ish tools).
@@ -166,8 +176,10 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
     ("POST", "/lateral/clear",       None),
     ("POST", "/hash/crack",          {"hash": "deadbeef"}),
 ])
-def test_engagement_present_gate_denies_without_engagement(client, method, path, body):
-    headers = {**AUTH, "X-MHP-Mode": "engagement"}
+def test_engagement_present_gate_denies_with_stale_engagement(client, method, path, body):
+    # A stale frontend id puts the request in engagement mode (via mode.py)
+    # but the gate fails the lookup → 403 TARGET_DENIED.
+    headers = {**AUTH, "X-MHP-Engagement-Id": "ghost-engagement-id"}
     if method == "POST":
         r = client.post(path, headers=headers, json=body)
     else:
@@ -177,11 +189,12 @@ def test_engagement_present_gate_denies_without_engagement(client, method, path,
 
 
 def test_engagement_present_gate_allows_in_lab_mode(client):
-    """Lab mode is the default; the gate is a no-op. Pick the cheapest endpoint
-    (shodan_censys/query) and verify we sail past the gate — the request will
-    then fail downstream for an unrelated reason (no API key configured),
-    proving the scope check was not the rejecter."""
-    r = client.post("/shodan-censys/query", headers={**AUTH, "X-MHP-Mode": "lab"},
+    """Lab mode is the default — no X-MHP-Engagement-Id ⇒ mode resolves to
+    lab and the gate is a no-op. Pick the cheapest endpoint (shodan_censys
+    query) and verify we sail past the gate. The request fails downstream
+    for an unrelated reason (no API key configured), proving the gate was
+    not the rejecter."""
+    r = client.post("/shodan-censys/query", headers=AUTH,
                     json={"service": "shodan", "query": "test"})
     assert r.status_code != 403
     # Without a Shodan key configured, the handler raises UNAUTHORIZED (401).

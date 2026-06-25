@@ -73,7 +73,9 @@ async def test_version(client):
 
 @pytest.mark.asyncio
 async def test_system_info(client):
-    r = await client.get("/system/info")
+    # /system/info is auth-gated since the security tightening — the
+    # Electron renderer fetches the token before any /system/info call.
+    r = await client.get("/system/info", headers=AUTH)
     assert r.status_code == 200
     body = r.json()
     # Renderer hides platform-locked tools off these flags — keep them stable.
