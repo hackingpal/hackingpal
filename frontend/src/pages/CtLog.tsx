@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchCtSearch, type CtReport } from "../api";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
@@ -11,7 +12,8 @@ const SEV: Record<string, { text: string; dot: string }> = {
 };
 
 export default function CtLog() {
-  const [domain, setDomain] = useState("anthropic.com");
+  const intent = useLabIntent("ct");
+  const [domain, setDomain] = useState(intentHost(intent) ?? "anthropic.com");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmReason, setConfirmReason] = useState<string | null>(null);

@@ -4,6 +4,7 @@ import {
   openWs,
   fetchNmapStatus, installNmapSudo,
   fetchNmapScripts, fetchNmapScriptHelp, previewNmapCommand,
+  ApiError,
   type NmapStatus, type NmapScriptEntry, type NmapPolicy,
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
@@ -256,7 +257,11 @@ export default function Nmap() {
       previewNmapCommand(effectiveOpts)
         .then(() => { if (!cancelled) setCmdWarning(null); })
         .catch((e) => {
-          if (!cancelled) setCmdWarning(e instanceof Error ? e.message : String(e));
+          if (cancelled) return;
+          // Only a 400 means the backend would *reject* these options. Auth
+          // (401), transport, and timeout (504) errors aren't a verdict on
+          // the command — don't mislead the user; just clear the warning.
+          setCmdWarning(e instanceof ApiError && e.status === 400 ? e.message : null);
         });
     }, 400);
     return () => { cancelled = true; window.clearTimeout(t); };

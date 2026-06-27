@@ -6,6 +6,7 @@ import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 
 type SourceStatus = { name: string; needs_key: boolean; key_configured: boolean };
 
@@ -28,7 +29,8 @@ type SubdomEvent =
 const FREE_DEFAULT = ["crt.sh", "hackertarget", "otx", "rapiddns"];
 
 export default function SubdomainEnum() {
-  const [domain, setDomain] = useState("example.com");
+  const intent = useLabIntent("subdom");
+  const [domain, setDomain] = useState(intentHost(intent) ?? "example.com");
   const [sourceStatus, setSourceStatus] = useState<SourceStatus[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set(FREE_DEFAULT));
   const [doResolve, setDoResolve] = useState(true);

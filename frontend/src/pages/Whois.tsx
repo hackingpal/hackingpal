@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchWhois, isApiError, type WhoisReport } from "../api";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 import EmptyStateComponent from "../components/EmptyState";
 import StatsBar from "../components/StatsBar";
 import CopyButton from "../components/CopyButton";
@@ -11,7 +12,8 @@ const SEV: Record<string, { text: string; dot: string }> = {
 };
 
 export default function Whois() {
-  const [target, setTarget] = useState("anthropic.com");
+  const intent = useLabIntent("whois");
+  const [target, setTarget] = useState(intentHost(intent) ?? "anthropic.com");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [timedOut, setTimedOut] = useState(false);

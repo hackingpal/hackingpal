@@ -404,6 +404,11 @@ export default function ChatBubble(
     }
   }
 
+  // Proposals are computed from one tab's history; drop them when the tab
+  // changes so cards from the Nmap tab can't render (and be approved) under
+  // the General tab with mismatched context.
+  useEffect(() => { setSuggestions(null); setSuggestNote(""); }, [activeTab]);
+
   // Approve → pre-fill the tool's active target + one-shot intent, then jump.
   function approveCheck(check: SuggestedCheck) {
     const plan = approvePlan(check);
