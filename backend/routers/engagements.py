@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel, Field
 
-from lib import audit_log, engagements
+from lib import audit_log, coverage, engagements
 from lib.auth import mint_report_nonce
 from .settings import keychain_get, keychain_get_named
 
@@ -186,6 +186,18 @@ def get_result(eid: str, rid: str) -> dict[str, Any]:
     if not r or r["engagement_id"] != eid:
         raise HTTPException(404, "result not found")
     return r
+
+
+# ── Coverage matrix ───────────────────────────────────────────────────────────
+
+@router.get("/{eid}/coverage")
+def get_coverage(eid: str) -> dict[str, Any]:
+    """What's been checked for this engagement — DNS / TLS / headers /
+    services / findings / report — derived from the audit log, results
+    timeline, and findings. Read-only; see lib/coverage.py."""
+    if engagements.get_engagement(eid) is None:
+        raise HTTPException(404, "engagement not found")
+    return coverage.compute_coverage(eid)
 
 
 # ── Findings ────────────────────────────────────────────────────────────────

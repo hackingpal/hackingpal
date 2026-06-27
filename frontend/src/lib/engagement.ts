@@ -526,3 +526,33 @@ export function requestExportLink(
 ): Promise<string> {
   return _mintLink(`/reports/engagement/${eid}/link?format=${format}`);
 }
+
+// ── Coverage matrix ─────────────────────────────────────────────────────────
+// "What's been checked for this engagement" — a read-only projection the
+// backend derives from the audit log, results timeline, and findings. See
+// backend/lib/coverage.py.
+
+export type CoverageArea = {
+  key: string;
+  label: string;
+  description: string;
+  covered: boolean;
+  runs: number;
+  last_ts: string | null;
+  last_tool: string | null;
+  last_target: string | null;
+  tools_seen: string[];
+};
+
+export type EngagementCoverage = {
+  engagement_id: string;
+  areas: CoverageArea[];
+  covered_count: number;
+  total: number;
+};
+
+export async function fetchCoverage(eid: string): Promise<EngagementCoverage> {
+  const r = await authFetch(`/engagements/${eid}/coverage`);
+  if (!r.ok) throw new Error(await parseError(r));
+  return r.json();
+}
