@@ -19,26 +19,20 @@ import {
   type RuntimeInstallEvent,
   type RuntimeStatus,
 } from "../api";
+import {
+  clearDismissed,
+  isDismissed,
+  runtimeBannerSupported,
+  runtimeBannerView,
+  setDismissed,
+  type RuntimePlatform,
+} from "../lib/runtimeBanner";
 
 type Props = {
-  platform: "darwin" | "linux" | "win32" | null;
+  platform: RuntimePlatform;
 };
 
-const DISMISS_KEY = "runtimeBanner:dismissed";
 const POLL_MS = 30_000;
-
-function isDismissed(): boolean {
-  try { return sessionStorage.getItem(DISMISS_KEY) === "1"; }
-  catch { return false; }
-}
-
-function setDismissed(): void {
-  try { sessionStorage.setItem(DISMISS_KEY, "1"); } catch { /* ignore */ }
-}
-
-function clearDismissed(): void {
-  try { sessionStorage.removeItem(DISMISS_KEY); } catch { /* ignore */ }
-}
 
 export default function RuntimeBanner({ platform }: Props) {
   const [status, setStatus] = useState<RuntimeStatus | null>(null);
@@ -50,7 +44,7 @@ export default function RuntimeBanner({ platform }: Props) {
   // the system package manager — for now we still surface it; the WS
   // installer will fail clearly on systems without brew and the user gets
   // the install-Homebrew swap (which on Linux is also a valid path).
-  const supported = platform !== "win32";
+  const supported = runtimeBannerSupported(platform);
 
   const refresh = useCallback(async () => {
     if (!supported) return;
@@ -65,16 +59,9 @@ export default function RuntimeBanner({ platform }: Props) {
     return () => clearInterval(t);
   }, [supported, refresh]);
 
-  if (!supported || !status) return null;
-  if (dismissed) return null;
-  if (!status.needs_install && !status.needs_start) return null;
-
-  const headline = status.needs_install
-    ? "Labs need a container runtime."
-    : "Container runtime is stopped.";
-  const button = status.needs_install
-    ? "Install & start colima"
-    : "Start colima";
+  const view = runtimeBannerView(platform, status, dismissed);
+  if (!view) return null;
+  const { headline, button } = view;
 
   return (
     <>

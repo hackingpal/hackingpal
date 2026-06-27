@@ -20,6 +20,11 @@ import {
   type Engagement,
 } from "../lib/engagement";
 import RunPlaybookModal from "../components/RunPlaybookModal";
+import {
+  attachConfirmation,
+  chooseAttachEngagement,
+  deriveLabUrl,
+} from "../lib/labsAttach";
 
 type SuggestedStep = {
   label: string;
@@ -306,21 +311,14 @@ export default function Labs({ onJumpTo }: Props) {
   async function attachLab(lab: LabSummary) {
     setAttachPending((p) => ({ ...p, [lab.id]: true }));
     try {
-      const fallbackUrl = lab.primary_url || (() => {
-        const port = Object.values(lab.port_map)[0];
-        return port ? `http://127.0.0.1:${port}` : "";
-      })();
+      const fallbackUrl = deriveLabUrl(lab);
 
-      // 1. Pick a target engagement, or create one. Preference order:
-      //    a) active engagement from the top-bar pill (operator intent)
-      //    b) the most recently updated active engagement
-      //    c) fresh "Lab: <name>" engagement with the lab URL in scope
-      let engagementId = getActiveEngagementId();
+      // 1. Pick a target engagement, or create one (see chooseAttachEngagement
+      //    for the preference order). Creating one seeds scope with the lab URL.
+      const choice = chooseAttachEngagement(getActiveEngagementId(), engagementsList);
+      let engagementId: string;
       let created = false;
-      if (!engagementId && engagementsList.length > 0) {
-        engagementId = engagementsList[0].id;
-      }
-      if (!engagementId) {
+      if (choice.action === "create") {
         const fresh = await createEngagement({
           name: `Lab: ${lab.name}`,
           scope: fallbackUrl ? [fallbackUrl] : [],
@@ -330,6 +328,8 @@ export default function Labs({ onJumpTo }: Props) {
         engagementId = fresh.id;
         setActiveEngagementId(fresh.id);
         created = true;
+      } else {
+        engagementId = choice.engagementId;
       }
 
       // 2. Attach (idempotent backend-side — re-attaching is a no-op).
@@ -367,13 +367,9 @@ export default function Labs({ onJumpTo }: Props) {
         setLastAttach((prev) => ({ ...prev, [lab.id]: null }));
         delete attachTimersRef.current[lab.id];
       }, 8_000);
-      flash(
-        created
-          ? `Created engagement "${engName}" and attached this lab`
-          : addedToScope
-            ? `Attached to ${engName} — added ${r.scope_entry} to scope`
-            : `Attached to ${engName} — already in scope`,
-      );
+      flash(attachConfirmation({
+        created, addedToScope, engName, scopeEntry: r.scope_entry,
+      }));
       void refreshEngagements();
     } catch (e) {
       setError(humanError(e));
