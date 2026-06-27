@@ -964,6 +964,24 @@ export const fetchNmapScriptHelp = (name: string) =>
     `/nmap/script-help?name=${encodeURIComponent(name)}`,
   );
 
+// Server-authoritative dry-run: the exact argv a scan would spawn, built
+// through the same validation as a real run. Throws (via api()) with the
+// rejection reason when the options would be refused — surface that to the
+// user instead of letting the drift-free client preview imply it's runnable.
+export type NmapCommandPreview = {
+  argv: string[];
+  command: string;
+  needs_privileged: boolean;
+  nmap_found: boolean;
+};
+
+export const previewNmapCommand = (opts: NmapOptions) =>
+  api<NmapCommandPreview>("/nmap/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ opts }),
+  });
+
 export type NmapOptions = {
   targets: string[];
   exclude?: string[];

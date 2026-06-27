@@ -270,6 +270,87 @@ _PORTS_RE = re.compile(r"^[UTS:,\-\d]+$")
 _DURATION_RE = re.compile(r"^\d+(\.\d+)?[smh]?$")
 
 
+def options_from_dict(raw: dict[str, Any]) -> NmapOptions:
+    """Build NmapOptions from the wire dict the UI sends.
+
+    The single source of truth for the field mapping, so the WS run path and
+    the /nmap/preview dry-run construct identical options from the same input
+    (a preview that drifts from the real run is worse than none). Raises
+    TypeError/ValueError on malformed values, same as the dataclass.
+    """
+    def _i(key: str, default: int) -> int:
+        v = raw.get(key, default)
+        return int(v) if v not in (None, "") else default
+
+    return NmapOptions(
+        targets=list(raw.get("targets") or []),
+        exclude=list(raw.get("exclude") or []),
+        skip_discovery=bool(raw.get("skip_discovery", False)),
+        ping_only=bool(raw.get("ping_only", False)),
+        no_dns=bool(raw.get("no_dns", True)),
+        force_dns=bool(raw.get("force_dns", False)),
+        traceroute=bool(raw.get("traceroute", False)),
+        discovery_probes=list(raw.get("discovery_probes") or []),
+        scan_type=str(raw.get("scan_type", "syn") or "syn"),
+        port_spec=str(raw.get("port_spec", "") or ""),
+        top_ports=_i("top_ports", 0),
+        fast_mode=bool(raw.get("fast_mode", False)),
+        all_ports=bool(raw.get("all_ports", False)),
+        exclude_ports=str(raw.get("exclude_ports", "") or ""),
+        service_version=bool(raw.get("service_version", False)),
+        version_intensity=_i("version_intensity", -1),
+        version_light=bool(raw.get("version_light", False)),
+        version_all=bool(raw.get("version_all", False)),
+        os_detect=bool(raw.get("os_detect", False)),
+        osscan_limit=bool(raw.get("osscan_limit", False)),
+        osscan_guess=bool(raw.get("osscan_guess", False)),
+        timing_template=_i("timing_template", 3),
+        min_rate=_i("min_rate", 0),
+        max_rate=_i("max_rate", 0),
+        host_timeout=str(raw.get("host_timeout", "") or ""),
+        max_retries=_i("max_retries", -1),
+        nse_categories=list(raw.get("nse_categories") or []),
+        nse_scripts=list(raw.get("nse_scripts") or []),
+        nse_args=str(raw.get("nse_args", "") or ""),
+        fragment=bool(raw.get("fragment", False)),
+        mtu=_i("mtu", 0),
+        decoys=str(raw.get("decoys", "") or ""),
+        spoof_ip=str(raw.get("spoof_ip", "") or ""),
+        source_port=_i("source_port", 0),
+        spoof_mac=str(raw.get("spoof_mac", "") or ""),
+        badsum=bool(raw.get("badsum", False)),
+        data_length=_i("data_length", 0),
+        verbose=_i("verbose", 0),
+        debug=_i("debug", 0),
+        show_reason=bool(raw.get("show_reason", False)),
+        open_only=bool(raw.get("open_only", False)),
+        packet_trace=bool(raw.get("packet_trace", False)),
+        disable_arp_ping=bool(raw.get("disable_arp_ping", False)),
+        use_sudo=bool(raw.get("use_sudo", False)),
+        extra_args=str(raw.get("extra_args", "") or ""),
+    )
+
+
+# Placeholder path shown in dry-run previews where the real run uses a
+# freshly-created temp file. Bracketed so it reads as "filled in at run time".
+PREVIEW_XML_PATH = "<output>.xml"
+
+
+def preview_argv(opts: NmapOptions, nmap_bin: str) -> dict[str, Any]:
+    """Build the exact argv a run would spawn, without spawning.
+
+    Mirrors run_scan's started-event shape (argv + shell-quoted cmd) using a
+    placeholder XML path, so the UI can show precisely what executes before
+    the user commits. Propagates build_argv's ValueError on invalid options.
+    """
+    argv = build_argv(opts, nmap_bin, PREVIEW_XML_PATH)
+    return {
+        "argv": argv,
+        "command": " ".join(shlex.quote(a) for a in argv),
+        "needs_privileged": needs_privileged(opts),
+    }
+
+
 def needs_privileged(opts: NmapOptions) -> bool:
     if opts.scan_type in _PRIV_SCAN_TYPES:
         return True
