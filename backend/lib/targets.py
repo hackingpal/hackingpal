@@ -39,6 +39,12 @@ from typing import Any
 from lib.engagements import cursor, _now
 
 
+# Sentinel for "don't filter on engagement_id" on find_by_meta(). Distinct
+# from ``None`` so callers can ask explicitly for global rows (engagement_id
+# IS NULL) without the default behaviour collapsing the two cases.
+_ANY_ENGAGEMENT: Any = object()
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 def list_targets(
     engagement_id: str | None = None,
@@ -140,17 +146,30 @@ def upsert_lab_target(
     host_port: int,
     container_port: int,
     primary_url: str = "",
+    *,
+    engagement_id: str | None = None,
 ) -> dict[str, Any]:
     """Idempotent insert/refresh of a lab-derived target.
 
-    If a target with ``kind='lab'`` and matching ``(lab_id, host_port)`` in
-    its source_meta already exists, it's unhidden and last_seen_at is
-    touched. Otherwise a fresh row is inserted.
+    If a target with ``kind='lab'`` and matching ``(lab_id, host_port,
+    engagement_id)`` in its source_meta already exists, it's unhidden and
+    last_seen_at is touched. Otherwise a fresh row is inserted.
 
     Address is ``127.0.0.1:<host_port>`` (or the bare URL when the lab
     publishes its primary on this port). Name is ``<lab_name> :<host_port>``.
+
+    ``engagement_id`` keyword:
+      * ``None`` (default) — global lab target, behaves like before.
+        Used by the auto-register hook on lab start.
+      * Set      — engagement-bound target. The "attach lab to engagement"
+        flow creates a separate row per engagement so each scope sees its
+        own copy in its targets list and survives the engagement being
+        deleted (cascade).
     """
-    existing = find_by_meta(lab_id, host_port)
+    # Scope the dedupe lookup to the target engagement — global rows and
+    # engagement-bound rows live side-by-side, so passing the explicit id
+    # here is what keeps the upsert idempotent per (lab, port, engagement).
+    existing = find_by_meta(lab_id, host_port, engagement_id=engagement_id)
     address = f"127.0.0.1:{host_port}"
     name = f"{lab_name} :{host_port}"
     meta = {
@@ -172,18 +191,30 @@ def upsert_lab_target(
         name=name,
         address=address,
         kind="lab",
-        engagement_id=None,
+        engagement_id=engagement_id,
         source_meta=meta,
         scope_tag="lab",
     )
 
 
-def find_by_meta(lab_id: str, host_port: int | None = None) -> dict[str, Any] | None:
+def find_by_meta(
+    lab_id: str,
+    host_port: int | None = None,
+    *,
+    engagement_id: str | None | Any = _ANY_ENGAGEMENT,
+) -> dict[str, Any] | None:
     """Look up a lab-derived target by its lab_id (and optionally host port).
 
     Used by the auto-register hook to upsert idempotently when a lab is
     re-started: the existing record is unhidden + last_seen_at touched,
     rather than a duplicate row being inserted.
+
+    ``engagement_id`` keyword (tri-state via _ANY_ENGAGEMENT sentinel):
+      * Omitted (default ``_ANY_ENGAGEMENT``) — match any engagement scope;
+        first hit wins. Preserves the old call shape for callers that don't
+        care which engagement the row belongs to.
+      * ``None``    — match only the global pool (engagement_id IS NULL).
+      * ``"<eid>"`` — match only rows bound to that engagement.
     """
     with cursor() as c:
         rows = c.execute(
@@ -199,6 +230,9 @@ def find_by_meta(lab_id: str, host_port: int | None = None) -> dict[str, Any] | 
             continue
         if host_port is not None and meta.get("host_port") != host_port:
             continue
+        if engagement_id is not _ANY_ENGAGEMENT:
+            if (r["engagement_id"] or None) != engagement_id:
+                continue
         return _row_to_target(r)
     return None
 

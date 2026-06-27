@@ -73,10 +73,10 @@ export default function ModePill({ onOpenEngagementsPage }: Props) {
         }
         className={
           "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] tracking-wider " +
-          "border transition leading-none font-mono " +
+          "border transition leading-none whitespace-nowrap shrink-0 " +
           (isEngagement
             ? "border-ink-primary/50 text-ink-primary hover:border-ink-primary"
-            : "border-ink-dim/40 text-ink-dim hover:border-ink-muted hover:text-ink-primary")
+            : "border-divider text-ink-dim hover:border-ink-muted hover:text-ink-primary")
         }
       >
         <span

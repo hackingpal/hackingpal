@@ -79,53 +79,65 @@ def test_engagements_crud_roundtrip(client):
 
 # ── scope gating in the live request pipeline ───────────────────────────────
 
-def test_scope_denied_in_engagement_mode_without_engagement(client):
-    """A target-accepting endpoint must 403 in Engagement mode if no engagement
-    is active. This exercises the X-MHP-Mode header → get_mode → scope.enforce_rest
-    chain that's wired into every gated router."""
-    r = client.get("/ct/search/example.com",
-                   headers={**AUTH, "X-MHP-Mode": "engagement"})
-    assert r.status_code == 403
-    body = r.json()
-    # MhpError envelope: { error, code, ... }
-    assert body["code"] == "TARGET_DENIED"
-
-
-def test_scope_denied_with_stale_engagement_id(client):
+def test_scope_denied_with_stale_engagement_id(client, permissive_policy):
+    """A stale engagement_id puts the request in Engagement mode (mode is
+    derived from id presence per `lib/mode.py`) and the scope layer must
+    refuse the lookup. `permissive_policy` holds the policy layer at
+    warn-on-external so this test exercises the *scope* deny path rather
+    than tripping the default deny-external-by-default policy first."""
     r = client.get("/ct/search/example.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": "ghost",
+        **AUTH, "X-MHP-Engagement-Id": "ghost",
     })
     assert r.status_code == 403
-    assert r.json()["code"] == "TARGET_DENIED"
+    body = r.json()
+    assert body["code"] == "TARGET_DENIED"
+    # Verify the scope layer is what fired (not policy), so this test really
+    # exercises engagement-mode gating rather than the deny-external safety net.
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
+    assert "not found" in body["layers"]["scope"].lower()
 
 
-def test_scope_allowed_in_engagement_mode_when_target_in_scope(client, temp_db):
+def test_scope_allowed_in_engagement_mode_when_target_in_scope(
+    client, temp_db, permissive_policy,
+):
     """In-scope target should pass the scope check. External targets still
     trip the target_policy 'warn' layer (RFC1918 / loopback guard), so we
     pass `confirm=true` to acknowledge that and isolate the scope gate.
+    permissive_policy holds the policy layer at the older warn-on-external
+    semantic so the test exercises the scope check rather than tripping the
+    config's deny-external-by-default safety net.
     Downstream call may fail on network — we accept anything *but* 403/409."""
     eng = engagements.create_engagement(
         name="acme", scope=["example.com"], exclusions=[], notes="",
     )
     r = client.get("/ct/search/example.com?confirm=true", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code not in (403, 409), \
         f"expected scope to allow; got {r.status_code}: {r.text[:200]}"
 
 
-def test_scope_blocks_out_of_scope_target(client, temp_db):
+def test_scope_blocks_out_of_scope_target(client, temp_db, permissive_policy):
+    """`permissive_policy` keeps the policy layer at warn-on-external so the
+    test isolates the *scope* layer's verdict (otherwise `attacker.com`
+    would be denied by the default deny-external-by-default policy first
+    and we'd never know if the scope check actually fired)."""
     eng = engagements.create_engagement(
         name="acme", scope=["example.com"], exclusions=[], notes="",
     )
     r = client.get("/ct/search/attacker.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code == 403
-    assert r.json()["code"] == "TARGET_DENIED"
+    body = r.json()
+    assert body["code"] == "TARGET_DENIED"
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
 
 
-def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
+def test_scope_exclusion_blocks_even_inside_scope(client, temp_db, permissive_policy):
+    """Like the out-of-scope test above, `permissive_policy` is required so the
+    policy layer doesn't pre-empt scope and mask whether exclusions actually
+    fire."""
     eng = engagements.create_engagement(
         name="acme",
         scope=["example.com"],
@@ -133,18 +145,27 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
         notes="",
     )
     r = client.get("/ct/search/admin.example.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code == 403
+    body = r.json()
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
+    assert "exclusion" in body["layers"]["scope"].lower() or \
+           "admin.example.com" in body["layers"]["scope"]
 
 
 # ── engagement-present gates on non-target tools ────────────────────────────
 #
 # Routers wired with `scope.enforce_engagement_present` (no concrete network
-# target, but active actions that must attach to an engagement record). The
-# gate must 403 in Engagement mode when no engagement is active; Lab mode
-# (the default header value) lets the request fall through to its real
-# handler.
+# target, but active actions that must attach to an engagement record).
+#
+# Mode is derived from the presence of an engagement_id (see lib/mode.py)
+# since the security tightening — the X-MHP-Mode header is ignored to
+# remove the mode-spoof gap. So the only way to construct
+# "engagement mode without a real engagement" is to send a stale id, which
+# the gate must still reject. This test exercises that path; the gate fires
+# before any platform check in every wired router, so the parametrized cases
+# pass regardless of host OS.
 
 @pytest.mark.parametrize("method,path,body", [
     # Active actions on the first wave (network-target-ish tools).
@@ -166,8 +187,10 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
     ("POST", "/lateral/clear",       None),
     ("POST", "/hash/crack",          {"hash": "deadbeef"}),
 ])
-def test_engagement_present_gate_denies_without_engagement(client, method, path, body):
-    headers = {**AUTH, "X-MHP-Mode": "engagement"}
+def test_engagement_present_gate_denies_with_stale_engagement(client, method, path, body):
+    # A stale frontend id puts the request in engagement mode (via mode.py)
+    # but the gate fails the lookup → 403 TARGET_DENIED.
+    headers = {**AUTH, "X-MHP-Engagement-Id": "ghost-engagement-id"}
     if method == "POST":
         r = client.post(path, headers=headers, json=body)
     else:
@@ -177,11 +200,12 @@ def test_engagement_present_gate_denies_without_engagement(client, method, path,
 
 
 def test_engagement_present_gate_allows_in_lab_mode(client):
-    """Lab mode is the default; the gate is a no-op. Pick the cheapest endpoint
-    (shodan_censys/query) and verify we sail past the gate — the request will
-    then fail downstream for an unrelated reason (no API key configured),
-    proving the scope check was not the rejecter."""
-    r = client.post("/shodan-censys/query", headers={**AUTH, "X-MHP-Mode": "lab"},
+    """Lab mode is the default — no X-MHP-Engagement-Id ⇒ mode resolves to
+    lab and the gate is a no-op. Pick the cheapest endpoint (shodan_censys
+    query) and verify we sail past the gate. The request fails downstream
+    for an unrelated reason (no API key configured), proving the gate was
+    not the rejecter."""
+    r = client.post("/shodan-censys/query", headers=AUTH,
                     json={"service": "shodan", "query": "test"})
     assert r.status_code != 403
     # Without a Shodan key configured, the handler raises UNAUTHORIZED (401).

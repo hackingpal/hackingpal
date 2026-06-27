@@ -8,14 +8,16 @@ import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
 import CopyButton from "../components/CopyButton";
 import PromoteToFindingButton from "../components/PromoteToFindingButton";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 
 type Mode = "quick" | "enum";
 
 type EnumHit = { subdomain: string; ip: string };
 
 export default function DnsRecon() {
+  const intent = useLabIntent("dns");
   const [mode, setMode] = useState<Mode>("quick");
-  const [domain, setDomain] = useState("example.com");
+  const [domain, setDomain] = useState(intentHost(intent) ?? "example.com");
   const [wordlist, setWordlist] = useState<"small" | "medium">("small");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

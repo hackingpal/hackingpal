@@ -352,6 +352,30 @@ export type ChatConfig = {
 
 export const fetchChatConfig = () => api<ChatConfig>("/chat/config");
 
+// ── Chat: "Suggest checks" → approval cards ─────────────────────────────────
+// The copilot proposes a bounded set of next checks; the chat UI renders each
+// as an Approve / Skip / Modify card. Approve navigates to nav_id with the
+// target pre-filled. Backend: routers/suggest_checks.py + lib/suggested_checks.
+
+export type SuggestedCheck = {
+  tool: string;       // canonical check id
+  nav_id: string;     // tool page to jump to on Approve
+  label: string;
+  target: string;
+  rationale: string;
+};
+
+export const suggestChecks = (body: {
+  messages: { role: string; content: string }[];
+  active_page?: string;
+  target?: string;
+}) =>
+  api<{ checks: SuggestedCheck[] }>("/chat/suggest-checks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export type ChatSettings = {
   model: string;
   available_models: string[];
@@ -963,6 +987,24 @@ export const fetchNmapScriptHelp = (name: string) =>
   api<{ name: string; help: string }>(
     `/nmap/script-help?name=${encodeURIComponent(name)}`,
   );
+
+// Server-authoritative dry-run: the exact argv a scan would spawn, built
+// through the same validation as a real run. Throws (via api()) with the
+// rejection reason when the options would be refused — surface that to the
+// user instead of letting the drift-free client preview imply it's runnable.
+export type NmapCommandPreview = {
+  argv: string[];
+  command: string;
+  needs_privileged: boolean;
+  nmap_found: boolean;
+};
+
+export const previewNmapCommand = (opts: NmapOptions) =>
+  api<NmapCommandPreview>("/nmap/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ opts }),
+  });
 
 export type NmapOptions = {
   targets: string[];
@@ -1705,6 +1747,29 @@ export type HashCrackEvent =
                         elapsed_seconds: number; stopped: boolean }
   | { type: "error";    detail: string };
 
+
+// ── Container runtime (colima) ───────────────────────────────────────────────
+
+export type RuntimeState =
+  | "ok" | "binary_missing" | "daemon_stopped" | "socket_unreachable";
+
+export type RuntimeStatus = {
+  state: RuntimeState;
+  needs_install: boolean;
+  needs_start:   boolean;
+  colima_path:   string | null;
+  docker_path:   string | null;
+};
+
+export const fetchRuntimeStatus = () =>
+  api<RuntimeStatus>("/labs/runtime/status");
+
+export type RuntimeInstallEvent =
+  | { type: "started";  steps: string[]; brew_path: string }
+  | { type: "log";      stream: "stdout" | "stderr"; line: string }
+  | { type: "error";    code: string; message: string;
+                        install_command?: string; url?: string; detail?: string }
+  | { type: "done";     state: RuntimeState; ok: boolean; stopped: boolean };
 
 // ── System info ──────────────────────────────────────────────────────────────
 

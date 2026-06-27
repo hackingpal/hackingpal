@@ -33,7 +33,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
-from lib import scope
+from lib import audit_log, scope
 from lib.errors import ErrorCode, MhpError
 from lib.mode import get_engagement_id, get_mode
 
@@ -203,45 +203,79 @@ async def load_zip(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "file too large (max 200 MB)")
 
+    # Audit the ingest: loading a BloodHound dump pulls a domain's directory
+    # data into the engagement's analysis surface, so it belongs in the
+    # append-only action log alongside the network tools. Started here (after
+    # auth + size checks); finalized completed/error below.
+    audit_id = ""
+    try:
+        audit_id = audit_log.start(
+            tool="lateral",
+            target=file.filename or "bloodhound-upload",
+            argv=["load", f"bytes={len(data)}"],
+            engagement_id=get_engagement_id(request),
+            mode=get_mode(request),
+        )
+    except Exception:
+        logger.exception("audit_log.start failed (load continues)")
+
     new_graph = Graph()
     loaded: dict[str, int] = {}
-
-    if file.filename and file.filename.lower().endswith(".json"):
-        try:
-            obj = json.loads(data)
-        except Exception:
-            logger.info("lateral load: invalid JSON upload filename=%r", file.filename)
-            raise HTTPException(400, "upload is not valid JSON")
-        kind = _classify_file(file.filename)
-        if not kind:
-            raise HTTPException(400,
-                "Could not classify JSON — filename should be like *_users.json / *_groups.json / *_computers.json / *_domains.json")
-        _INGESTORS[kind](new_graph, obj)
-        loaded[kind] = len(obj.get("data", []))
-    else:
-        # Treat as ZIP
-        try:
-            zf = zipfile.ZipFile(io.BytesIO(data))
-        except Exception:
-            logger.info("lateral load: not a valid ZIP or JSON filename=%r", file.filename)
-            raise HTTPException(400, "upload is not a valid ZIP or JSON")
-        for member in zf.namelist():
-            if not member.endswith(".json"):
-                continue
-            kind = _classify_file(member)
-            if not kind:
-                continue
+    try:
+        if file.filename and file.filename.lower().endswith(".json"):
             try:
-                obj = json.loads(zf.read(member))
+                obj = json.loads(data)
             except Exception:
-                continue
+                logger.info("lateral load: invalid JSON upload filename=%r", file.filename)
+                raise HTTPException(400, "upload is not valid JSON")
+            kind = _classify_file(file.filename)
+            if not kind:
+                raise HTTPException(400,
+                    "Could not classify JSON — filename should be like *_users.json / *_groups.json / *_computers.json / *_domains.json")
             _INGESTORS[kind](new_graph, obj)
-            loaded[kind] = loaded.get(kind, 0) + len(obj.get("data", []))
+            loaded[kind] = len(obj.get("data", []))
+        else:
+            # Treat as ZIP
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(data))
+            except Exception:
+                logger.info("lateral load: not a valid ZIP or JSON filename=%r", file.filename)
+                raise HTTPException(400, "upload is not a valid ZIP or JSON")
+            for member in zf.namelist():
+                if not member.endswith(".json"):
+                    continue
+                kind = _classify_file(member)
+                if not kind:
+                    continue
+                try:
+                    obj = json.loads(zf.read(member))
+                except Exception:
+                    continue
+                _INGESTORS[kind](new_graph, obj)
+                loaded[kind] = loaded.get(kind, 0) + len(obj.get("data", []))
 
-    if not loaded:
-        raise HTTPException(400, "no recognized BloodHound JSON files in upload")
+        if not loaded:
+            raise HTTPException(400, "no recognized BloodHound JSON files in upload")
+    except Exception as e:
+        if audit_id:
+            detail = getattr(e, "detail", None) or f"{type(e).__name__}: {e}"
+            try:
+                audit_log.error(audit_id, str(detail))
+            except Exception:
+                logger.exception("audit_log.error failed")
+        raise
 
     _graph = new_graph
+    if audit_id:
+        try:
+            stats = _graph.stats()
+            files_summary = ", ".join(f"{k}={v}" for k, v in loaded.items())
+            audit_log.complete(
+                audit_id,
+                summary=f"loaded {files_summary}; {stats['nodes']} nodes, {stats['edges']} edges",
+            )
+        except Exception:
+            logger.exception("audit_log.complete failed")
     return {"loaded_files": loaded, "stats": _graph.stats()}
 
 
@@ -335,7 +369,7 @@ def _bfs(g: Graph, src: str, targets: set[str], max_hops: int) -> list[list[tupl
 
 
 @router.post("/path")
-def path(body: PathBody) -> dict[str, Any]:
+def path(body: PathBody, request: Request) -> dict[str, Any]:
     if not body.confirm_auth:
         raise HTTPException(
             403,
@@ -371,7 +405,44 @@ def path(body: PathBody) -> dict[str, Any]:
     if not targets:
         raise HTTPException(404, "no targets found (no Domain Admins-like groups in graph)")
 
-    paths = _bfs(_graph, src_id, targets, body.max_hops)
+    # Audit the path query — once source + targets resolve, this is a real
+    # analysis action against the loaded directory data. Started here (after
+    # resolution so unresolved-source/target 404s stay out of the log) and
+    # finalized either side of the BFS.
+    src_name = _graph.nodes[src_id].get("name") or src_id
+    audit_id = ""
+    try:
+        audit_id = audit_log.start(
+            tool="lateral",
+            target=src_name,
+            argv=["path", f"source={src_name}",
+                  f"target={body.target.strip() or 'domain-admins'}",
+                  f"max_hops={body.max_hops}"],
+            engagement_id=get_engagement_id(request),
+            mode=get_mode(request),
+        )
+    except Exception:
+        logger.exception("audit_log.start failed (path continues)")
+
+    try:
+        paths = _bfs(_graph, src_id, targets, body.max_hops)
+    except Exception as e:
+        if audit_id:
+            try:
+                audit_log.error(audit_id, f"{type(e).__name__}: {e}")
+            except Exception:
+                logger.exception("audit_log.error failed")
+        raise
+
+    if audit_id:
+        try:
+            audit_log.complete(
+                audit_id,
+                summary=f"{len(paths)} path(s) to {len(targets)} target(s)",
+            )
+        except Exception:
+            logger.exception("audit_log.complete failed")
+
     return {
         "source": {"id": src_id, **_graph.nodes[src_id]},
         "targets": [{"id": t, **_graph.nodes[t]} for t in targets],

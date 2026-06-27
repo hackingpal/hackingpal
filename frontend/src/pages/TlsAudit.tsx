@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchTlsAudit, isApiError, type TlsReport } from "../api";
+import { useLabIntent, intentHost } from "../lib/labIntent";
 import SeverityBadge, { normalizeSeverity } from "../components/SeverityBadge";
 import StatsBar from "../components/StatsBar";
 import EmptyStateComponent from "../components/EmptyState";
@@ -17,7 +18,8 @@ const PROTO_TIER: Record<string, "legacy" | "modern"> = {
 };
 
 export default function TlsAudit() {
-  const [host, setHost] = useState("anthropic.com");
+  const intent = useLabIntent("tls");
+  const [host, setHost] = useState(intentHost(intent) ?? "anthropic.com");
   const [port, setPort] = useState(443);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

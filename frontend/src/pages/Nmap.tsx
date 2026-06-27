@@ -3,7 +3,8 @@ import NmapScriptPicker, { type ScriptPickerPatch } from "../components/NmapScri
 import {
   openWs,
   fetchNmapStatus, installNmapSudo,
-  fetchNmapScripts, fetchNmapScriptHelp,
+  fetchNmapScripts, fetchNmapScriptHelp, previewNmapCommand,
+  ApiError,
   type NmapStatus, type NmapScriptEntry, type NmapPolicy,
   type NmapOptions, type NmapEvent, type NmapReport,
 } from "../api";
@@ -242,6 +243,29 @@ export default function Nmap() {
     [effectiveOpts, status, willUseSudo],
   );
   const cmdPreview = argvPreview.map(quoteIfNeeded).join(" ");
+
+  // Server-authoritative validation of the previewed command. The client
+  // argv above is instant but enforces none of the backend's safety checks
+  // (forbidden flags, shell metacharacters in extra_args). Debounce a call
+  // to /nmap/preview and surface the rejection reason so the user learns a
+  // run would be refused *before* clicking Run, not after.
+  const [cmdWarning, setCmdWarning] = useState<string | null>(null);
+  useEffect(() => {
+    if (!effectiveOpts.targets.length) { setCmdWarning(null); return; }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      previewNmapCommand(effectiveOpts)
+        .then(() => { if (!cancelled) setCmdWarning(null); })
+        .catch((e) => {
+          if (cancelled) return;
+          // Only a 400 means the backend would *reject* these options. Auth
+          // (401), transport, and timeout (504) errors aren't a verdict on
+          // the command — don't mislead the user; just clear the warning.
+          setCmdWarning(e instanceof ApiError && e.status === 400 ? e.message : null);
+        });
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(t); };
+  }, [effectiveOpts]);
 
   function applyProfile(p: Profile) {
     setActiveProfile(p.id);
@@ -564,6 +588,11 @@ export default function Nmap() {
           <span className="text-ink-dim">$ </span>
           <span className={willUseSudo ? "text-amber" : ""}>{cmdPreview}</span>
         </div>
+        {cmdWarning && (
+          <div className="text-[10px] text-danger font-mono -mt-1">
+            ⚠ This command would be rejected: {cmdWarning}
+          </div>
+        )}
 
         {/* Status strip */}
         <div className="flex items-center gap-3 text-[10px] tracking-widest text-ink-dim font-mono">

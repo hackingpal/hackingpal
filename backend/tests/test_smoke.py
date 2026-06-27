@@ -73,7 +73,9 @@ async def test_version(client):
 
 @pytest.mark.asyncio
 async def test_system_info(client):
-    r = await client.get("/system/info")
+    # /system/info is auth-gated since the security tightening — the
+    # Electron renderer fetches the token before any /system/info call.
+    r = await client.get("/system/info", headers=AUTH)
     assert r.status_code == 200
     body = r.json()
     # Renderer hides platform-locked tools off these flags — keep them stable.
@@ -163,6 +165,28 @@ async def test_labs_preflight(client):
         "ok", "binary_missing", "daemon_stopped", "socket_unreachable",
     }
     for key in ("colima_path", "docker_path", "hint", "command"):
+        assert key in body
+
+
+@pytest.mark.asyncio
+async def test_labs_runtime_status(client):
+    # The slim alias the app-shell banner polls. Same underlying state
+    # machine as /labs/preflight, but with the two booleans the banner
+    # switches on already computed so the renderer never has to map states.
+    r = await client.get("/labs/runtime/status", headers=AUTH)
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("state") in {
+        "ok", "binary_missing", "daemon_stopped", "socket_unreachable",
+    }
+    assert isinstance(body.get("needs_install"), bool)
+    assert isinstance(body.get("needs_start"), bool)
+    # Booleans must be derived consistently from state.
+    assert body["needs_install"] == (body["state"] == "binary_missing")
+    assert body["needs_start"] == (
+        body["state"] in {"daemon_stopped", "socket_unreachable"}
+    )
+    for key in ("colima_path", "docker_path"):
         assert key in body
 
 

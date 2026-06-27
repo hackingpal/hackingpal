@@ -168,9 +168,11 @@ def test_enforce_rest_deny_raises_403(temp_db):
     assert exc.value.code == ErrorCode.TARGET_DENIED.value
 
 
-def test_enforce_rest_warn_without_confirm_raises_409(temp_db):
+def test_enforce_rest_warn_without_confirm_raises_409(temp_db, permissive_policy):
     """An external target gets a target_policy warn — enforce_rest converts
-    that to NEED_CONFIRM unless the caller passed confirm=True."""
+    that to NEED_CONFIRM unless the caller passed confirm=True. Production
+    config.json now defaults to deny-external; permissive_policy pins the
+    older warn-on-external semantic so we can exercise the warn path."""
     with pytest.raises(MhpError) as exc:
         scope.enforce_rest("example.com", None, mode="lab")  # lab → scope allow
     # policy layer still warns on external targets → 409 NEED_CONFIRM.
@@ -178,12 +180,12 @@ def test_enforce_rest_warn_without_confirm_raises_409(temp_db):
     assert exc.value.code == ErrorCode.NEED_CONFIRM.value
 
 
-def test_enforce_rest_warn_with_confirm_allows(temp_db):
+def test_enforce_rest_warn_with_confirm_allows(temp_db, permissive_policy):
     v, r, _ = scope.enforce_rest("example.com", None, mode="lab", confirm=True)
     assert v in ("allow", "warn")  # warn proceeds when confirm=True
 
 
-def test_enforce_rest_deny_only_passive_tool_passes_warn(temp_db):
+def test_enforce_rest_deny_only_passive_tool_passes_warn(temp_db, permissive_policy):
     """Passive tools (TLS audit, WHOIS) use deny_only=True — warn proceeds."""
     v, r, _ = scope.enforce_rest("example.com", None, mode="lab", deny_only=True)
     assert v in ("allow", "warn")

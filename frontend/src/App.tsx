@@ -94,6 +94,7 @@ import ToolCatalog from "./components/ToolCatalog";
 import ActiveTargetPicker from "./components/ActiveTargetPicker";
 import EngagementPill from "./components/EngagementPill";
 import ModePill from "./components/ModePill";
+import RuntimeBanner from "./components/RuntimeBanner";
 import ErrorBoundary from "./components/ErrorBoundary";
 import ChatBubble from "./components/ChatBubble";
 import EngagementTabs from "./components/EngagementTabs";
@@ -271,7 +272,7 @@ export default function App() {
               <kbd className="text-ink-dim text-[9px] font-mono hidden lg:inline">⌘I</kbd>
             </button>
           </div>
-          <div className="flex items-center gap-2 text-[10px] tracking-widest text-ink-dim app-no-drag min-w-0">
+          <div className="flex items-center gap-2.5 text-[10px] tracking-widest text-ink-dim app-no-drag min-w-0">
             <ModePill onOpenEngagementsPage={() => navigate("engagements")} />
             <EngagementPill onOpenEngagementsPage={() => navigate("engagements")} />
             <ActiveTargetPicker onOpenTargetsPage={() => navigate("targets")} />
@@ -315,6 +316,7 @@ export default function App() {
           </div>
         </div>
 
+        <RuntimeBanner platform={platform} />
         <EngagementTabs onChange={setActive} />
         <PageBackBar />
         <main className="flex-1 overflow-hidden">
@@ -429,7 +431,7 @@ export default function App() {
         onClose={() => setCatalogOpen(false)}
         onOpenTool={(id) => navigate(id)}
       />
-      <ChatBubble activePage={String(active)} />
+      <ChatBubble activePage={String(active)} onNavigate={(id) => navigate(id)} />
     </div>
   );
 }

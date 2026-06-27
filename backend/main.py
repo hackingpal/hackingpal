@@ -41,7 +41,7 @@ from routers import (
     local_discovery, linux_posture, macos_posture, nmap, people_enum,
     persistence, ping, playbook_suggest, port_scanner, presets, processes,
     profile_finder, reports, reverse_ip, reverse_shell, s3_scanner, scope, settings,
-    shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, summarize,
+    shodan_censys, smb_enum, sqli, ssrf, stego, subdomain_enum, suggest_checks, summarize,
     system_info, takeover, targets, tcpdump, terminal, tls_audit,
     tool_requirements, triage, urlscan, wayback, whois, wifi, wifi_scan,
     windows_posture,
@@ -227,6 +227,7 @@ app.include_router(audit_log.router, dependencies=_PRIVILEGED)
 app.include_router(scope.router, dependencies=_PRIVILEGED)
 app.include_router(triage.router, dependencies=_PRIVILEGED)
 app.include_router(playbook_suggest.router, dependencies=_PRIVILEGED)
+app.include_router(suggest_checks.router, dependencies=_PRIVILEGED)
 app.include_router(basic_check.router, dependencies=_PRIVILEGED)
 app.include_router(tool_requirements.router, dependencies=_PRIVILEGED)
 

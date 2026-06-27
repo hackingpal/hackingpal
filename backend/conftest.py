@@ -87,3 +87,22 @@ def _restore_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for k in list(os.environ):
         if k.startswith("MHP_"):
             monkeypatch.delenv(k, raising=False)
+
+
+@pytest.fixture
+def permissive_policy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Swap target_policy._policy for a permissive shim (warn-on-external).
+
+    Production config.json defaults to ``deny_external_by_default: true`` so
+    the operator can't accidentally scan the public internet. Tests that
+    exercise the warn/need-confirm code path need the older permissive
+    behaviour; this fixture pins it just for the test that opts in.
+    """
+    from lib import target_policy
+    monkeypatch.setattr(target_policy, "_policy", lambda: {
+        "allow_private": True,
+        "allow_loopback": True,
+        "allow_tailscale": True,
+        "allow_external": [],
+        "deny_external_by_default": False,
+    })

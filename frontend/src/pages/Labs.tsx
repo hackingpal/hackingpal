@@ -12,7 +12,20 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "../api";
+import {
+  listEngagements,
+  createEngagement,
+  getActiveEngagementId,
+  setActiveEngagementId,
+  type Engagement,
+} from "../lib/engagement";
 import RunPlaybookModal from "../components/RunPlaybookModal";
+import {
+  attachConfirmation,
+  chooseAttachEngagement,
+  deriveLabUrl,
+} from "../lib/labsAttach";
+import { writeLabIntent } from "../lib/labIntent";
 
 type SuggestedStep = {
   label: string;
@@ -136,6 +149,24 @@ export default function Labs({ onJumpTo }: Props) {
   // Add-Lab drawer state. The catalog is fetched lazily the first time
   // the user opens the drawer — no point pulling it on every page load.
   const [addOpen, setAddOpen] = useState<boolean>(false);
+  // Active engagements for the "Attach to engagement" dropdown. Loaded once
+  // on mount; reloaded after every attach so a freshly-created engagement
+  // in another window surfaces without a page reload.
+  const [engagementsList, setEngagementsList] = useState<Engagement[]>([]);
+  // Per-lab attach state. `pending` blocks the dropdown from being doubled
+  // up while a request is in flight; `lastAttach` holds the short
+  // confirmation banner ("Attached to … — added <URL> to scope") that the
+  // LabCard renders for ~4s after a successful attach.
+  const [attachPending, setAttachPending] = useState<Record<string, boolean>>({});
+  const [lastAttach, setLastAttach] = useState<
+    Record<string, {
+      engName: string;
+      scopeEntry: string;
+      addedToScope: boolean;
+      created: boolean;
+    } | null>
+  >({});
+  const attachTimersRef = useRef<Record<string, number>>({});
   const pollRef = useRef<number | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -154,9 +185,34 @@ export default function Labs({ onJumpTo }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const refreshEngagements = useCallback(async () => {
+    // listEngagements() omits archived by default. The attach dropdown only
+    // ever offers the currently-active scopes — completed engagements are
+    // still listed by the helper (status != "archived" includes "completed")
+    // but rejecting completed scopes is a separate policy call we defer to
+    // the operator: the dropdown filters to status === "active" so completed
+    // engagements stay out of the attach UI without changing the helper.
+    try {
+      const list = await listEngagements(false);
+      setEngagementsList(list.filter((e) => e.status === "active"));
+    } catch {
+      /* fire-and-forget — dropdown will show the create-first hint */
+    }
+  }, []);
+
   useEffect(() => {
     void refreshLabs();
+    void refreshEngagements();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Clean up attach-confirmation timers on unmount so we don't trip the
+  // "memory leak in component" warning if the user navigates away mid-toast.
+  useEffect(() => () => {
+    for (const t of Object.values(attachTimersRef.current)) {
+      window.clearTimeout(t);
+    }
+    attachTimersRef.current = {};
   }, []);
 
   // ── Poll loop ──────────────────────────────────────────────────────────
@@ -246,6 +302,83 @@ export default function Labs({ onJumpTo }: Props) {
     }, 2_500);
   }
 
+  // ── Attach lab → engagement ────────────────────────────────────────────
+  // One-click flow: figure out which engagement to use, create one if the
+  // user doesn't have any yet, then POST /labs/{id}/attach. The card shows
+  // a brief confirmation banner ("Attached to <name>" — or "Created
+  // engagement <name>" when we auto-made one) plus a page-level toast.
+  // Mirrors the auto-engagement pattern in RunPlaybookModal so users with
+  // little knowledge can just click and have the right thing happen.
+  async function attachLab(lab: LabSummary) {
+    setAttachPending((p) => ({ ...p, [lab.id]: true }));
+    try {
+      const fallbackUrl = deriveLabUrl(lab);
+
+      // 1. Pick a target engagement, or create one (see chooseAttachEngagement
+      //    for the preference order). Creating one seeds scope with the lab URL.
+      const choice = chooseAttachEngagement(getActiveEngagementId(), engagementsList);
+      let engagementId: string;
+      let created = false;
+      if (choice.action === "create") {
+        const fresh = await createEngagement({
+          name: `Lab: ${lab.name}`,
+          scope: fallbackUrl ? [fallbackUrl] : [],
+          exclusions: [],
+          notes: "Auto-created when attaching a lab.",
+        });
+        engagementId = fresh.id;
+        setActiveEngagementId(fresh.id);
+        created = true;
+      } else {
+        engagementId = choice.engagementId;
+      }
+
+      // 2. Attach (idempotent backend-side — re-attaching is a no-op).
+      const r = await api<{
+        attached: boolean;
+        scope_entries_added: number;
+        scope_entry: string;
+      }>(`/labs/${lab.id}/attach`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ engagement_id: engagementId }),
+      });
+      setError(null);
+
+      // 3. Resolve a human name for the confirmation. Re-fetch in case we
+      //    just created and the list state hasn't refreshed yet.
+      let engName: string;
+      if (created) {
+        engName = `Lab: ${lab.name}`;
+      } else {
+        const eng = engagementsList.find((e) => e.id === engagementId);
+        engName = eng?.name ?? engagementId;
+      }
+
+      const addedToScope = r.scope_entries_added > 0;
+      setLastAttach((prev) => ({
+        ...prev,
+        [lab.id]: {
+          engName, scopeEntry: r.scope_entry, addedToScope, created,
+        },
+      }));
+      const existing = attachTimersRef.current[lab.id];
+      if (existing) window.clearTimeout(existing);
+      attachTimersRef.current[lab.id] = window.setTimeout(() => {
+        setLastAttach((prev) => ({ ...prev, [lab.id]: null }));
+        delete attachTimersRef.current[lab.id];
+      }, 8_000);
+      flash(attachConfirmation({
+        created, addedToScope, engName, scopeEntry: r.scope_entry,
+      }));
+      void refreshEngagements();
+    } catch (e) {
+      setError(humanError(e));
+    } finally {
+      setAttachPending((p) => ({ ...p, [lab.id]: false }));
+    }
+  }
+
   function openInBrowser(url: string) {
     if (!url) return;
     window.open(url, "_blank", "noopener");
@@ -254,12 +387,7 @@ export default function Labs({ onJumpTo }: Props) {
   function jumpToStep(step: SuggestedStep) {
     // Stash the intent — the destination page reads it on mount via
     // useLabIntent() and pre-fills its target/url input. Cleared after one read.
-    try {
-      sessionStorage.setItem(
-        "mhp:labIntent",
-        JSON.stringify({ tool: step.route, query: step.query, at: Date.now() }),
-      );
-    } catch { /* private mode etc. */ }
+    writeLabIntent(step.route, step.query);
     if (step.query.target) {
       flash(`Opening ${step.label} with target pre-filled`);
     } else {
@@ -357,6 +485,10 @@ export default function Labs({ onJumpTo }: Props) {
             onJumpStep={jumpToStep}
             onJumpTo={onJumpTo}
             flash={flash}
+            hasAnyEngagement={engagementsList.length > 0}
+            attachPending={!!attachPending[lab.id]}
+            lastAttach={lastAttach[lab.id] ?? null}
+            onAttach={() => attachLab(lab)}
           />
         ))}
 
@@ -420,6 +552,7 @@ export default function Labs({ onJumpTo }: Props) {
 function LabCard({
   lab, status, busy, dockerRunning, onBuild, onStart, onStop, onOpen, onJumpStep,
   onJumpTo, flash,
+  hasAnyEngagement, attachPending, lastAttach, onAttach,
 }: {
   lab: LabSummary;
   status: LabStatus | undefined;
@@ -432,6 +565,15 @@ function LabCard({
   onJumpStep: (step: SuggestedStep) => void;
   onJumpTo: (id: string) => void;
   flash: (msg: string) => void;
+  hasAnyEngagement: boolean;
+  attachPending: boolean;
+  lastAttach: {
+    engName: string;
+    scopeEntry: string;
+    addedToScope: boolean;
+    created: boolean;
+  } | null;
+  onAttach: () => void;
 }) {
   const built     = status?.image_exists ?? false;
   const building  = status?.build_status === "building";
@@ -563,6 +705,22 @@ function LabCard({
               {hasWebPort && (
                 <button onClick={onOpen} className={btnSecondary()}>Open ↗</button>
               )}
+              <button
+                onClick={onAttach}
+                disabled={attachPending}
+                className={btnSecondary() + " whitespace-nowrap"}
+                title={
+                  hasAnyEngagement
+                    ? "Attach this lab to your active engagement (adds URL to scope, results auto-record)"
+                    : "No engagement yet — clicking creates one named “Lab: …” with this lab in scope"
+                }
+              >
+                {attachPending
+                  ? "Attaching…"
+                  : hasAnyEngagement
+                    ? "↳ Attach to engagement"
+                    : "↳ Start engagement with this lab"}
+              </button>
               <button onClick={onStop} disabled={busy} className={btnStop()}>■ Stop</button>
             </>
           )}
@@ -575,6 +733,43 @@ function LabCard({
           )}
         </div>
       </div>
+
+      {/* Inline confirmation banner — auto-dismisses after ~6s.
+          Mirrors the page-level toast but stays anchored to the card so the
+          user can see what scope entry was added even if they scrolled past
+          the toast region. */}
+      {lastAttach && (
+        <div className="mt-2 text-[11px] text-phos font-mono border border-phos/40
+                        bg-phos/10 rounded px-3 py-1.5 leading-relaxed">
+          {lastAttach.created ? (
+            <>
+              Created engagement <b>{lastAttach.engName}</b> with{" "}
+              <code>{lastAttach.scopeEntry}</code> in scope.{" "}
+              <button
+                type="button"
+                onClick={() => onJumpTo("dashboard")}
+                className="underline hover:text-ink-primary"
+              >
+                Open dashboard →
+              </button>
+            </>
+          ) : (
+            <>
+              Attached to <b>{lastAttach.engName}</b>
+              {lastAttach.addedToScope
+                ? <> — added <code>{lastAttach.scopeEntry}</code> to scope.</>
+                : <> — <code>{lastAttach.scopeEntry}</code> was already in scope.</>}{" "}
+              <button
+                type="button"
+                onClick={() => onJumpTo("dashboard")}
+                className="underline hover:text-ink-primary"
+              >
+                Open dashboard →
+              </button>
+            </>
+          )}
+        </div>
+      )}
 
       {(building || buildErr || tailLen > 0) && (
         <details
@@ -714,7 +909,7 @@ function LabCard({
   );
 }
 
-// ── Bits ───────────────────────────────────────────────────────────────────
+// ── Docker / runtime banner ─────────────────────────────────────────────────
 function DockerBanner({
   available, running, runtime, onShowDetails,
 }: {

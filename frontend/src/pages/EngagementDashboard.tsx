@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AsciiHero, EyebrowPill, Goldeneye } from "performative-ui";
+import CoverageMatrix from "../components/CoverageMatrix";
 import {
   listEngagements,
   listFindings,
@@ -259,6 +260,9 @@ export default function EngagementDashboard({ onNavigate }: Props) {
               </div>
             </div>
           </section>
+
+          {/* Coverage matrix — what's been checked for this engagement */}
+          <CoverageMatrix engagementId={engagement.id} onNavigate={onNavigate} />
 
           {/* Findings summary */}
           <section className="border border-divider rounded-lg p-4 mb-4 bg-bg-card">

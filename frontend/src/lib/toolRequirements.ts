@@ -4,9 +4,19 @@
 // or paste an API key between visits to a page).
 
 import { useEffect, useState } from "react";
-import { api } from "../api";
+import { api, fetchSystemInfo } from "../api";
 
-export type BinaryReq = { name: string; install_hint: string };
+export type BinaryReq = {
+  name: string;
+  install_hint: string;
+  // Absolute fallback paths probed when the binary isn't on $PATH
+  // (e.g. macOS `airport` lives at a framework path `which` won't find).
+  paths?: string[];
+  // Restrict the readiness probe to specific platforms. Empty/omitted = all.
+  // Used to declare per-platform alternatives (airport/netsh/iw) without
+  // the cross-platform members showing up as "missing" on the host OS.
+  platforms?: ("darwin" | "linux" | "win32")[];
+};
 export type ApiKeyReq = {
   provider: string;
   env_var?: string | null;
@@ -48,6 +58,28 @@ let _listCache: ToolRequirement[] | null = null;
 let _listPromise: Promise<ToolRequirement[]> | null = null;
 const _byIdCache = new Map<string, ToolRequirement | null>();
 const _readinessCache = new Map<string, ReadinessCheck>();
+
+let _platformCache: string | null = null;
+let _platformPromise: Promise<string | null> | null = null;
+
+async function getPlatform(): Promise<string | null> {
+  if (_platformCache) return _platformCache;
+  if (!_platformPromise) {
+    _platformPromise = fetchSystemInfo()
+      .then((i) => { _platformCache = i.platform; return i.platform; })
+      .catch(() => null);
+  }
+  return _platformPromise;
+}
+
+/** Filter binaries down to those that apply to the given platform.
+ *  Mirrors backend `check_readiness`: empty `platforms` = all.
+ *  Falls back to showing everything if platform is unknown.
+ */
+export function applicableBinaries(bins: BinaryReq[], platform: string | null): BinaryReq[] {
+  if (!platform) return bins;
+  return bins.filter((b) => !b.platforms || b.platforms.length === 0 || b.platforms.includes(platform as "darwin" | "linux" | "win32"));
+}
 
 export async function fetchAllToolRequirements(): Promise<ToolRequirement[]> {
   if (_listCache) return _listCache;
@@ -92,11 +124,13 @@ export function clearReadinessCache(): void {
 export function useToolRequirement(id: string): {
   req: ToolRequirement | null;
   readiness: ReadinessCheck | null;
+  platform: string | null;
   loading: boolean;
   refetch: () => void;
 } {
   const [req, setReq] = useState<ToolRequirement | null>(null);
   const [readiness, setReadiness] = useState<ReadinessCheck | null>(null);
+  const [platform, setPlatform] = useState<string | null>(_platformCache);
   const [loading, setLoading] = useState(true);
   const [tick, setTick] = useState(0);
 
@@ -104,15 +138,19 @@ export function useToolRequirement(id: string): {
     let cancelled = false;
     setLoading(true);
     (async () => {
-      const r = await fetchToolRequirement(id);
+      const [r, p] = await Promise.all([
+        fetchToolRequirement(id),
+        getPlatform(),
+      ]);
       const rd = r ? await fetchToolReadiness(id, tick > 0) : null;
       if (cancelled) return;
       setReq(r);
       setReadiness(rd);
+      setPlatform(p);
       setLoading(false);
     })();
     return () => { cancelled = true; };
   }, [id, tick]);
 
-  return { req, readiness, loading, refetch: () => setTick((n) => n + 1) };
+  return { req, readiness, platform, loading, refetch: () => setTick((n) => n + 1) };
 }

@@ -4,7 +4,9 @@ import {
   authFetch,
   fetchChatConfig,
   formatDetail,
+  suggestChecks,
   type ChatConfig,
+  type SuggestedCheck,
 } from "../api";
 import {
   listEngagements,
@@ -14,7 +16,11 @@ import {
 import { snapshot } from "../lib/sessionLog";
 import { chatBubbleIn, popIn } from "../lib/anim";
 import { shouldAutoOpen } from "../lib/setupState";
+import { approvePlan } from "../lib/suggestion";
+import { writeLabIntent } from "../lib/labIntent";
+import { setActiveTarget, getActiveTargetSnapshot } from "../lib/targets";
 import AnthropicSetupWizard from "./AnthropicSetupWizard";
+import SuggestionPanel from "./SuggestionPanel";
 
 type ChatRole = "user" | "assistant";
 
@@ -214,7 +220,9 @@ async function streamChat(
   }
 }
 
-export default function ChatBubble({ activePage }: { activePage: string }): JSX.Element {
+export default function ChatBubble(
+  { activePage, onNavigate }: { activePage: string; onNavigate?: (id: string) => void },
+): JSX.Element {
   const [open, setOpen] = useState(false);
   const [tabMessages, setTabMessages] = useState<Record<TabKey, ChatMessage[]>>({});
   const [activeTab, setActiveTab] = useState<TabKey>(GENERAL_TAB);
@@ -365,6 +373,48 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
 
   function scanThisPage() {
     sendPrompt(`Look at the current ${labelFor(activePage)} state and suggest what to do next.`);
+  }
+
+  // ── "Suggest checks" → approval cards ─────────────────────────────────────
+  const [suggestions, setSuggestions] = useState<SuggestedCheck[] | null>(null);
+  const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestNote, setSuggestNote] = useState("");
+
+  async function runSuggest() {
+    if (suggestBusy) return;
+    setSuggestBusy(true); setSuggestNote(""); setSuggestions(null);
+    try {
+      const history = (tabMessages[activeTab] ?? [])
+        .filter((m) => !m.streaming && m.content.trim())
+        .map((m) => ({ role: m.role, content: m.content }));
+      const { checks } = await suggestChecks({
+        messages: history,
+        active_page: activePage,
+        target: getActiveTargetSnapshot()?.address,
+      });
+      if (checks.length === 0) {
+        setSuggestNote("No checks to propose yet — chat about a target first.");
+      } else {
+        setSuggestions(checks);
+      }
+    } catch (e) {
+      setSuggestNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSuggestBusy(false);
+    }
+  }
+
+  // Proposals are computed from one tab's history; drop them when the tab
+  // changes so cards from the Nmap tab can't render (and be approved) under
+  // the General tab with mismatched context.
+  useEffect(() => { setSuggestions(null); setSuggestNote(""); }, [activeTab]);
+
+  // Approve → pre-fill the tool's active target + one-shot intent, then jump.
+  function approveCheck(check: SuggestedCheck) {
+    const plan = approvePlan(check);
+    setActiveTarget(plan.target);
+    writeLabIntent(plan.navId, plan.intent);
+    onNavigate?.(plan.navId);
   }
 
   const tabs = useMemo<{ key: TabKey; label: string }[]>(() => {
@@ -528,6 +578,37 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
               }}
             >
               Scan page
+            </button>
+            <button
+              onClick={runSuggest}
+              disabled={suggestBusy}
+              title="Propose concrete next checks as approval cards"
+              style={{
+                fontFamily: "var(--font-mono)",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                padding: "4px 8px",
+                borderRadius: 6,
+                border: "1px solid var(--border)",
+                background: "transparent",
+                color: "var(--text-secondary)",
+                cursor: suggestBusy ? "wait" : "pointer",
+                opacity: suggestBusy ? 0.45 : 1,
+                transition: "color 150ms ease, border-color 150ms ease",
+              }}
+              onMouseEnter={(e) => {
+                if (suggestBusy) return;
+                e.currentTarget.style.color = "var(--accent-bright)";
+                e.currentTarget.style.borderColor = "var(--border-accent)";
+              }}
+              onMouseLeave={(e) => {
+                if (suggestBusy) return;
+                e.currentTarget.style.color = "var(--text-secondary)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+            >
+              {suggestBusy ? "Thinking…" : "Suggest checks"}
             </button>
             <button
               onClick={() => setOpen(false)}
@@ -730,6 +811,23 @@ export default function ChatBubble({ activePage }: { activePage: string }): JSX.
               </div>
             ))}
           </div>
+
+          {(suggestions || suggestNote) && (
+            <div style={{ padding: "0 10px", background: "var(--bg-surface)" }}>
+              {suggestNote && (
+                <div style={{ fontSize: 10.5, color: "var(--text-muted)", padding: "4px 0" }}>
+                  {suggestNote}
+                </div>
+              )}
+              {suggestions && (
+                <SuggestionPanel
+                  checks={suggestions}
+                  onApprove={approveCheck}
+                  onClose={() => setSuggestions(null)}
+                />
+              )}
+            </div>
+          )}
 
           <div
             style={{

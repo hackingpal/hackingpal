@@ -213,11 +213,17 @@ def check_combined(
     verdict.
     """
     from lib import target_policy  # lazy import keeps this file's footprint minimal
+    # target_policy.check_target() resolves the *host* and classifies the IP
+    # class (loopback / private / Tailscale / external). It doesn't strip URL
+    # scheme/path, so passing a full URL like "http://127.0.0.1:8081" yields a
+    # spurious "could not resolve" warn even though the underlying host is
+    # loopback. Normalize to a bare host before handing it down.
+    pol_target = _host_from_target(target) or target
     # target_policy raises through to the IDNA encoder for pathological
     # inputs like "..../etc/passwd" — we treat any unhandled crash from
     # the policy layer as a deny rather than letting it 500.
     try:
-        pol_v, pol_r = target_policy.check_target(target)
+        pol_v, pol_r = target_policy.check_target(pol_target)
     except Exception as e:
         pol_v, pol_r = "deny", f"target failed validation: {type(e).__name__}"
     sc_v,  sc_r  = check(target, engagement_id, mode)

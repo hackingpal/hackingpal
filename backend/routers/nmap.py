@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from lib import audit_log, hids_notify, nmap_runner, nmap_scripts, scope, target_policy
 from lib.auth import require_local_auth
@@ -155,6 +156,41 @@ def status() -> dict[str, Any]:
         "sudoers_path":   SUDOERS_PATH,
         "user":           getpass.getuser(),
     }
+
+
+class PreviewBody(BaseModel):
+    # Same `opts` dict the /ws/nmap handshake sends. Validated through the
+    # shared options_from_dict + build_argv path, so the preview is the exact
+    # argv a run would spawn — minus the spawn.
+    opts: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/nmap/preview")
+def preview(body: PreviewBody) -> dict[str, Any]:
+    """Dry-run: return the exact argv (and shell-quoted command) a scan with
+    these options would execute, without running anything. The same
+    validation that guards a real run applies here, so an unsafe `extra_args`
+    or malformed option is rejected with the reason *before* the user commits.
+    """
+    try:
+        opts = nmap_runner.options_from_dict(body.opts)
+    except (TypeError, ValueError) as e:
+        raise MhpError(f"invalid options: {e}",
+                       code=ErrorCode.VALIDATION_ERROR, status_code=400)
+    if not opts.targets:
+        raise MhpError("at least one target is required",
+                       code=ErrorCode.INVALID_TARGET, status_code=400)
+
+    # Resolve the binary if installed; fall back to a bare "nmap" so the
+    # preview still renders on a host without nmap (the run path enforces
+    # presence separately).
+    binary = nmap_runner.find_nmap() or "nmap"
+    try:
+        preview = nmap_runner.preview_argv(opts, binary)
+    except ValueError as e:
+        raise MhpError(str(e), code=ErrorCode.VALIDATION_ERROR, status_code=400)
+
+    return {**preview, "nmap_found": nmap_runner.find_nmap() is not None}
 
 
 @router.post("/nmap/install")
@@ -470,56 +506,10 @@ async def nmap_ws(ws: WebSocket) -> None:
             ))
             await ws.close(); return
 
-        # Build options object (defaults are sensible)
+        # Build options object (defaults are sensible). Shared with the
+        # /nmap/preview dry-run so the two never diverge.
         try:
-            opts = nmap_runner.NmapOptions(
-                targets=list(raw_opts.get("targets") or []),
-                exclude=list(raw_opts.get("exclude") or []),
-                skip_discovery=bool(raw_opts.get("skip_discovery", False)),
-                ping_only=bool(raw_opts.get("ping_only", False)),
-                no_dns=bool(raw_opts.get("no_dns", True)),
-                force_dns=bool(raw_opts.get("force_dns", False)),
-                traceroute=bool(raw_opts.get("traceroute", False)),
-                discovery_probes=list(raw_opts.get("discovery_probes") or []),
-                scan_type=str(raw_opts.get("scan_type", "syn") or "syn"),
-                port_spec=str(raw_opts.get("port_spec", "") or ""),
-                top_ports=int(raw_opts.get("top_ports", 0) or 0),
-                fast_mode=bool(raw_opts.get("fast_mode", False)),
-                all_ports=bool(raw_opts.get("all_ports", False)),
-                exclude_ports=str(raw_opts.get("exclude_ports", "") or ""),
-                service_version=bool(raw_opts.get("service_version", False)),
-                version_intensity=int(raw_opts.get("version_intensity", -1) or -1),
-                version_light=bool(raw_opts.get("version_light", False)),
-                version_all=bool(raw_opts.get("version_all", False)),
-                os_detect=bool(raw_opts.get("os_detect", False)),
-                osscan_limit=bool(raw_opts.get("osscan_limit", False)),
-                osscan_guess=bool(raw_opts.get("osscan_guess", False)),
-                timing_template=int(raw_opts.get("timing_template", 3) or 3),
-                min_rate=int(raw_opts.get("min_rate", 0) or 0),
-                max_rate=int(raw_opts.get("max_rate", 0) or 0),
-                host_timeout=str(raw_opts.get("host_timeout", "") or ""),
-                max_retries=int(raw_opts.get("max_retries", -1)
-                                if raw_opts.get("max_retries") not in (None, "") else -1),
-                nse_categories=list(raw_opts.get("nse_categories") or []),
-                nse_scripts=list(raw_opts.get("nse_scripts") or []),
-                nse_args=str(raw_opts.get("nse_args", "") or ""),
-                fragment=bool(raw_opts.get("fragment", False)),
-                mtu=int(raw_opts.get("mtu", 0) or 0),
-                decoys=str(raw_opts.get("decoys", "") or ""),
-                spoof_ip=str(raw_opts.get("spoof_ip", "") or ""),
-                source_port=int(raw_opts.get("source_port", 0) or 0),
-                spoof_mac=str(raw_opts.get("spoof_mac", "") or ""),
-                badsum=bool(raw_opts.get("badsum", False)),
-                data_length=int(raw_opts.get("data_length", 0) or 0),
-                verbose=int(raw_opts.get("verbose", 0) or 0),
-                debug=int(raw_opts.get("debug", 0) or 0),
-                show_reason=bool(raw_opts.get("show_reason", False)),
-                open_only=bool(raw_opts.get("open_only", False)),
-                packet_trace=bool(raw_opts.get("packet_trace", False)),
-                disable_arp_ping=bool(raw_opts.get("disable_arp_ping", False)),
-                use_sudo=bool(raw_opts.get("use_sudo", False)),
-                extra_args=str(raw_opts.get("extra_args", "") or ""),
-            )
+            opts = nmap_runner.options_from_dict(raw_opts)
         except (TypeError, ValueError) as e:
             await ws.send_json(ws_error(
                 ErrorCode.VALIDATION_ERROR,
