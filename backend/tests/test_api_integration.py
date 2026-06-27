@@ -79,24 +79,22 @@ def test_engagements_crud_roundtrip(client):
 
 # ── scope gating in the live request pipeline ───────────────────────────────
 
-def test_scope_denied_in_engagement_mode_without_engagement(client):
-    """A target-accepting endpoint must 403 in Engagement mode if no engagement
-    is active. This exercises the X-MHP-Mode header → get_mode → scope.enforce_rest
-    chain that's wired into every gated router."""
-    r = client.get("/ct/search/example.com",
-                   headers={**AUTH, "X-MHP-Mode": "engagement"})
-    assert r.status_code == 403
-    body = r.json()
-    # MhpError envelope: { error, code, ... }
-    assert body["code"] == "TARGET_DENIED"
-
-
-def test_scope_denied_with_stale_engagement_id(client):
+def test_scope_denied_with_stale_engagement_id(client, permissive_policy):
+    """A stale engagement_id puts the request in Engagement mode (mode is
+    derived from id presence per `lib/mode.py`) and the scope layer must
+    refuse the lookup. `permissive_policy` holds the policy layer at
+    warn-on-external so this test exercises the *scope* deny path rather
+    than tripping the default deny-external-by-default policy first."""
     r = client.get("/ct/search/example.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": "ghost",
+        **AUTH, "X-MHP-Engagement-Id": "ghost",
     })
     assert r.status_code == 403
-    assert r.json()["code"] == "TARGET_DENIED"
+    body = r.json()
+    assert body["code"] == "TARGET_DENIED"
+    # Verify the scope layer is what fired (not policy), so this test really
+    # exercises engagement-mode gating rather than the deny-external safety net.
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
+    assert "not found" in body["layers"]["scope"].lower()
 
 
 def test_scope_allowed_in_engagement_mode_when_target_in_scope(
@@ -119,18 +117,27 @@ def test_scope_allowed_in_engagement_mode_when_target_in_scope(
         f"expected scope to allow; got {r.status_code}: {r.text[:200]}"
 
 
-def test_scope_blocks_out_of_scope_target(client, temp_db):
+def test_scope_blocks_out_of_scope_target(client, temp_db, permissive_policy):
+    """`permissive_policy` keeps the policy layer at warn-on-external so the
+    test isolates the *scope* layer's verdict (otherwise `attacker.com`
+    would be denied by the default deny-external-by-default policy first
+    and we'd never know if the scope check actually fired)."""
     eng = engagements.create_engagement(
         name="acme", scope=["example.com"], exclusions=[], notes="",
     )
     r = client.get("/ct/search/attacker.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code == 403
-    assert r.json()["code"] == "TARGET_DENIED"
+    body = r.json()
+    assert body["code"] == "TARGET_DENIED"
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
 
 
-def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
+def test_scope_exclusion_blocks_even_inside_scope(client, temp_db, permissive_policy):
+    """Like the out-of-scope test above, `permissive_policy` is required so the
+    policy layer doesn't pre-empt scope and mask whether exclusions actually
+    fire."""
     eng = engagements.create_engagement(
         name="acme",
         scope=["example.com"],
@@ -138,9 +145,13 @@ def test_scope_exclusion_blocks_even_inside_scope(client, temp_db):
         notes="",
     )
     r = client.get("/ct/search/admin.example.com", headers={
-        **AUTH, "X-MHP-Mode": "engagement", "X-MHP-Engagement-Id": eng["id"],
+        **AUTH, "X-MHP-Engagement-Id": eng["id"],
     })
     assert r.status_code == 403
+    body = r.json()
+    assert body["layers"]["scope"].startswith("deny:"), body["layers"]
+    assert "exclusion" in body["layers"]["scope"].lower() or \
+           "admin.example.com" in body["layers"]["scope"]
 
 
 # ── engagement-present gates on non-target tools ────────────────────────────

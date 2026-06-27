@@ -1706,6 +1706,29 @@ export type HashCrackEvent =
   | { type: "error";    detail: string };
 
 
+// ── Container runtime (colima) ───────────────────────────────────────────────
+
+export type RuntimeState =
+  | "ok" | "binary_missing" | "daemon_stopped" | "socket_unreachable";
+
+export type RuntimeStatus = {
+  state: RuntimeState;
+  needs_install: boolean;
+  needs_start:   boolean;
+  colima_path:   string | null;
+  docker_path:   string | null;
+};
+
+export const fetchRuntimeStatus = () =>
+  api<RuntimeStatus>("/labs/runtime/status");
+
+export type RuntimeInstallEvent =
+  | { type: "started";  steps: string[]; brew_path: string }
+  | { type: "log";      stream: "stdout" | "stderr"; line: string }
+  | { type: "error";    code: string; message: string;
+                        install_command?: string; url?: string; detail?: string }
+  | { type: "done";     state: RuntimeState; ok: boolean; stopped: boolean };
+
 // ── System info ──────────────────────────────────────────────────────────────
 
 export type SystemInfo = {

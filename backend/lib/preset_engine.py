@@ -331,12 +331,56 @@ async def _drive_ws(handler_coro_factory, init: dict[str, Any],
 # Adapters — each takes (target, options, context, emit, stop_event) → summary
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Local request shim — REST router handlers call get_mode/get_engagement_id on
+# their FastAPI Request. The engine drives them in-process, so we hand them a
+# minimal stand-in that looks like a loopback request with no mode/eid hints.
+# The playbook runner has already done the top-level scope+mode check before
+# any adapter runs, so per-call routers fall back to Lab-mode defaults and
+# their `scope.enforce_rest` calls go through without a second prompt.
+class _LocalReq:
+    class _C:
+        host = "127.0.0.1"
+        port = 0
+    client = _C()
+    headers: dict[str, str] = {}
+    query_params: dict[str, str] = {}
+
+
+def _target_to_host(target: str) -> str:
+    """Strip URL scheme + path + port from `target`, returning a bare host/IP.
+    Lab playbook targets arrive as `http://127.0.0.1:8081`; passive-recon
+    handlers (whois, dns_recon, ct_log, email_audit) want just the host."""
+    from urllib.parse import urlparse
+    t = (target or "").strip()
+    if "://" in t:
+        try:
+            host = urlparse(t).hostname or t
+        except ValueError:
+            host = t
+    else:
+        host = t
+    # Strip optional :port on bare host:port (skip IPv6 multi-colon form).
+    if host.count(":") == 1 and not host.startswith("["):
+        host = host.split(":", 1)[0]
+    return host.strip().strip(".").lower()
+
+
+def _looks_like_ip(host: str) -> bool:
+    import ipaddress
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 async def _adapter_whois(target: str, options: dict[str, Any],
                          context: dict[str, Any], emit: EmitFn,
                          stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import whois as r
+    host = _target_to_host(target)
     try:
-        result = await r.whois_lookup(target)
+        result = await r.whois_lookup(host, _LocalReq())
     except Exception as e:
         raise PresetError(f"whois: {e}") from e
     # Surface findings that the router already produced
@@ -360,9 +404,26 @@ async def _adapter_tls_audit(target: str, options: dict[str, Any],
                              context: dict[str, Any], emit: EmitFn,
                              stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import tls_audit as r
-    port = int(options.get("port", 443))
+    # If the target carries an explicit `:port` after the host, prefer that
+    # over the option default. Strip it before validation so the hostname
+    # validator doesn't reject the colon.
+    raw = (target or "").strip()
+    from urllib.parse import urlparse
+    if "://" in raw:
+        u = urlparse(raw)
+        host = u.hostname or raw
+        port = int(u.port) if u.port else int(options.get("port", 443))
+    else:
+        host = raw
+        port = int(options.get("port", 443))
+        if host.count(":") == 1 and not host.startswith("["):
+            host, _, port_s = host.rpartition(":")
+            try:
+                port = int(port_s)
+            except ValueError:
+                pass
     try:
-        result = await r.tls_audit(target, port=port)
+        result = await r.tls_audit(host, _LocalReq(), port=port)
     except Exception as e:
         raise PresetError(f"tls_audit: {e}") from e
     for f in result.get("findings", []) or []:
@@ -385,8 +446,9 @@ async def _adapter_port_scanner(target: str, options: dict[str, Any],
                                 context: dict[str, Any], emit: EmitFn,
                                 stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import port_scanner as r
+    # The port scanner accepts host or IP — strip URL scheme/port if present.
     init = {
-        "target": target,
+        "target": _target_to_host(target) or target,
         "ports":   options.get("ports", "1-1024"),
         "timeout": float(options.get("timeout", 0.5)),
         "threads": int(options.get("threads", 200)),
@@ -467,8 +529,20 @@ async def _adapter_dns_recon(target: str, options: dict[str, Any],
                              context: dict[str, Any], emit: EmitFn,
                              stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import dns_recon as r
+    host = _target_to_host(target)
+    # The DNS recon endpoint validates a domain (requires a dot, rejects IPs).
+    # Lab targets are IP literals — skip cleanly instead of erroring.
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "dns_recon",
+            "msg": f"skipped: {host or target!r} is not a DNS-resolvable domain",
+        })
+        return {
+            "domain": host, "a": [], "ns": [], "mx": [],
+            "axfr_succeeded": False, "dnssec_signed": False, "skipped": True,
+        }
     try:
-        result = await r.dns_recon(target, confirm=True)
+        result = await r.dns_recon(host, confirm=True)
     except Exception as e:
         raise PresetError(f"dns_recon: {e}") from e
     for f in result.get("findings", []) or []:
@@ -495,8 +569,17 @@ async def _adapter_ct_log(target: str, options: dict[str, Any],
                           context: dict[str, Any], emit: EmitFn,
                           stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import ct_log as r
+    host = _target_to_host(target)
+    # crt.sh keys on a domain — IP literals make no sense here.
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "ct_log",
+            "msg": f"skipped: {host or target!r} is not a domain (no CT records)",
+        })
+        return {"domain": host, "subdomain_count": 0, "subdomains": [],
+                "recent_7d": 0, "skipped": True}
     try:
-        result = await r.ct_search(target, confirm=True)
+        result = await r.ct_search(host, _LocalReq(), confirm=True)
     except Exception as e:
         raise PresetError(f"ct_log: {e}") from e
     for f in result.get("findings", []) or []:
@@ -518,8 +601,17 @@ async def _adapter_email_audit(target: str, options: dict[str, Any],
                                context: dict[str, Any], emit: EmitFn,
                                stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import email_security as r
+    host = _target_to_host(target)
+    # SPF/DKIM/DMARC live in DNS — skip IP-only / TLD-less targets cleanly.
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "email_audit",
+            "msg": f"skipped: {host or target!r} is not a domain",
+        })
+        return {"domain": host, "spf_present": False, "dmarc_present": False,
+                "mta_sts": False, "bimi": False, "skipped": True}
     try:
-        result = await r.email_audit(target, confirm=True)
+        result = await r.email_audit(host, _LocalReq(), confirm=True)
     except Exception as e:
         raise PresetError(f"email_audit: {e}") from e
     for f in result.get("findings", []) or []:
@@ -548,7 +640,7 @@ async def _adapter_cms_fingerprint(target: str, options: dict[str, Any],
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
     try:
-        result = await r.cms_fingerprint(url=url, confirm=True)
+        result = await r.cms_fingerprint(_LocalReq(), url=url, confirm=True)
     except Exception as e:
         raise PresetError(f"cms_fingerprint: {e}") from e
     for f in result.get("findings", []) or []:
@@ -1169,10 +1261,24 @@ async def _adapter_breach(target: str, options: dict[str, Any],
                           context: dict[str, Any], emit: EmitFn,
                           stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import breach as r
+    host = _target_to_host(target)
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "breach",
+            "msg": f"skipped: {host or target!r} is not a domain",
+        })
+        return {"breach_found": False, "breach_count": 0,
+                "breached_accounts": 0, "breaches": [],
+                "data_types": [], "exposed_data_types": [], "skipped": True}
+    # The HIBP "domain" endpoint is paid-API gated. Soft-skip when no key.
     try:
-        result = await r.domain_breaches(target)
+        result = await r.domain_check(host)
     except Exception as e:
-        raise PresetError(f"breach: {e}") from e
+        await emit({"type": "step_progress", "step": "breach",
+                    "msg": f"breach: {type(e).__name__} (HIBP key configured?)"})
+        return {"breach_found": False, "breach_count": 0,
+                "breached_accounts": 0, "breaches": [],
+                "data_types": [], "exposed_data_types": [], "skipped": True}
     breaches = result.get("breaches", []) or []
     data_types: set[str] = set()
     for b in breaches:
@@ -1199,17 +1305,26 @@ async def _adapter_wayback(target: str, options: dict[str, Any],
                            context: dict[str, Any], emit: EmitFn,
                            stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import wayback as r
+    host = _target_to_host(target)
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "wayback",
+            "msg": f"skipped: {host or target!r} is not a domain",
+        })
+        return {"total_urls": 0, "interesting_urls": [], "js_files": [],
+                "api_endpoints": [], "endpoints": [],
+                "forgotten_endpoints": [], "skipped": True}
     try:
-        result = await r.urls(target, limit=500, since_days=None)
+        result = await r.urls(host, _LocalReq(), limit=500)
     except TypeError:
-        # Older signature: positional or without keyword args.
+        # Tolerate older signatures during the migration window.
         try:
-            result = await r.urls(target)
+            result = await r.urls(host, _LocalReq())
         except Exception as e:
             raise PresetError(f"wayback: {e}") from e
     except Exception as e:
         raise PresetError(f"wayback: {e}") from e
-    urls = result.get("urls", []) or []
+    urls = result.get("urls", []) or result.get("all", []) or []
     js = [u for u in urls if isinstance(u, str) and u.lower().endswith(".js")]
     api = [u for u in urls if isinstance(u, str)
            and ("/api/" in u.lower() or u.lower().endswith(".json")
@@ -1232,8 +1347,17 @@ async def _adapter_urlscan(target: str, options: dict[str, Any],
                            context: dict[str, Any], emit: EmitFn,
                            stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import urlscan as r
+    host = _target_to_host(target)
+    if not host or _looks_like_ip(host) or "." not in host:
+        await emit({
+            "type": "step_progress", "step": "urlscan",
+            "msg": f"skipped: {host or target!r} is not a domain",
+        })
+        return {"screenshots": [], "technologies": [], "history": [],
+                "malicious_indicators": [], "malicious_flags": 0,
+                "third_party_scripts": [], "cdn_providers": [], "skipped": True}
     try:
-        result = await r.search(target)
+        result = await r.search(host, _LocalReq())
     except Exception as e:
         raise PresetError(f"urlscan: {e}") from e
     rows = result.get("results", []) or []
@@ -1431,13 +1555,28 @@ def _web_init_from(target: str, options: dict[str, Any],
         url = url + "?q=" + default_marker
     elif url and default_marker not in url:
         url = url + "&q=" + default_marker
+    # Web-exploit routers reject private/loopback targets unless allow_private
+    # is set. Playbooks fired at labs always hit loopback URLs; the playbook
+    # runner has already authorized the run via the top-level scope check, so
+    # auto-enable allow_private when the target resolves to a private/loopback
+    # IP. Public targets still default to false (caller can opt in).
+    host = _target_to_host(url)
+    auto_internal = False
+    if host:
+        try:
+            import ipaddress
+            ip = ipaddress.ip_address(host)
+            auto_internal = ip.is_loopback or ip.is_private
+        except ValueError:
+            # Hostname — let the router's resolver decide.
+            pass
     return {
         "url": url,
         "method":  str(options.get("method") or "GET").upper(),
         "body":    str(options.get("body") or ""),
         "headers": dict(options.get("headers") or {}),
         "cookies": dict(options.get("cookies") or {}),
-        "allow_private": bool(options.get("allow_private", False)),
+        "allow_private": bool(options.get("allow_private", auto_internal)),
         "rate_per_sec":  int(options.get("rate_per_sec") or 5),
         "confirm_auth":  True,  # playbook runner already gates this
     }
@@ -1621,6 +1760,22 @@ async def _adapter_idor(target: str, options: dict[str, Any],
                         stop_event: asyncio.Event) -> dict[str, Any]:
     from routers import idor as r
     init = _web_init_from(target, options)
+    # IDOR router requires `ids` (explicit list) or a `{start,end,step}` range.
+    # Most presets don't author either — provide a conservative default sweep
+    # so the step produces real signal instead of hard-erroring.
+    if "ids" in options:
+        init["ids"] = options["ids"]
+    elif any(k in options for k in ("start", "end", "step")):
+        init["ids"] = {
+            "start": int(options.get("start", 1)),
+            "end":   int(options.get("end", 50)),
+            "step":  int(options.get("step", 1)),
+        }
+    else:
+        init["ids"] = {"start": 1, "end": 25, "step": 1}
+    # Pick a parameter to swap if one isn't specified — `id` is the most
+    # common IDOR-vulnerable param. The router defaults to `FUZZ` marker.
+    init.setdefault("param", str(options.get("param") or "id"))
     exposed_ids: list[str] = []
     findings_count = 0
 

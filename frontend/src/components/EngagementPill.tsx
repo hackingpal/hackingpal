@@ -51,7 +51,7 @@ export default function EngagementPill({ onOpenEngagementsPage }: Props) {
         title="Active engagement"
         className={
           "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] tracking-wider " +
-          "border transition leading-none font-mono " +
+          "border transition leading-none whitespace-nowrap shrink-0 " +
           (active
             ? "border-ink-primary/50 text-ink-primary hover:border-ink-primary"
             : "border-divider text-ink-dim hover:border-ink-muted hover:text-ink-primary")
@@ -64,7 +64,7 @@ export default function EngagementPill({ onOpenEngagementsPage }: Props) {
         >
           ▪
         </span>
-        <span className="uppercase max-w-[200px] truncate">
+        <span className={"max-w-[180px] truncate " + (active ? "" : "uppercase")}>
           {active ? active.name : "No engagement"}
         </span>
         <span className="text-ink-dim">▾</span>

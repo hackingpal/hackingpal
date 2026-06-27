@@ -63,14 +63,14 @@ export default function ActiveTargetPicker({ onOpenTargetsPage }: Props) {
         title="Active target — pre-fills tool pages"
         className={
           "flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] tracking-wider " +
-          "border transition leading-none font-mono " +
+          "border transition leading-none whitespace-nowrap shrink-0 " +
           (active
             ? "border-accent/50 text-accent hover:border-accent"
             : "border-divider text-ink-dim hover:border-ink-muted hover:text-ink-primary")
         }
       >
         <span aria-hidden style={{ fontSize: 9, lineHeight: 1 }}>◎</span>
-        <span className="uppercase max-w-[180px] truncate">
+        <span className={"max-w-[160px] truncate " + (active ? "" : "uppercase")}>
           {active ? active.name : "No target"}
         </span>
         <span className="text-ink-dim">▾</span>
