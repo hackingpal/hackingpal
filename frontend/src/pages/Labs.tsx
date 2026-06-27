@@ -25,6 +25,7 @@ import {
   chooseAttachEngagement,
   deriveLabUrl,
 } from "../lib/labsAttach";
+import { writeLabIntent } from "../lib/labIntent";
 
 type SuggestedStep = {
   label: string;
@@ -386,12 +387,7 @@ export default function Labs({ onJumpTo }: Props) {
   function jumpToStep(step: SuggestedStep) {
     // Stash the intent — the destination page reads it on mount via
     // useLabIntent() and pre-fills its target/url input. Cleared after one read.
-    try {
-      sessionStorage.setItem(
-        "mhp:labIntent",
-        JSON.stringify({ tool: step.route, query: step.query, at: Date.now() }),
-      );
-    } catch { /* private mode etc. */ }
+    writeLabIntent(step.route, step.query);
     if (step.query.target) {
       flash(`Opening ${step.label} with target pre-filled`);
     } else {

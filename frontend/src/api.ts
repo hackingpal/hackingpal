@@ -352,6 +352,30 @@ export type ChatConfig = {
 
 export const fetchChatConfig = () => api<ChatConfig>("/chat/config");
 
+// ── Chat: "Suggest checks" → approval cards ─────────────────────────────────
+// The copilot proposes a bounded set of next checks; the chat UI renders each
+// as an Approve / Skip / Modify card. Approve navigates to nav_id with the
+// target pre-filled. Backend: routers/suggest_checks.py + lib/suggested_checks.
+
+export type SuggestedCheck = {
+  tool: string;       // canonical check id
+  nav_id: string;     // tool page to jump to on Approve
+  label: string;
+  target: string;
+  rationale: string;
+};
+
+export const suggestChecks = (body: {
+  messages: { role: string; content: string }[];
+  active_page?: string;
+  target?: string;
+}) =>
+  api<{ checks: SuggestedCheck[] }>("/chat/suggest-checks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export type ChatSettings = {
   model: string;
   available_models: string[];

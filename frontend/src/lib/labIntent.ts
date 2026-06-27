@@ -57,6 +57,21 @@ export function takeLabIntent(tool: string): LabIntent | null {
   return parsed.query ?? {};
 }
 
+/** One-shot write of a lab intent for a destination tool route. The caller
+ * then navigates to `tool`; the destination consumes it on mount via
+ * useLabIntent(). Mirrors the inline write the Labs suggested-step buttons
+ * do, exposed so other proposers (the chat "Suggest checks" cards) reuse the
+ * exact shape rather than re-stringifying it. */
+export function writeLabIntent(tool: string, query: LabIntent): void {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ tool, query, at: Date.now() }),
+    );
+  } catch { /* private mode etc. */ }
+}
+
 /** React hook: returns prefill data for this tool, or null. Only reads
  * once per mount — safe to use as `useState(intent?.target ?? default)`.
  *

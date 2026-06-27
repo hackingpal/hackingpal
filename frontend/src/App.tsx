@@ -431,7 +431,7 @@ export default function App() {
         onClose={() => setCatalogOpen(false)}
         onOpenTool={(id) => navigate(id)}
       />
-      <ChatBubble activePage={String(active)} />
+      <ChatBubble activePage={String(active)} onNavigate={(id) => navigate(id)} />
     </div>
   );
 }
