@@ -11,6 +11,7 @@ import { fetchSystemInfo } from "../api";
 import { filterGroups, type NavGroup, type Platform } from "../lib/nav";
 import { usePlannedTools } from "../lib/plannedTools";
 import {
+  applicableBinaries,
   clearReadinessCache,
   fetchAllToolRequirements,
   fetchToolReadiness,
@@ -203,6 +204,7 @@ export default function Tools({ onJumpTo }: Props) {
                   })}
                   onOpen={() => onJumpTo(t.id)}
                   first={i === 0}
+                  platform={platform}
                 />
               ))}
             </div>
@@ -263,9 +265,12 @@ function FilterChip({ active, onClick, children }: {
   );
 }
 
-function ToolRow({ tool, expanded, onToggle, onOpen, first }: {
-  tool: ToolDisplay; expanded: boolean; onToggle: () => void; onOpen: () => void; first: boolean;
+function ToolRow({ tool, expanded, onToggle, onOpen, first, platform }: {
+  tool: ToolDisplay; expanded: boolean; onToggle: () => void; onOpen: () => void; first: boolean; platform: Platform | null;
 }) {
+  const renderedBins = tool.req
+    ? applicableBinaries(tool.req.setup.binaries, platform)
+    : [];
   const dotColor =
     tool.status === "ready" ? "bg-phos"
     : tool.status === "wrong-os" ? "bg-danger"
@@ -296,9 +301,9 @@ function ToolRow({ tool, expanded, onToggle, onOpen, first }: {
       {expanded && tool.req && (
         <div className="basis-full px-3 py-2 border-t border-divider
                         text-[11px] text-ink-muted bg-bg-card space-y-1">
-          {tool.req.setup.binaries.length > 0 && (
+          {renderedBins.length > 0 && (
             <div><span className="text-ink-dim">Binaries: </span>
-              {tool.req.setup.binaries.map((b) => `${b.name} (${b.install_hint})`).join(" · ")}
+              {renderedBins.map((b) => `${b.name} (${b.install_hint})`).join(" · ")}
             </div>
           )}
           {tool.req.setup.api_keys.length > 0 && (

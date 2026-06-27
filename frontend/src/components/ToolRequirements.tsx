@@ -3,12 +3,12 @@
 // missing so the user sees the install hint without scrolling.
 
 import { useState } from "react";
-import { useToolRequirement, type ToolRequirement } from "../lib/toolRequirements";
+import { applicableBinaries, useToolRequirement, type ToolRequirement } from "../lib/toolRequirements";
 
 type Props = { toolId: string };
 
 export default function ToolRequirements({ toolId }: Props) {
-  const { req, readiness, loading, refetch } = useToolRequirement(toolId);
+  const { req, readiness, platform, loading, refetch } = useToolRequirement(toolId);
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
   if (loading) return null;
@@ -21,6 +21,10 @@ export default function ToolRequirements({ toolId }: Props) {
   const missingKeys = new Set(readiness?.missing.api_keys ?? []);
   const sudoersMissing = readiness?.missing.sudoers ?? false;
   const platformBad = readiness?.missing.platform ?? false;
+  // Mirror the backend filter: don't render binaries scoped to a different
+  // platform (they would otherwise show as "present" because the backend
+  // also excludes them from missing-bins).
+  const renderedBins = applicableBinaries(req.setup.binaries, platform);
 
   return (
     <div className={
@@ -62,10 +66,10 @@ export default function ToolRequirements({ toolId }: Props) {
             </Row>
           )}
 
-          {req.setup.binaries.length > 0 && (
+          {renderedBins.length > 0 && (
             <Row label="Binaries">
               <div className="space-y-0.5">
-                {req.setup.binaries.map((b) => (
+                {renderedBins.map((b) => (
                   <div key={b.name} className="flex gap-2">
                     <code className={
                       "font-mono " +
